@@ -22,31 +22,45 @@
 
 ## ⚡ Overview
 
-**Skill Proof** is a Hermes standalone plugin for local skill selection and auditable load evidence. It scans configured `SKILL.md` roots each user turn, selects one skill with deterministic lexical ranking, gates operational tools by mode, and records a compact receipt with real evidence.
+**Skill Proof** answers three questions on every turn: which skill was chosen, why it won, and what evidence backs the claim.
 
-No model call. No network. No vector database. Python 3.11 with stdlib only. MemCore remains the memory provider, this plugin neither reads nor writes MemCore data.
+Each user turn scans the configured `SKILL.md` roots, picks one skill with deterministic lexical ranking, gates operational tools by mode, and appends a short receipt to the response. No model call. No network. No vector database. Python 3.11 with stdlib only.
+
+What a typical turn looks like:
+
+```text
+[Skill Proof: python-tdd | loaded | compliance verified]
+```
+
+When something needs attention, the receipt says so and points at the detail:
+
+```text
+[Skill Proof: none | not loaded | missing_required_tool:terminal; see /skill-proof explain]
+```
+
+Five commands inspect the evidence: `/skill-proof status`, `explain`, `trace`, `refresh`, `health`.
 
 ---
 
 ## 🌟 Why Skill Proof?
 
-Most agent setups pick skills by prompt guesswork. The wrong skill loads, disabled skills get suggested anyway, a veto like `don't use X` still selects X, short queries match inside longer words, and load claims carry no evidence.
+Picking a skill from the prompt alone fails in predictable ways. The wrong skill loads, unavailable skills get suggested anyway, a veto still selects the vetoed skill, short queries match inside longer words, and load claims carry no evidence.
 
 **Skill Proof routes differently:**
 
-- 🎯 **Deterministic lexical ranking:** explicit `$name`, `skill:name`, and English or Thai phrase requests take precedence. Ties request disambiguation instead of silently dropping a skill.
-- 🚫 **Negation guard in English and Thai:** vetoed skills leave the ranking with a `negated_skill` receipt instead of becoming the selection.
+- 🎯 **Deterministic ranking:** explicit `$name`, `skill:name`, and English or Thai phrase requests take precedence. Ties request disambiguation instead of silently dropping a skill.
+- 🚫 **Veto handling in English and Thai:** excluded skills leave the ranking with a `negated_skill` receipt instead of becoming the selection.
 - 🔍 **Token-boundary phrase matching:** short queries stop matching inside longer words. Thai text without word spaces keeps substring matching.
-- 🧾 **Truthful receipts:** lifecycle event, source hash, and tool-result hash behind every claim. No raw prompts or skill bodies are stored.
-- 🛡️ **Progressive tool gating plus invariant checks:** `observe`, `nudge`, and `enforce-tools` modes with `required`, `forbidden`, and `ordered` tool rules.
+- 🧾 **Truthful receipts:** lifecycle event, source hash, and tool-result hash behind every claim. Prompts and skill bodies are never stored.
+- 🛡️ **Progressive gating plus invariant checks:** `observe`, `nudge`, and `enforce-tools` modes with `required`, `forbidden`, and `ordered` tool rules.
 
 ## 📊 Feature Comparison
 
-| Capability | Prompt-only routing | 🛡️ **Skill Proof** |
+| Capability | Without Skill Proof | 🛡️ **Skill Proof** |
 | :--- | :---: | :--- |
-| **Skill selection** | Model guesses, no audit trail | ✅ **Deterministic lexical rank with a per-turn receipt** |
-| **Disabled skills** | Suggested even when disabled | ✅ **Intersected with the live catalog, receipt `not_in_hermes_list`** |
-| **Veto requests** | `don't use X` still selects X | ✅ **Negation guard excludes X, receipt `negated_skill`** |
+| **Skill selection** | Guesswork, no audit trail | ✅ **Deterministic lexical rank with a per-turn receipt** |
+| **Unavailable skills** | Suggested even when unlisted | ✅ **Checked against the live listing, receipt `not_in_hermes_list`** |
+| **Veto requests** | `don't use X` still selects X | ✅ **Veto excludes X, receipt `negated_skill`** |
 | **Short queries** | `ui` matches inside `build` | ✅ **Token-boundary matching, Thai spaceless keeps substring** |
 | **Load evidence** | Claimed in prose | ✅ **Lifecycle event plus source and result hashes** |
 | **Tool gating** | None | ✅ **`observe`, `nudge`, `enforce-tools`** |
@@ -61,11 +75,20 @@ Most agent setups pick skills by prompt guesswork. The wrong skill loads, disabl
 flowchart LR
     T[User turn] --> S[Scan SKILL.md roots]
     S --> R[Lexical rank with veto]
-    R --> C[Intersect live catalog]
+    R --> C[Check live listing]
     C --> G[Gate tools by mode]
     G --> V[Verify invariants]
     V --> E[Receipt and trace]
 ```
+
+How a turn is decided, in plain language:
+
+1. Explicit `$name` or `skill:name` wins. A vetoed explicit name falls back to lexical ranking.
+2. Phrase and tag matches score against fixed thresholds (`min_score` 0.28, `min_margin` 0.05).
+3. Vetoed names are excluded with reason `negated_skill`.
+4. Names outside the live listing resolve to `not_in_hermes_list` with no selection.
+5. Ties, unknown names, and multiple requests return no selection with a named reason.
+6. No match allows ordinary work. Only `enforce-tools` mode blocks operational tools.
 
 ---
 
@@ -76,7 +99,7 @@ flowchart LR
 | **Lexical Ranker** | Scores name, description phrase, and tags against score and margin thresholds | Deterministic, no model call, no network |
 | **Negation Guard** | Detects English and Thai veto phrasing around a skill name | A veto never becomes a selection |
 | **Phrase Matcher** | Token-boundary match for spaced text, substring for Thai spaceless text | Short queries stop matching inside longer words |
-| **Catalog Intersection** | Matches local names against the live `skills_list` every turn | Disabled or unlisted skills stay visible as filtered, never loaded silently |
+| **Listing Check** | Matches local names against the live skill listing every turn | Unavailable skills stay visible as filtered, never loaded silently |
 | **Tool Gate** | `observe`, `nudge`, `enforce-tools` (`enforce` is an alias) | Progressive strictness, discovery tools always allowed |
 | **Receipt Engine** | Compact or verbose footer plus `status`, `explain`, `trace`, `refresh`, `health` | Every claim carries evidence, last 20 receipts retained |
 | **Invariant Verifier** | `required_tools`, `forbidden_tools`, `ordered_tools` from frontmatter or config | Violations fail compliance with a named reason, `enforce-tools` blocks outright |
@@ -104,9 +127,15 @@ flowchart LR
 | :--- | :--- |
 | `observe` | Suggests a candidate and records events, tools remain allowed |
 | `nudge` (default) | Requests loading before operational tools, tools remain allowed |
-| `enforce-tools` | Blocks operational tools until a selected skill has a Hermes load event |
+| `enforce-tools` | Blocks operational tools until a selected skill has a load event |
 
-No match allows ordinary work. An explicitly unknown, duplicate, or multiple skill request blocks operational tools only in `enforce-tools` mode.
+| Command | What It Shows |
+| :--- | :--- |
+| `/skill-proof status` | Compact state for the latest turn |
+| `/skill-proof explain` | Selection decision and ranked candidates |
+| `/skill-proof trace` | Full bounded JSON receipt |
+| `/skill-proof refresh` | Reread local skill content on the next turn |
+| `/skill-proof health` | Hook activity, catalog diagnostics, and timing |
 
 Skills declare invariants in `SKILL.md` frontmatter:
 
@@ -136,6 +165,8 @@ plugins:
             forbidden_tools: [write_file, patch]
 ```
 
+Key settings: `mode` (default `nudge`), `skill_roots` (must already be readable through `skill_view`), `visible_receipt` (default `true`), `receipt_style` (`compact` or `verbose`, trace always carries full evidence), `receipt_history_limit` (default 20).
+
 ---
 
 ## 📦 Installation and Setup
@@ -145,7 +176,11 @@ plugins:
 | **Git clone** | [Repo](https://github.com/Stxyu-p/skill-proof) | `git clone https://github.com/Stxyu-p/skill-proof.git`, copy into place |
 | **Manual** | This directory | Copy to the active profile `plugins/skill-proof`, run `hermes plugins enable skill-proof`, start a new session |
 
-Merge these settings into the existing configuration and retain other enabled plugins:
+Quick start in four steps:
+
+1. Copy this directory to the active profile `plugins/skill-proof`.
+2. Run `hermes plugins enable skill-proof` and start a new session.
+3. Merge these settings into the existing configuration and keep other enabled plugins:
 
 ```yaml
 plugins:
@@ -161,7 +196,9 @@ plugins:
         receipt_history_limit: 20
 ```
 
-Use explicit roots for custom profiles. Roots must already be resolvable by Hermes `skill_view`. Start with `nudge` and inspect `/skill-proof explain` before enabling tool gating.
+4. Ask for a skill, then run `/skill-proof explain` to see the decision and the evidence.
+
+Use explicit roots for custom profiles. Start with `nudge` and inspect `explain` before enabling tool gating.
 
 ---
 
@@ -169,7 +206,7 @@ Use explicit roots for custom profiles. Roots must already be resolvable by Herm
 
 - **Negation guard**: vetoes such as `don't use X`, `without X`, `ไม่เอา X`, or `ไม่ใช้ X` exclude that skill from ranking. A vetoed `$name` falls back to lexical ranking, fully vetoed turns report `no_match/negated_skill`.
 - **Token-boundary phrase matching**: short queries such as `ui` no longer match inside longer words like `build`. Thai text without word spaces keeps substring matching.
-- **Disabled-skill intersection locked by a regression test**: lexical matches outside the live catalog resolve to `not_in_hermes_list` with no selection.
+- **Listing check locked by a regression test**: lexical matches outside the live listing resolve to `not_in_hermes_list` with no selection.
 - **Health reports the correct plugin version** (0.4.1).
 
 Prior releases: v0.4.0 added invariant compliance verification (`required`, `forbidden`, `ordered` tools). v0.3.1 fixed Thai conjoined-skill detection and action-continuation false matches. v0.3 added `health` timing, diagnostics, and block-scalar frontmatter support.
@@ -178,14 +215,15 @@ Prior releases: v0.4.0 added invariant compliance verification (`required`, `for
 
 ## 🔬 Evidence and Limitations
 
-- `loaded=yes` means Hermes emitted a matching successful lifecycle event, not proof of the exact bytes served.
+- `loaded=yes` means a matching successful lifecycle event was observed, not proof of the exact bytes served or of task success.
 - `active=yes` means an operational tool was requested after that event, another gate can still block execution.
 - Compliance without invariants stays `unassessed`, satisfied invariants report `verified`.
-- The local source hash is a filesystem recheck, tool hashes observe results before other plugins transform them.
-- Lifecycle events lack turn IDs, so correlation is session and task scoped.
+- The local source hash is a filesystem recheck, tool hashes observe results before later output transforms.
+- Lifecycle events carry no turn IDs, so correlation is session and task scoped.
 - Thai matching is lexical and phrase based, with no word segmentation or embeddings.
-- No ranking-quality or speed improvement over Hermes or Eagle Eye has been demonstrated.
-- Synthetic core results live in `VALIDATION.md` and exclude host listing overhead.
+- Routing fixtures are synthetic English and Thai examples. No production accuracy claim is supported.
+- Synthetic core results live in `VALIDATION.md` and exclude listing overhead.
+- Stored per turn: hashes, event flags, and bounded receipts. Stored never: prompts and skill bodies.
 
 ---
 
@@ -199,7 +237,7 @@ Prior releases: v0.4.0 added invariant compliance verification (`required`, `for
 | `tests/` | Discovery, ranking, gating, evidence, and isolation suites, 7 files |
 | `routing_benchmark.py`, `routing_cases.json` | Representative synthetic routing cases, 12 of 12 passing |
 | `benchmark.py` | Synthetic core performance probe |
-| `host_smoke.py` | Optional live listing and disabled-filter check against Hermes source |
+| `host_smoke.py` | Optional live listing and filter check against the host source |
 | `VALIDATION.md` | Synthetic benchmark notes and scope limits |
 
 ---
