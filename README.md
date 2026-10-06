@@ -7,6 +7,7 @@
 *Python 3.11, stdlib only, offline, zero external calls, 7 hooks*
 
 [![Release: v0.4.1](https://img.shields.io/badge/Release-v0.4.1-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
+[![Changelog](https://img.shields.io/badge/Changelog-View_Notes-blueviolet?style=for-the-badge)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 [![Hermes: Native Plugin](https://img.shields.io/badge/Hermes-Native_Plugin-7B61FF?style=for-the-badge)](https://github.com/NousResearch/hermes-agent)
 
@@ -202,14 +203,9 @@ Use explicit roots for custom profiles. Start with `nudge` and inspect `explain`
 
 ---
 
-## 🆕 What Is New in v0.4.1
+## 📜 Release History & Changelog
 
-- **Negation guard**: vetoes such as `don't use X`, `without X`, `ไม่เอา X`, or `ไม่ใช้ X` exclude that skill from ranking. A vetoed `$name` falls back to lexical ranking, fully vetoed turns report `no_match/negated_skill`.
-- **Token-boundary phrase matching**: short queries such as `ui` no longer match inside longer words like `build`. Thai text without word spaces keeps substring matching.
-- **Listing check locked by a regression test**: lexical matches outside the live listing resolve to `not_in_hermes_list` with no selection.
-- **Health reports the correct plugin version** (0.4.1).
-
-Prior releases: v0.4.0 added invariant compliance verification (`required`, `forbidden`, `ordered` tools). v0.3.1 fixed Thai conjoined-skill detection and action-continuation false matches. v0.3 added `health` timing, diagnostics, and block-scalar frontmatter support.
+All version release notes and historical changes are documented in [CHANGELOG.md](CHANGELOG.md) per Keep a Changelog standards.
 
 ---
 
