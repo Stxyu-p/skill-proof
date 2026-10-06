@@ -1,0 +1,55 @@
+name: skill-proof
+version: 0.4.1
+description: Local skill discovery, tool gating, truthful load receipts, and invariant compliance verification
+kind: standalone
+manifest_version: 2
+api_version: 1
+provides_hooks:
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - transform_llm_output
+  - post_llm_call
+  - on_skill_lifecycle
+  - on_session_end
+config_schema:
+  mode:
+    type: str
+    default: nudge
+    description: observe, nudge, or enforce-tools (enforce is an alias)
+  skill_roots:
+    type: list
+    default: []
+    description: Absolute roots already accessible through Hermes skill_view
+  min_score:
+    type: float
+    default: 0.28
+  min_margin:
+    type: float
+    default: 0.05
+  max_candidates:
+    type: int
+    default: 3
+  max_skill_bytes:
+    type: int
+    default: 262144
+  context_budget_bytes:
+    type: int
+    default: 1200
+  observed_tool_limit:
+    type: int
+    default: 16
+  visible_receipt:
+    type: bool
+    default: true
+  receipt_style:
+    type: str
+    default: compact
+    description: compact or verbose footer; trace always contains full evidence
+  receipt_history_limit:
+    type: int
+    default: 20
+  invariants:
+    type: dict
+    default: {}
+    description: Skill name to invariant rules (required_tools, forbidden_tools, ordered_tools)

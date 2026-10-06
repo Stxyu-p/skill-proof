@@ -1,0 +1,22 @@
+{
+  "skills": [
+    {"name": "python-tdd", "description": "Write Python tests before implementation"},
+    {"name": "frontend-design", "description": "Design a polished landing page and frontend"},
+    {"name": "debugging", "description": "Diagnose crashes and investigate failing tests"},
+    {"name": "thai-docs", "description": "สร้างและตรวจเอกสารภาษาไทย"}
+  ],
+  "cases": [
+    {"query": "Write Python tests before implementation", "expected": "python-tdd"},
+    {"query": "Design a polished landing page", "expected": "frontend-design"},
+    {"query": "Diagnose crashes", "expected": "debugging"},
+    {"query": "ช่วยสร้างและตรวจเอกสารภาษาไทย", "expected": "thai-docs"},
+    {"query": "Use $python-tdd to fix this", "expected": "python-tdd"},
+    {"query": "ใช้สกิล debugging", "expected": "debugging"},
+    {"query": "use skill frontend-design", "expected": "frontend-design"},
+    {"query": "Use $missing-skill", "expected": null},
+    {"query": "Use $python-tdd and $debugging", "expected": null},
+    {"query": "What is the capital of France?", "expected": null},
+    {"query": "จองร้านอาหารเย็นนี้", "expected": null},
+    {"query": "Translate hello into Thai", "expected": null}
+  ]
+}
