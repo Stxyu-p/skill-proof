@@ -4,6 +4,21 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-08
+
+### Added
+- **Gated Routing Quality Harness**: `routing_benchmark.py` now evaluates a labeled corpus of 53 cases (14 skills) split into tiers. `core` cases are gated, `stretch` cases are measured and reported as documented gaps of the lexical-only design. The report carries recall (expected selections only), precision, `abstain_accuracy`, false selections, misses, per-category and per-tier breakdowns, and the top candidates behind every failure. `--gate` exits non-zero, `--sweep` prints the `min_score` x `min_margin` sensitivity table, `--json` writes a machine-readable report.
+- **Abstain Expectations in the Corpus**: a case may declare `expected: null` to require a refusal, so "select the wrong skill" and "select anything at all" are both graded. The gate defaults are recall >= 0.95, false selections <= 0, abstain accuracy >= 0.9.
+- **Dictionary-Free N-gram Matching for Spaceless Scripts**: queries in Thai, Lao, Myanmar, Khmer, CJK, or Hangul are compared against descriptions, tags, and aliases with character bigram overlap (Dice). This is the only workable signal when a script has no word boundaries to tokenize, and it is skipped entirely for spaced-script turns, so Latin routing pays nothing.
+
+### Changed
+- The shipped corpus replaced the 4-skill, 12-case fixture with 53 labeled cases across explicit names, English paraphrases, Thai, aliases, negation, abstain, and near-duplicate ambiguity. The old shape still loads unchanged.
+
+### Validation
+- 151 tests passing (2 skipped), 48/48 gated routing cases passing (0 false selections, abstain accuracy 1.0), stretch tier 0/5 passing and reported as documented gaps. Hermes plugin doctor OK with 7 hooks registered.
+- Threshold sweep on the shipped corpus: recall 1.0 holds for `min_score` 0.20-0.32 with `min_margin` >= 0.05, and `min_margin: 0` silently tie-breaks the two near-duplicate cases (2 false selections). Shipped defaults (0.28 / 0.05) sit inside that plateau.
+- N-gram path measured on the real 145-skill catalog: 12-14 ms per selection (about 1 ms added over a Latin query), scan unchanged at about 546 ms.
+
 ## [0.5.0] - 2026-10-08
 
 ### Added

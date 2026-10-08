@@ -35,12 +35,32 @@ establish an end-to-end latency improvement or superiority over Eagle Eye.
 
 ## Routing measurement
 
-Command: `python routing_benchmark.py`
+Command: `python routing_benchmark.py` (v0.6.0 harness)
 
-Observed output: `correct: 12, total: 12, false_selections: 0, misses: 0, failures: []`.
-Fixtures are synthetic English/Thai examples with explicit names, description
-matches, missing names, multiple requests, and unrelated requests. No production
-accuracy claim is supported. Add real labeled cases to measure that separately.
+The corpus is 53 labeled cases over 14 fixture skills, split into a gated `core`
+tier (48 cases: explicit names, English paraphrases, Thai, aliases, negation,
+abstain, near-duplicate ambiguity) and a `stretch` tier (5 cases). Cases with
+`expected: null` require a refusal, so selecting the wrong skill and selecting
+anything at all are both graded.
+
+Observed: `core 48/48 recall=1.0 precision=1.0 abstain_accuracy=1.0
+false_selections=0 misses=0`, `stretch 0/5 recall=0.0`. Stretch failures are
+reported with their top candidates and are documented gaps of a lexical-only
+router (thin lexical overlap, English synonyms such as "pull request", Thai
+synonyms such as "สรุป").
+
+Threshold sweep (`--sweep`): recall stays 1.0 for `min_score` 0.20-0.32 when
+`min_margin` >= 0.05; `min_margin: 0` tie-breaks the two near-duplicate cases
+into 2 false selections, and `min_score` >= 0.36 loses 4-5 correct selections.
+The shipped defaults (0.28 / 0.05) sit inside the stable plateau.
+
+These fixtures are synthetic and hand-labeled by the author. They measure router
+behavior on that corpus only: no production accuracy, domain coverage, or
+comparison to other retrieval systems is claimed.
+
+Spaceless-script path measured on the real 145-skill catalog: 12-14 ms per
+selection (about 1 ms added over an equivalent Latin query, since the n-gram
+path is skipped entirely for spaced scripts).
 
 ## Real host integration
 

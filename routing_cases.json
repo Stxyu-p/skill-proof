@@ -1,22 +1,415 @@
 {
+  "version": 2,
+  "note": "Labeled routing cases. 'core' cases are gated (they must pass); 'stretch' cases are measured and reported as documented retrieval gaps of the lexical-only design. expected=null means the router must abstain or veto.",
   "skills": [
-    {"name": "python-tdd", "description": "Write Python tests before implementation"},
-    {"name": "frontend-design", "description": "Design a polished landing page and frontend"},
-    {"name": "debugging", "description": "Diagnose crashes and investigate failing tests"},
-    {"name": "thai-docs", "description": "สร้างและตรวจเอกสารภาษาไทย"}
+    {
+      "name": "python-tdd",
+      "description": "Write Python tests before implementation",
+      "aliases": ["tdd", "test-first"]
+    },
+    {
+      "name": "frontend-design",
+      "description": "Design a polished landing page and frontend interface",
+      "aliases": ["landing-page", "hero-section"]
+    },
+    {
+      "name": "debugging",
+      "description": "Diagnose crashes and investigate failing production errors",
+      "aliases": ["root-cause", "stack-trace"]
+    },
+    {
+      "name": "thai-docs",
+      "description": "สร้างและตรวจ เอกสาร ภาษาไทย",
+      "aliases": ["เอกสารไทย"]
+    },
+    {
+      "name": "code-review",
+      "description": "Conduct multi-axis code review before merging a change",
+      "aliases": ["pr-review"]
+    },
+    {
+      "name": "security-hardening",
+      "description": "Harden code against vulnerabilities and untrusted input",
+      "aliases": ["untrusted-input"]
+    },
+    {
+      "name": "performance-optimization",
+      "description": "Profile and improve application performance and Core Web Vitals",
+      "aliases": ["slow-pages"]
+    },
+    {
+      "name": "api-interface-design",
+      "description": "Design stable REST and GraphQL interfaces",
+      "aliases": ["api-contracts"]
+    },
+    {
+      "name": "incident-response",
+      "description": "Handle production incidents and write postmortems",
+      "aliases": ["outage"]
+    },
+    {
+      "name": "slides",
+      "description": "Create strategic HTML presentations with charts",
+      "aliases": ["deck", "presentation"]
+    },
+    {
+      "name": "pdf-extraction",
+      "description": "Extract tables and text from PDF files",
+      "aliases": ["pdf-tables"]
+    },
+    {
+      "name": "data-cleaning",
+      "description": "Clean messy spreadsheets into tidy tables",
+      "aliases": ["csv-cleanup"]
+    },
+    {
+      "name": "schema-migrations",
+      "description": "Plan and run database schema migrations safely with rollback",
+      "aliases": []
+    },
+    {
+      "name": "database-migrations",
+      "description": "Plan and run database schema migrations safely with rollback",
+      "aliases": []
+    }
   ],
   "cases": [
-    {"query": "Write Python tests before implementation", "expected": "python-tdd"},
-    {"query": "Design a polished landing page", "expected": "frontend-design"},
-    {"query": "Diagnose crashes", "expected": "debugging"},
-    {"query": "ช่วยสร้างและตรวจเอกสารภาษาไทย", "expected": "thai-docs"},
-    {"query": "Use $python-tdd to fix this", "expected": "python-tdd"},
-    {"query": "ใช้สกิล debugging", "expected": "debugging"},
-    {"query": "use skill frontend-design", "expected": "frontend-design"},
-    {"query": "Use $missing-skill", "expected": null},
-    {"query": "Use $python-tdd and $debugging", "expected": null},
-    {"query": "What is the capital of France?", "expected": null},
-    {"query": "จองร้านอาหารเย็นนี้", "expected": null},
-    {"query": "Translate hello into Thai", "expected": null}
+    {
+      "query": "$python-tdd",
+      "expected": "python-tdd",
+      "category": "explicit",
+      "tier": "core"
+    },
+    {
+      "query": "use the skill frontend-design",
+      "expected": "frontend-design",
+      "category": "explicit",
+      "tier": "core"
+    },
+    {
+      "query": "ใช้ skill thai-docs",
+      "expected": "thai-docs",
+      "category": "explicit",
+      "tier": "core"
+    },
+    {
+      "query": "skill: pdf-extraction",
+      "expected": "pdf-extraction",
+      "category": "explicit",
+      "tier": "core"
+    },
+    {
+      "query": "$slides please",
+      "expected": "slides",
+      "category": "explicit",
+      "tier": "core"
+    },
+    {
+      "query": "use the skill slides and the skill pdf-extraction",
+      "expected": null,
+      "category": "explicit",
+      "tier": "core",
+      "note": "two explicit skills must block, never pick one"
+    },
+
+    {
+      "query": "write Python tests before the implementation changes",
+      "expected": "python-tdd",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "design a polished landing page for the launch",
+      "expected": "frontend-design",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "diagnose the crashes and production errors",
+      "expected": "debugging",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "investigate the failing production errors",
+      "expected": "debugging",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "conduct a multi-axis code review before merging",
+      "expected": "code-review",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "harden the code against untrusted input",
+      "expected": "security-hardening",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "profile application performance and Core Web Vitals",
+      "expected": "performance-optimization",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "design stable REST and GraphQL interfaces",
+      "expected": "api-interface-design",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "write postmortems for production incidents",
+      "expected": "incident-response",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "create strategic HTML presentations with charts",
+      "expected": "slides",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "extract tables and text from a PDF",
+      "expected": "pdf-extraction",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+    {
+      "query": "clean messy spreadsheets into tidy tables",
+      "expected": "data-cleaning",
+      "category": "english-paraphrase",
+      "tier": "core"
+    },
+
+    {
+      "query": "prepare a deck for the board",
+      "expected": "slides",
+      "category": "alias",
+      "tier": "core"
+    },
+    {
+      "query": "we hit an outage, what now",
+      "expected": "incident-response",
+      "category": "alias",
+      "tier": "core"
+    },
+    {
+      "query": "use csv-cleanup on this export",
+      "expected": "data-cleaning",
+      "category": "alias",
+      "tier": "core"
+    },
+    {
+      "query": "rebuild the hero-section of our site",
+      "expected": "frontend-design",
+      "category": "alias",
+      "tier": "core"
+    },
+    {
+      "query": "can you run pr-review on this diff",
+      "expected": "code-review",
+      "category": "alias",
+      "tier": "core"
+    },
+    {
+      "query": "extract pdf-tables from the report",
+      "expected": "pdf-extraction",
+      "category": "alias",
+      "tier": "core"
+    },
+
+    {
+      "query": "ช่วยตรวจ เอกสาร ภาษาไทย ให้หน่อย",
+      "expected": "thai-docs",
+      "category": "thai",
+      "tier": "core"
+    },
+    {
+      "query": "เอกสารไทย",
+      "expected": "thai-docs",
+      "category": "thai",
+      "tier": "core"
+    },
+    {
+      "query": "สร้างเอกสารภาษาไทย",
+      "expected": "thai-docs",
+      "category": "thai",
+      "tier": "core",
+      "note": "spaceless Thai: no shared whitespace-delimited token with the description"
+    },
+    {
+      "query": "ช่วยเขียน เอกสาร ภาษาไทย",
+      "expected": "thai-docs",
+      "category": "thai",
+      "tier": "core"
+    },
+    {
+      "query": "ตรวจเอกสารภาษาไทยให้หน่อย",
+      "expected": "thai-docs",
+      "category": "thai",
+      "tier": "core",
+      "note": "spaceless Thai with a polite particle appended"
+    },
+
+    {
+      "query": "don't use the skill python-tdd, just ship it",
+      "expected": null,
+      "category": "negation",
+      "tier": "core"
+    },
+    {
+      "query": "do not use the skill slides for this",
+      "expected": null,
+      "category": "negation",
+      "tier": "core"
+    },
+    {
+      "query": "never use debugging here",
+      "expected": null,
+      "category": "negation",
+      "tier": "core"
+    },
+    {
+      "query": "ไม่ต้องใช้ thai-docs",
+      "expected": null,
+      "category": "negation",
+      "tier": "core"
+    },
+    {
+      "query": "อย่าใช้ skill slides",
+      "expected": null,
+      "category": "negation",
+      "tier": "core"
+    },
+    {
+      "query": "ช่วยตรวจเอกสาร ไม่ต้องใช้ thai-docs",
+      "expected": null,
+      "category": "negation",
+      "tier": "core"
+    },
+    {
+      "query": "do not forget to use the skill python-tdd",
+      "expected": "python-tdd",
+      "category": "negation",
+      "tier": "core",
+      "note": "'do not forget to use X' is a request, not a veto"
+    },
+    {
+      "query": "don't use the skill debugging, use the skill code-review instead",
+      "expected": "code-review",
+      "category": "negation",
+      "tier": "core",
+      "note": "veto one skill and redirect to another in the same turn"
+    },
+
+    {
+      "query": "what is the weather in Bangkok tomorrow",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core"
+    },
+    {
+      "query": "book a flight to Chiang Mai",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core"
+    },
+    {
+      "query": "rename the variable to something shorter",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core"
+    },
+    {
+      "query": "ช่วยจองตั๋วเครื่องบินไปเชียงใหม่",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core"
+    },
+    {
+      "query": "summarize the meeting notes from yesterday",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core"
+    },
+    {
+      "query": "translate this email into Japanese",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core"
+    },
+    {
+      "query": "remind me to water the plants",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core"
+    },
+    {
+      "query": "convert the song to mp3",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core"
+    },
+
+    {
+      "query": "run the migrations safely with rollback",
+      "expected": null,
+      "category": "ambiguous",
+      "tier": "core",
+      "note": "two near-duplicate skills must not be silently tie-broken"
+    },
+    {
+      "query": "migrations rollback plan",
+      "expected": null,
+      "category": "ambiguous",
+      "tier": "core"
+    },
+
+    {
+      "query": "our pages are slow, how do I speed them up",
+      "expected": "performance-optimization",
+      "category": "english-paraphrase",
+      "tier": "stretch",
+      "note": "no shared vocabulary with the description"
+    },
+    {
+      "query": "the build keeps crashing",
+      "expected": "debugging",
+      "category": "english-paraphrase",
+      "tier": "stretch",
+      "note": "singular/plural mismatch plus thin overlap"
+    },
+    {
+      "query": "review my pull request",
+      "expected": "code-review",
+      "category": "english-paraphrase",
+      "tier": "stretch",
+      "note": "one overlapping term only"
+    },
+    {
+      "query": "convert this PDF into a table",
+      "expected": "pdf-extraction",
+      "category": "english-paraphrase",
+      "tier": "stretch",
+      "note": "shares only the token PDF"
+    },
+    {
+      "query": "ตารางในไฟล์ PDF",
+      "expected": "pdf-extraction",
+      "category": "thai",
+      "tier": "core",
+      "note": "Thai query against an English description; the shared PDF token must survive"
+    },
+    {
+      "query": "ช่วยสรุปเอกสารให้หน่อย",
+      "expected": "thai-docs",
+      "category": "thai",
+      "tier": "stretch",
+      "note": "Thai synonym (สรุป) absent from the description"
+    }
   ]
 }

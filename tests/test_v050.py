@@ -188,7 +188,9 @@ class HubFooterTests(unittest.TestCase):
             ctx = FakeContext({"skill_roots": [str(root)], "hub_provenance": False})
             plugin = plugin_module.SkillProofPlugin(ctx)
             report = json.loads(plugin.handle_command("health"))
-            self.assertEqual(report["version"], "0.5.0")
+            # Health must report the core version, whatever it currently is
+            # (the manifest agreement itself is locked by test_portability).
+            self.assertEqual(report["version"], core.__version__)
             self.assertEqual(report["hub"], {"enabled": False})
             self.assertEqual(report["root_suggestions"], [])
 

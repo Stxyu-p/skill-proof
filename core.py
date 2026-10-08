@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -768,12 +768,47 @@ _SPACELESS_RANGES = (
 )
 
 
+def _is_spaceless_character(character: str) -> bool:
+    code = ord(character)
+    return any(start <= code <= end for start, end in _SPACELESS_RANGES)
+
+
 def _contains_spaceless_script(value: str) -> bool:
-    for character in value:
-        code = ord(character)
-        if any(start <= code <= end for start, end in _SPACELESS_RANGES):
-            return True
-    return False
+    return any(_is_spaceless_character(character) for character in str(value or ""))
+
+
+_NGRAM_SIZE = 2
+_NGRAM_MINIMUM_DICE = 0.25
+_NGRAM_WEIGHT = 0.55
+
+
+@lru_cache(maxsize=4096)
+def _char_ngrams(value: str, size: int = _NGRAM_SIZE) -> "frozenset[str]":
+    """Character n-grams of the spaceless-script part of *value*.
+
+    Spaceless scripts have no word boundaries to tokenize on, so token overlap
+    cannot see that "ช่วยเขียน เอกสาร ภาษาไทย" and "สร้างและตรวจ เอกสาร
+    ภาษาไทย" are about the same thing.  Character n-grams are a dictionary-free
+    way to measure that overlap, and they never fire for spaced scripts.
+    """
+    text = "".join(
+        character
+        for character in unicodedata.normalize("NFKC", str(value or "")).casefold()
+        if _is_spaceless_character(character)
+    )
+    if len(text) < size:
+        return frozenset()
+    return frozenset(text[index : index + size] for index in range(len(text) - size + 1))
+
+
+def _ngram_dice(left: "frozenset[str]", right: "frozenset[str]") -> float:
+    """Symmetric overlap of two n-gram sets (0.0 when either side is empty)."""
+    if not left or not right:
+        return 0.0
+    shared = len(left & right)
+    if not shared:
+        return 0.0
+    return (2.0 * shared) / (len(left) + len(right))
 
 
 def _phrase_present(shorter: str, longer: str) -> bool:
@@ -816,6 +851,7 @@ def _rank(
 ) -> list[RankedCandidate]:
     synonyms = synonyms or {}
     query_tokens = set(_tokens(query))
+    query_ngrams = _char_ngrams(query)
     normalized_query = normalize_identifier(query)
     name_counts = Counter(skill.normalized_name for skill in catalog.skills)
     duplicate_names = {name for name, count in name_counts.items() if count > 1}
@@ -841,6 +877,17 @@ def _rank(
         alias_terms = tuple(dict.fromkeys(tuple(skill.aliases) + tuple(synonyms.get(skill.normalized_name, ()))))
         reasons: list[str] = []
         score = 0.0
+
+        # Only computed when the query itself contains a spaceless script, so
+        # spaced-language turns pay nothing for this path.
+        if query_ngrams:
+            field_ngrams = _char_ngrams(
+                " ".join((skill.description, " ".join(skill.tags), " ".join(alias_terms)))
+            )
+            dice = _ngram_dice(query_ngrams, field_ngrams)
+            if dice >= _NGRAM_MINIMUM_DICE:
+                score += _NGRAM_WEIGHT * dice
+                reasons.append("spaceless_script_overlap")
 
         if _identifier_in_query(skill.name, query):
             score += 0.92
