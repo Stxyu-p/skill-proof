@@ -1,5 +1,5 @@
 name: skill-proof
-version: 0.7.0
+version: 0.8.0
 description: Local skill discovery, tool gating, truthful load receipts, and invariant compliance verification
 kind: standalone
 manifest_version: 2
@@ -73,3 +73,15 @@ config_schema:
     type: int
     default: 5
     description: Turns a focused skill stays focused (0 keeps it until released)
+  audit_log:
+    type: bool
+    default: true
+    description: Append one derived-numbers JSON line per turn (never prompts or skill bodies)
+  audit_path:
+    type: str
+    default: ""
+    description: Override path for the append-only audit log; empty uses plugin-data/skill-proof/audit.jsonl
+  audit_limit:
+    type: int
+    default: 500
+    description: Retained audit lines (10-10000); older lines are dropped on rotation

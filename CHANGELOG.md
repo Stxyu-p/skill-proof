@@ -4,6 +4,16 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-08
+
+### Added
+- **`/skill-proof why <skill>`**: answers "why (not) this skill?" against the current turn. Verdicts are `selected`, `ranked`/`below_threshold` (exact score, rank, threshold, gap to the top, and the terms that matched), `vetoed`, `no_signal`, `ranked_below_cap`, `unknown_skill`, and `not_ranked` for turns decided by explicit syntax. It is built from a bounded rank table and the veto list recorded at turn time, so no prompt is ever read or returned.
+- **Append-Only Decision Audit**: `audit_log` (default `true`) appends one JSON line per turn to `plugin-data/skill-proof/audit.jsonl` (override with `audit_path`). The record carries derived numbers only: decision, selected skill and score, focus, load and compliance state, errors, catalog size, timing, and `query_sha256`; session ids are hashed. `audit_limit` (default 500) rotates by keeping the tail. A broken audit path stops logging instead of failing a turn. `health` reports the configuration and the last three records.
+- **Turn Rank Table**: lexical turns keep the top 20 non-zero scores (`rank_table`) in turn state, which is what makes an exact answer possible without storing the prompt.
+
+### Validation
+- 226 tests passing (2 skipped), 48/48 gated routing cases, Hermes plugin doctor OK with 7 hooks registered. `tests/test_v080.py` covers every explain verdict (including `not_listed_by_host`, which separates "not indexed" from "excluded by the host listing"), the prompt-free guarantee, argument parsing for the six commands, audit line shape, rotation, the broken-path fallback, and health reporting.
+
 ## [0.7.0] - 2026-10-08
 
 ### Added

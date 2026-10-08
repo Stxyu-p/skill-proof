@@ -82,6 +82,33 @@ Scope limits: session history records what Skill Proof selected, is bounded to
 not a record of skills a host loaded on its own. `focus_turns` bounds focus to
 5 turns by default. No live model conversation was executed for these checks.
 
+## Explain and audit — 2026-10-08 (v0.8.0)
+
+`tests/test_v080.py` (27 cases) covers every `why` verdict (`selected`,
+`ranked`/`below_threshold`, `vetoed`, `no_signal`, `ranked_below_cap`,
+`unknown_skill`, `not_listed_by_host`, `not_ranked`), asserts the report never
+contains prompt text,
+checks the rank table bound (20 rows), and covers audit line shape, the
+prompt-free guarantee, `audit_log: false`, tail rotation, the broken-path
+fallback, and health reporting.
+
+Measured on the live 145-skill catalog: recording the veto list costs about
+0.51 ms per turn (the same scan already runs inside `_rank`), and a full
+lexical rank returns only 10 non-zero rows for a typical query, so the 20-row
+table bound holds without extra ranking work.
+
+Observed on a three-skill fixture through the real hooks:
+`why frontend-design` on a below-threshold turn reported
+`ranked #1 at 0.219985 (threshold 0.28) threshold_met=False` with
+`name_terms,description_terms`; `why python-tdd` on a vetoed turn reported
+`vetoed by this turn's wording`; the audit line for the same turn contained
+`status no_match / reason negated_skill / query_sha256` and no prompt text.
+
+Scope limits: `why` reads only live in-process turn state (restart loses the
+table; `/skill-proof trace` remains available and holds no prompt). The audit
+file stores derived numbers only, is append-only with tail rotation, and is
+disabled by `audit_log: false`.
+
 ## Real host integration
 
 Set `HERMES_HOME` to a scratch profile and `PYTHONPATH` to the installed Hermes

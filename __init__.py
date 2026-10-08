@@ -7,6 +7,7 @@ Hermes Agent internals.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -29,11 +30,12 @@ _HELP = """\
 /skill-proof — inspect auditable skill-selection evidence
 
 Usage:
-  /skill-proof status    Compact state for the latest turn
-  /skill-proof explain   Selection decision and ranked candidates
-  /skill-proof trace     Full bounded JSON receipt
-  /skill-proof refresh   Reread local skill content on the next turn
-  /skill-proof health    Hook activity, catalog diagnostics, and timing
+  /skill-proof status      Compact state for the latest turn
+  /skill-proof explain     Selection decision and ranked candidates
+  /skill-proof why <name>  Why this skill won, lost, or was vetoed this turn
+  /skill-proof trace       Full bounded JSON receipt
+  /skill-proof refresh     Reread local skill content on the next turn
+  /skill-proof health      Hook activity, catalog diagnostics, and timing
 
 Loaded means Hermes emitted a successful skill lifecycle event. It does not
 mean the model followed the skill, and it does not verify the task result.
@@ -142,6 +144,16 @@ class SkillProofPlugin:
         self._policy_errors: set[tuple[str, str, str]] = set()
         self._health_lock = threading.RLock()
         self._hook_activity: dict = {}
+        self.audit_enabled = _bool_setting(ctx.get_config("audit_log", True), True)
+        self.audit_limit = _bounded_int(ctx.get_config("audit_limit", 500), 500, 10, 10000)
+        configured_audit = str(ctx.get_config("audit_path", "") or "").strip()
+        self.audit_path = (
+            pathlib.Path(configured_audit).expanduser()
+            if configured_audit
+            else _default_profile_home() / "plugin-data" / "skill-proof" / "audit.jsonl"
+        )
+        self._audit_writes = 0
+        self._audit_broken = False
 
     @staticmethod
     def _key(session_id: Any, task_id: Any, turn_id: Any) -> tuple[str, str, str]:
@@ -322,6 +334,63 @@ class SkillProofPlugin:
         return f"{response_text}{marker} {detail}]"
 
     @staticmethod
+    def _format_why(report: Mapping[str, Any], asked: str = "") -> str:
+        skill = report.get("skill") if isinstance(report.get("skill"), Mapping) else {}
+        decision = report.get("decision") if isinstance(report.get("decision"), Mapping) else {}
+        thresholds = report.get("thresholds") if isinstance(report.get("thresholds"), Mapping) else {}
+        selected = report.get("selected") if isinstance(report.get("selected"), Mapping) else None
+        lines = [
+            f"Turn: {report.get('turn_id')}  "
+            f"decision={decision.get('status')}/{decision.get('reason')}  "
+            f"thresholds min_score={thresholds.get('min_score')} "
+            f"min_margin={thresholds.get('min_margin')}"
+        ]
+        if selected:
+            lines.append(
+                f"Selected: {selected.get('name')} score={selected.get('score')} "
+                f"reasons={','.join(selected.get('reasons') or [])}"
+            )
+        else:
+            lines.append("Selected: none")
+        vetoed = report.get("vetoed") or []
+        if vetoed:
+            lines.append(f"Vetoed this turn: {', '.join(vetoed)}")
+        if skill:
+            verdict = skill.get("verdict")
+            lines.append(f"Asked about: {asked}")
+            if verdict == "selected":
+                lines.append(
+                    f"  -> selected: score={skill.get('score')} "
+                    f"reasons={','.join(skill.get('reasons') or [])}"
+                )
+            elif verdict == "vetoed":
+                lines.append("  -> vetoed by this turn's wording; it never entered the ranking")
+            elif verdict in ("ranked", "below_threshold"):
+                lines.append(
+                    f"  -> ranked #{skill.get('rank')} at {skill.get('score')} "
+                    f"(threshold {skill.get('threshold')}) "
+                    f"threshold_met={skill.get('threshold_met')} "
+                    f"gap_to_top={skill.get('gap_to_top')}"
+                )
+                if skill.get("reasons"):
+                    lines.append(f"  -> matched on {','.join(skill.get('reasons'))}")
+            elif verdict == "unknown_skill":
+                lines.append("  -> no indexed SKILL.md under the configured roots has this name")
+            elif verdict == "not_ranked":
+                lines.append(f"  -> {skill.get('note')}")
+            else:
+                lines.append(f"  -> {skill.get('note')}")
+        if isinstance(report.get("rank_table"), list) and report["rank_table"]:
+            lines.append("Top ranked this turn:")
+            for row in report["rank_table"][:5]:
+                lines.append(
+                    f"  - {row.get('name')} {row.get('score')} "
+                    f"({','.join(row.get('reasons') or [])})"
+                )
+        lines.append("Evidence is derived numbers only; Skill Proof never stores prompts.")
+        return "\n".join(lines)
+
+    @staticmethod
     def _receipt_summary(receipt: Mapping[str, Any]) -> str:
         selected = receipt.get("selected")
         selected_name = selected.get("name") if isinstance(selected, Mapping) else "none"
@@ -380,7 +449,85 @@ class SkillProofPlugin:
             current = self.engine.receipt(session_id=str(session_id or ""), task_id=str(task_id or ""))
             effective_turn_id = str(current.get("turn_id") or "")
         if effective_turn_id:
-            self._persist(self.engine.finish_turn(turn_id=effective_turn_id))
+            payload = self.engine.finish_turn(turn_id=effective_turn_id)
+            self._persist(payload)
+            self._write_audit(payload, session_id)
+
+    # --- Append-only decision log ----------------------------------------
+    #
+    # Derived numbers only: no prompt, no skill body. One JSON object per line,
+    # so the file can be diffed, tailed, or shipped to a log store as-is.
+
+    @staticmethod
+    def _audit_record(receipt: Mapping[str, Any], session_id: str) -> dict[str, Any]:
+        decision = receipt.get("decision") if isinstance(receipt.get("decision"), Mapping) else {}
+        selected = receipt.get("selected") if isinstance(receipt.get("selected"), Mapping) else {}
+        evidence = receipt.get("evidence") if isinstance(receipt.get("evidence"), Mapping) else {}
+        session = evidence.get("session") if isinstance(evidence.get("session"), Mapping) else {}
+        runtime = receipt.get("runtime") if isinstance(receipt.get("runtime"), Mapping) else {}
+        performance = receipt.get("performance") if isinstance(receipt.get("performance"), Mapping) else {}
+        return {
+            "schema": "skill-proof.audit.v1",
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "turn_id": receipt.get("turn_id"),
+            "session_sha256": hashlib.sha256(str(session_id or "").encode("utf-8")).hexdigest()[:16],
+            "status": decision.get("status"),
+            "reason": decision.get("reason"),
+            "selected": selected.get("name"),
+            "score": selected.get("score"),
+            "reasons": list(selected.get("reasons") or []),
+            "explicit": bool(decision.get("explicit")),
+            "focus": session.get("focus"),
+            "loaded": bool(evidence.get("hermes_loaded_event")),
+            "compliance": receipt.get("compliance"),
+            "active": bool(runtime.get("active")),
+            "errors": list(receipt.get("errors") or []),
+            "query_sha256": receipt.get("query_sha256"),
+            "catalog_size": (receipt.get("catalog") or {}).get("skill_count")
+            if isinstance(receipt.get("catalog"), Mapping) else None,
+            "total_ms": performance.get("total_ms"),
+        }
+
+    def _write_audit(self, receipt: Mapping[str, Any], session_id: str) -> None:
+        if not receipt or not self.audit_enabled or self._audit_broken:
+            return
+        try:
+            self.audit_path.parent.mkdir(parents=True, exist_ok=True)
+            line = json.dumps(self._audit_record(receipt, session_id), ensure_ascii=False)
+            with self.audit_path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+            self._audit_writes += 1
+            if self._audit_writes % 50 == 0:
+                self._rotate_audit()
+        except OSError:
+            # A broken audit file must never break a turn; stop trying quietly.
+            self._audit_broken = True
+            logger.exception("Skill Proof could not append to %s", self.audit_path)
+
+    def _rotate_audit(self) -> None:
+        if not self.audit_path.is_file():
+            return
+        lines = self.audit_path.read_text(encoding="utf-8").splitlines()
+        if len(lines) <= self.audit_limit:
+            return
+        kept = [line for line in lines[-self.audit_limit:] if line.strip()]
+        self.audit_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+    def _audit_tail(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Most recent audit records (read-only, for health/reporting)."""
+        if not self.audit_enabled or not self.audit_path.is_file():
+            return []
+        try:
+            lines = self.audit_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        records: list[dict[str, Any]] = []
+        for line in lines[-limit:]:
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return records
 
     def on_session_end(self, session_id: str = "", **_: Any) -> None:
         current = self.engine.receipt(session_id=str(session_id or ""))
@@ -392,9 +539,23 @@ class SkillProofPlugin:
         self.engine.forget_session(str(session_id or ""))
 
     def handle_command(self, raw_args: str = "") -> str:
-        command = str(raw_args or "").strip().casefold() or "status"
+        parts = str(raw_args or "").strip().split(None, 1)
+        command = parts[0].casefold() if parts else "status"
+        argument = parts[1].strip() if len(parts) > 1 else ""
         if command in {"help", "-h", "--help"}:
             return _HELP
+        if command == "why":
+            if not argument:
+                return "Usage: /skill-proof why <skill name>\n\n" + _HELP
+            report = self.engine.explain(
+                argument, turn_id=self.engine.latest_turn_id
+            )
+            if not report.get("available"):
+                return (
+                    "No live Skill Proof turn is available in this process, so the ranking "
+                    "cannot be explained. Use /skill-proof trace for the persisted receipt."
+                )
+            return self._format_why(report, argument)
         if command == "health":
             receipt = self._latest_receipt()
             with self._health_lock:
@@ -410,6 +571,13 @@ class SkillProofPlugin:
                 'hub': self.engine.hub_status(),
                 'root_suggestions': self.engine.root_suggestions(),
                 'session': (receipt.get('evidence') or {}).get('session', {}),
+                'audit': {
+                    'enabled': self.audit_enabled,
+                    'path': str(self.audit_path),
+                    'limit': self.audit_limit,
+                    'broken': self._audit_broken,
+                    'recent': self._audit_tail(3),
+                },
                 'note': 'Hook counts mean invocation, not success. Timing is plugin pre-LLM work, not model latency.',
             }
             return json.dumps(report, ensure_ascii=False, indent=2)
@@ -489,7 +657,7 @@ class SkillProofPlugin:
             "skill-proof",
             handler=self.handle_command,
             description="Inspect skill selection, load evidence, and proof limits.",
-            args_hint="status|explain|trace|refresh|health",
+            args_hint="status|explain|why <name>|trace|refresh|health",
             argument_mode="options",
         )
 

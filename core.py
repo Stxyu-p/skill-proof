@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -1011,6 +1011,15 @@ class RankedCandidate:
 
 
 @dataclass(frozen=True)
+class RankRow:
+    """One row of the full lexical ranking, kept for ``/skill-proof why``."""
+
+    name: str
+    score: float
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Selection:
     status: str
     reason: str
@@ -1018,6 +1027,19 @@ class Selection:
     candidates: tuple[RankedCandidate, ...]
     explicit: bool
     required: bool
+    # Every skill that scored above zero this turn (bounded), so an "why not X"
+    # question can be answered exactly without ever storing the prompt.
+    rank_table: tuple[RankRow, ...] = ()
+
+
+_RANK_TABLE_LIMIT = 20
+
+
+def _rank_table(ranked: Sequence[RankedCandidate]) -> tuple[RankRow, ...]:
+    return tuple(
+        RankRow(item.skill.name, item.score, item.reasons)
+        for item in ranked[:_RANK_TABLE_LIMIT]
+    )
 
 
 def _rank(
@@ -1181,18 +1203,27 @@ def select_skill(
         ranked_vetoed = _rank(
             catalog, query, synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
         )
-        return Selection("no_match", "negated_skill", None, tuple(ranked_vetoed[:limit]), False, False)
+        return Selection(
+            "no_match",
+            "negated_skill",
+            None,
+            tuple(ranked_vetoed[:limit]),
+            False,
+            False,
+            _rank_table(ranked_vetoed),
+        )
 
     ranked = _rank(
         catalog, query, synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
     )
+    table = _rank_table(ranked)
     if not ranked or ranked[0].score < float(min_score):
         if any(_skill_is_negated(skill.name, query) for skill in catalog.skills):
-            return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False)
-        return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False)
+            return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False, table)
+        return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table)
     if len(ranked) > 1 and ranked[0].score - ranked[1].score < float(min_margin):
-        return Selection("ambiguous", "insufficient_margin", None, tuple(ranked[:limit]), False, False)
-    return Selection("selected", "lexical_match", ranked[0], tuple(ranked[:limit]), False, False)
+        return Selection("ambiguous", "insufficient_margin", None, tuple(ranked[:limit]), False, False, table)
+    return Selection("selected", "lexical_match", ranked[0], tuple(ranked[:limit]), False, False, table)
 
 
 @dataclass(frozen=True)
@@ -1240,6 +1271,10 @@ class _TurnState:
     host_unindexed: tuple[str, ...] = ()
     hub: dict = field(default_factory=dict)
     session: dict = field(default_factory=dict)
+    vetoed: tuple[str, ...] = ()
+    # Normalized names of the *unfiltered* local catalog, kept so "why" can
+    # tell "not indexed" apart from "excluded by the host listing".
+    indexed_names: frozenset = frozenset()
     performance: dict = field(default_factory=dict)
     source_path_match: str = "unknown"
     compliance: str = "unassessed"
@@ -1412,7 +1447,178 @@ class SkillProofEngine:
         if len(matches) != 1 or _skill_is_negated(matches[0].name, query):
             return selection
         candidate = RankedCandidate(matches[0], 0.0, ("dialogue_focus_fallback",))
-        return Selection("selected", "focus_fallback", candidate, (candidate,), False, False)
+        return Selection(
+            "selected",
+            "focus_fallback",
+            candidate,
+            (candidate,),
+            False,
+            False,
+            selection.rank_table,
+        )
+
+    def explain(
+        self,
+        skill_name: str = "",
+        *,
+        turn_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Answer "why (not) this skill?" from stored derived numbers.
+
+        The prompt is never read or returned: the report is built from the rank
+        table, the veto list, and the thresholds recorded for this turn.
+        """
+        wanted = normalize_identifier(skill_name)
+        with self._lock:
+            state = self._state(turn_id=turn_id, session_id=session_id, task_id=task_id)
+            if state is None:
+                return {"available": False, "reason": "no_turn_observed"}
+            selection = state.selection
+            report: dict[str, Any] = {
+                "available": True,
+                "turn_id": state.turn_id,
+                "decision": {
+                    "status": selection.status,
+                    "reason": selection.reason,
+                    "explicit": selection.explicit,
+                    "required": selection.required,
+                },
+                "thresholds": {
+                    "min_score": self.min_score,
+                    "min_margin": self.min_margin,
+                    "max_candidates": self.max_candidates,
+                },
+                "selected": (
+                    None
+                    if selection.selected is None
+                    else {
+                        "name": selection.selected.skill.name,
+                        "score": selection.selected.score,
+                        "reasons": list(selection.selected.reasons),
+                    }
+                ),
+                "candidates": [
+                    {"name": item.skill.name, "score": item.score, "reasons": list(item.reasons)}
+                    for item in selection.candidates
+                ],
+                "ranked_count": len(selection.rank_table),
+                "rank_table": [
+                    {"name": row.name, "score": row.score, "reasons": list(row.reasons)}
+                    for row in selection.rank_table
+                ],
+                "vetoed": list(state.vetoed),
+                "session": dict(state.session),
+                "catalog_size": len(state.catalog.skills),
+                "query_sha256": state.query_sha256,
+            }
+            if wanted:
+                report["skill"] = self._explain_skill(state, wanted)
+            return report
+
+    def _explain_skill(self, state: _TurnState, wanted: str) -> dict[str, Any]:
+        selection = state.selection
+        base: dict[str, Any] = {
+            "in_catalog": bool(state.catalog.by_name(wanted)),
+            "threshold": self.min_score,
+        }
+        if wanted in state.indexed_names:
+            base["indexed"] = True
+        elif state.indexed_names:
+            base["indexed"] = False
+        if selection.selected is not None and selection.selected.skill.normalized_name == wanted:
+            base.update(
+                verdict="selected",
+                name=selection.selected.skill.name,
+                score=selection.selected.score,
+                reasons=list(selection.selected.reasons),
+                threshold_met=True,
+            )
+            return base
+        if wanted in {normalize_identifier(name) for name in state.vetoed}:
+            base.update(
+                verdict="vetoed",
+                name=None,
+                score=None,
+                reasons=["negated_in_query"],
+                threshold_met=None,
+                note=(
+                    "The turn vetoed this skill, so it never entered the ranking. "
+                    "Skill Proof does not store prompts, so the wording is not available here."
+                ),
+            )
+            return base
+        # Only a turn that skipped lexical ranking has no score to give; a turn
+        # that ranked but scored nothing falls through to no_signal.
+        if not selection.rank_table and (
+            selection.explicit or selection.reason == "hermes_catalog_unavailable"
+        ):
+            base.update(
+                verdict="not_ranked",
+                name=None,
+                score=None,
+                reasons=[selection.reason],
+                threshold_met=None,
+                note=(
+                    "This turn was decided without lexical ranking "
+                    f"({selection.reason}), so no score exists for this skill."
+                ),
+            )
+            return base
+        for index, row in enumerate(selection.rank_table):
+            if normalize_identifier(row.name) == wanted:
+                base.update(
+                    verdict="below_threshold" if row.score < self.min_score else "ranked",
+                    name=row.name,
+                    score=row.score,
+                    rank=index + 1,
+                    reasons=list(row.reasons),
+                    threshold_met=row.score >= self.min_score,
+                    gap_to_top=round(max(0.0, selection.rank_table[0].score - row.score), 6),
+                )
+                return base
+        if not base["in_catalog"] and base.get("indexed"):
+            base.update(
+                verdict="not_listed_by_host",
+                name=None,
+                score=None,
+                reasons=[],
+                threshold_met=False,
+                note=(
+                    "A SKILL.md for this name exists under the configured roots, but the host's "
+                    "skill listing for this turn did not include it, so it was excluded from "
+                    "ranking. Not indexed is a different failure."
+                ),
+            )
+            return base
+        if not base["in_catalog"]:
+            base.update(
+                verdict="unknown_skill",
+                name=None,
+                score=None,
+                reasons=[],
+                threshold_met=False,
+                note="No indexed SKILL.md under the configured roots has this name.",
+            )
+            return base
+        last = selection.rank_table[-1].score
+        capped = len(selection.rank_table) >= _RANK_TABLE_LIMIT
+        base.update(
+            verdict="ranked_below_cap" if capped else "no_signal",
+            name=None,
+            score=round(last, 6) if capped else 0.0,
+            score_is_ceiling=capped,
+            reasons=[],
+            threshold_met=False,
+            note=(
+                f"Scored at or below {last} this turn."
+                if capped
+                else "No term in this turn overlapped this skill's name, description, tags, "
+                "aliases, or spaceless-script characters."
+            ),
+        )
+        return base
 
     @staticmethod
     def _session_evidence(memory: _SessionMemory, dialogue: Mapping[str, Any]) -> dict[str, Any]:
@@ -1605,6 +1811,7 @@ class SkillProofEngine:
             catalog = scan_catalog(self._roots, max_skill_bytes=self.max_skill_bytes, cache=self._catalog_cache, metrics=metrics)
         metrics['scan_ms'] = round((time.perf_counter() - core_started) * 1000, 3)
         local_count = len(catalog.skills)
+        indexed_names = frozenset(skill.normalized_name for skill in catalog.skills)
         host_unindexed: tuple[str, ...] = ()
         selection_started = time.perf_counter()
         if available_names is not None:
@@ -1666,7 +1873,13 @@ class SkillProofEngine:
                     if selection.status == "no_match":
                         dialogue["released"] = released or named
                         selection = Selection(
-                            "no_match", "focus_released", None, selection.candidates, False, False
+                            "no_match",
+                            "focus_released",
+                            None,
+                            selection.candidates,
+                            False,
+                            False,
+                            selection.rank_table,
                         )
         if selection is None:
             focus = memory.focus if memory is not None else None
@@ -1726,6 +1939,12 @@ class SkillProofEngine:
             host_unindexed=host_unindexed,
             host_name_count=None if available_names is None or availability_error else len(available_names),
             session=session_evidence,
+            indexed_names=indexed_names,
+            # Recorded so "why not X" can say vetoed instead of guessing; the
+            # same scan runs inside _rank for every turn (about 0.5 ms).
+            vetoed=tuple(
+                skill.name for skill in catalog.skills if _skill_is_negated(skill.name, query_text)
+            ),
             performance=metrics,
         )
         with self._lock:
