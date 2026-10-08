@@ -26,7 +26,7 @@ from typing import Any, Mapping, Optional, Sequence
 __version__ = "0.10.0"
 
 
-_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
 _EXCLUDED_DIRS = {
     ".archive",
     ".git",
@@ -2017,7 +2017,37 @@ class SkillProofEngine:
         if availability_error:
             context = "Skill Proof cannot read Hermes skills_list. Skill availability is unknown; report this limitation."
         if len(context.encode("utf-8")) > self.context_budget_bytes:
-            context = ""
+            if availability_error:
+                compact_context = "Skill list unavailable; availability is unknown."
+            elif selection.status == "selected" and selection.selected is not None:
+                name = selection.selected.skill.name
+                if self.mode == "observe":
+                    compact_context = f'Candidate: "{name}"; use skill_view if needed.'
+                elif selection.reason in ("dialogue_reference", "dialogue_reference_previous"):
+                    compact_context = f'Previously used: "{name}"; load via skill_view.'
+                elif selection.reason == "focus_requested":
+                    compact_context = f'Focus: "{name}"; use skill_view first.'
+                elif selection.reason == "focus_fallback":
+                    compact_context = f'Focus candidate: "{name}"; load via skill_view if relevant.'
+                else:
+                    compact_context = f'Use skill_view for "{name}" first.'
+            elif selection.status == "ambiguous":
+                compact_context = "Skill match ambiguous; ask which to load."
+            elif selection.status == "blocked" and selection.explicit:
+                compact_context = "Requested skill unavailable; do not claim it loaded."
+            elif selection.reason == "no_previous_selection":
+                compact_context = "No prior skill; ask which one to load."
+            elif selection.reason == "dialogue_reference_unavailable":
+                compact_context = "Previously used skill unavailable; do not claim loaded."
+            elif selection.reason == "dialogue_reference_unknown":
+                compact_context = "Unknown skill; ask the user which one."
+            else:
+                compact_context = ""
+            context = (
+                compact_context
+                if len(compact_context.encode("utf-8")) <= self.context_budget_bytes
+                else ""
+            )
             errors.append("context_budget_exceeded")
         state = _TurnState(
             turn_id=clean_turn_id,

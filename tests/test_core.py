@@ -86,6 +86,14 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual([skill.name for skill in catalog.skills], ["valid-skill"])
         self.assertIn("invalid_frontmatter", {item.code for item in catalog.diagnostics})
 
+    def test_spaced_skill_name_is_valid(self):
+        self.write_skill("sf", "Skill Factory", "A meta-skill that watches workflows")
+
+        catalog = scan_catalog({"local": self.root})
+
+        self.assertEqual([skill.name for skill in catalog.skills], ["Skill Factory"])
+        self.assertEqual(catalog.skills[0].normalized_name, "skill factory")
+
     def test_invalid_utf8_is_excluded(self):
         bad = self.root / "bad-utf8"
         bad.mkdir()
@@ -384,13 +392,27 @@ class EngineTests(unittest.TestCase):
         self.assertLessEqual(len(turn.context.encode("utf-8")), 800)
         self.assertNotIn(str(self.root), turn.context)
 
-    def test_context_budget_failure_does_not_silently_truncate(self):
-        engine = self.engine(context_budget_bytes=32)
+    def test_context_budget_uses_a_safe_compact_selection_message(self):
+        engine = self.engine(context_budget_bytes=40)
 
         turn = self.begin(engine)
 
+        self.assertEqual(turn.context, 'Use skill_view for "python-tdd" first.')
+        self.assertLessEqual(len(turn.context.encode("utf-8")), 40)
+        self.assertIn("context_budget_exceeded", turn.errors)
+
+    def test_tiny_context_budget_does_not_bypass_enforcement(self):
+        engine = self.engine(mode="enforce", context_budget_bytes=1)
+
+        turn = self.begin(engine)
+        blocked = engine.guard_tool(
+            turn_id="turn-1", session_id="session-1", task_id="task-1", tool_name="terminal"
+        )
+
         self.assertEqual(turn.context, "")
         self.assertIn("context_budget_exceeded", turn.errors)
+        self.assertFalse(blocked.allowed)
+        self.assertEqual(blocked.reason, "selected_skill_not_loaded")
 
     def test_enforce_blocks_operational_tool_until_selected_skill_loads(self):
         engine = self.engine(mode="enforce")

@@ -481,7 +481,8 @@ class FakeState:
 
 class FakeContext:
     def __init__(self, settings=None, names=("python-tdd", "slides")):
-        self.settings = settings or {}
+        self.settings = dict(settings or {})
+        self.settings.setdefault("audit_log", False)
         self.names = list(names)
         self.hooks = {}
         self.commands = {}

@@ -254,6 +254,27 @@
       "tier": "core",
       "note": "spaceless Thai with a polite particle appended"
     },
+    {
+      "query": "ช่วยตรวจทาน เอกสารไทย ฉบับนี้ให้เรียบร้อย",
+      "expected": "thai-docs",
+      "category": "thai",
+      "tier": "core",
+      "note": "bilingual Thai document proofing with alias matching"
+    },
+    {
+      "query": "ช่วยเขียน unit test แบบ tdd สำหรับโค้ด python หน่อย",
+      "expected": "python-tdd",
+      "category": "thai",
+      "tier": "core",
+      "note": "bilingual Thai prompt requesting Python unit test with TDD alias"
+    },
+    {
+      "query": "ช่วยออกแบบ landing-page สำหรับเว็บใหม่ให้สวยๆ หน่อย",
+      "expected": "frontend-design",
+      "category": "thai",
+      "tier": "core",
+      "note": "bilingual Thai prompt requesting landing-page frontend design"
+    },
 
     {
       "query": "don't use the skill python-tdd, just ship it",
@@ -353,6 +374,48 @@
       "expected": null,
       "category": "abstain",
       "tier": "core"
+    },
+    {
+      "query": "Can you review this dinner menu?",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core",
+      "note": "hard-negative: distractor token review without code review context"
+    },
+    {
+      "query": "I crashed my bike on the way home",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core",
+      "note": "hard-negative: distractor token crash without software debugging context"
+    },
+    {
+      "query": "ขอสูตรทำอาหารไทยง่ายๆ หน่อย",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core",
+      "note": "hard-negative: Thai cuisine prompt sharing language token but no documentation task"
+    },
+    {
+      "query": "ช่วยตรวจแกรมม่าภาษาอังกฤษในบทความนี้หน่อย",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core",
+      "note": "hard-negative: English grammar review must not trigger thai-docs"
+    },
+    {
+      "query": "clean up this messy python script",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core",
+      "note": "hard-negative: clean/messy script must not trigger tabular data-cleaning"
+    },
+    {
+      "query": "อากาศวันนี้ที่เชียงใหม่เป็นอย่างไรบ้าง",
+      "expected": null,
+      "category": "abstain",
+      "tier": "core",
+      "note": "hard-negative: general conversational query in Thai without skill intent"
     },
 
     {

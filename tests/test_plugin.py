@@ -43,7 +43,8 @@ class FakeState:
 
 class FakeContext:
     def __init__(self, settings=None):
-        self.settings = settings or {}
+        self.settings = dict(settings or {})
+        self.settings.setdefault("audit_log", False)
         self.hooks = {}
         self.commands = {}
         self.state = FakeState()
@@ -78,6 +79,10 @@ class PluginAdapterTests(unittest.TestCase):
         base = {"skill_roots": [str(self.root)], "visible_receipt": True, "receipt_style": "verbose"}
         base.update(settings)
         return FakeContext(base)
+
+    def test_fake_context_disables_audit_by_default(self):
+        instance = plugin_module.SkillProofPlugin(self.context())
+        self.assertFalse(instance.audit_enabled)
 
     def test_register_declares_complete_runtime_surface(self):
         ctx = self.context()

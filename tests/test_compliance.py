@@ -136,7 +136,9 @@ Only inspect, never modify.
 
 class ComplianceFakeContext(FakeContext):
     def __init__(self, settings=None, skills=None):
-        super().__init__(settings)
+        isolated = dict(settings or {})
+        isolated.setdefault("audit_log", False)
+        super().__init__(isolated)
         self._skills = skills or [{'name': 'python-tdd'}]
 
     def dispatch_tool(self, name, args):

@@ -130,7 +130,8 @@ class FakeState:
 
 class FakeContext:
     def __init__(self, settings=None):
-        self.settings = settings or {}
+        self.settings = dict(settings or {})
+        self.settings.setdefault("audit_log", False)
         self.hooks = {}
         self.commands = {}
         self.state = FakeState()
