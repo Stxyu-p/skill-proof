@@ -12,11 +12,13 @@ import json
 import os
 import pathlib
 import re
+import stat
 import threading
 import time
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
+from functools import lru_cache
 from math import log
 from typing import Any, Mapping, Optional, Sequence
 
@@ -183,7 +185,23 @@ def _parse_skill(
             else:
                 fields[stripped_key] = _parse_scalar(value, stripped_key)
         elif stripped_key == "tags":
-            tags = _parse_inline_tags(value)
+            if value.strip():
+                tags = _parse_inline_tags(value)
+            else:
+                # YAML block list form ("tags:" then "  - ui" lines).
+                cursor = index + 1
+                collected: list[str] = []
+                while cursor < closing:
+                    subline = lines[cursor]
+                    if subline.strip() and not subline[0].isspace():
+                        break
+                    stripped_sub = subline.strip()
+                    if stripped_sub.startswith("-"):
+                        collected.append(stripped_sub[1:].strip())
+                    cursor += 1
+                skip_until = cursor
+                if collected:
+                    tags = _parse_inline_tags("[" + ", ".join(collected) + "]")
         elif is_top_level and stripped_key == "invariants":
             cursor = index + 1
             inv_lines = []
@@ -241,6 +259,78 @@ def _is_within(path: pathlib.Path, root: pathlib.Path) -> bool:
         return False
 
 
+def _is_reparse_point(path: pathlib.Path) -> bool:
+    """True for symlinks, Windows junctions, and other reparse points.
+
+    ``Path.is_symlink`` misses junctions on Windows (Python 3.11), so junction
+    directories were silently walked into and only rejected later as the
+    generic ``unsafe_path``.  Classify them explicitly instead.
+    """
+    try:
+        if path.is_symlink():
+            return True
+        info = path.lstat()
+    except OSError:
+        return False
+    attributes = getattr(info, "st_file_attributes", 0)
+    if attributes and attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+        return True
+    return bool(getattr(info, "st_reparse_tag", 0))
+
+
+def _apply_cross_root_precedence(
+    found: list[SkillRecord], roots: Mapping[str, os.PathLike[str] | str], diagnostics: list[Diagnostic]
+) -> list[SkillRecord]:
+    """Resolve duplicate skill names across roots by configured root order.
+
+    The first configured root that indexes a name wins.  Cross-root twins that
+    are byte-identical collapse as ``alias_skipped`` (a junction facade plus its
+    physical store); divergent copies of the same name are reported as
+    ``shadowed_by_root`` so the winner stays auditable.  Same-name records
+    INSIDE one root remain ambiguous ``duplicate_name`` (fail closed).
+    """
+    priority = {str(root_id): index for index, root_id in enumerate(roots)}
+    same_root_twins: set[str] = set()
+    seen_per_root: dict[str, set[str]] = {}
+    for skill in found:
+        names_in_root = seen_per_root.setdefault(skill.root_id, set())
+        if skill.normalized_name in names_in_root:
+            same_root_twins.add(skill.normalized_name)
+        names_in_root.add(skill.normalized_name)
+    ordered = sorted(
+        found,
+        key=lambda skill: (
+            priority.get(skill.root_id, len(priority)),
+            skill.normalized_name,
+            skill.root_id,
+            skill.relative_path,
+        ),
+    )
+    winners: dict[str, SkillRecord] = {}
+    survivors: list[SkillRecord] = []
+    for skill in ordered:
+        if skill.normalized_name in same_root_twins:
+            survivors.append(skill)
+            continue
+        current = winners.get(skill.normalized_name)
+        if current is None:
+            winners[skill.normalized_name] = skill
+            survivors.append(skill)
+            continue
+        identical = (
+            skill.source_sha256 == current.source_sha256 and skill.source_bytes == current.source_bytes
+        )
+        diagnostics.append(
+            Diagnostic(
+                "alias_skipped" if identical else "shadowed_by_root",
+                skill.root_id,
+                skill.relative_path,
+                skill.name,
+            )
+        )
+    return survivors
+
+
 def scan_catalog(
     roots: Mapping[str, os.PathLike[str] | str],
     *,
@@ -284,6 +374,9 @@ def scan_catalog(
                     continue
                 if child.is_symlink():
                     diagnostics.append(Diagnostic("unsafe_symlink", root_id, relative))
+                    continue
+                if _is_reparse_point(child):
+                    diagnostics.append(Diagnostic("unsafe_reparse", root_id, relative))
                     continue
                 safe_dirs.append(dirname)
             dirs[:] = safe_dirs
@@ -343,6 +436,7 @@ def scan_catalog(
     if cache is not None:
         for key in set(cache) - live_cache_keys:
             del cache[key]
+    found = _apply_cross_root_precedence(found, roots, diagnostics)
     found.sort(key=lambda skill: (skill.normalized_name, skill.root_id, skill.relative_path))
     name_counts: dict[str, int] = {}
     for skill in found:
@@ -428,21 +522,18 @@ def _tokens(value: str) -> tuple[str, ...]:
     )
 
 
+@lru_cache(maxsize=2048)
+def _identifier_pattern(normalized_identifier: str) -> "re.Pattern[str]":
+    return re.compile(rf"(?<!\w){re.escape(normalized_identifier)}(?!\w)")
+
+
 def _identifier_in_query(identifier: str, query: str) -> bool:
-    escaped = re.escape(normalize_identifier(identifier))
-    normalized_query = normalize_identifier(query)
-    return bool(re.search(rf"(?<!\w){escaped}(?!\w)", normalized_query))
+    return bool(_identifier_pattern(normalize_identifier(identifier)).search(normalize_identifier(query)))
 
 
 _NEGATION_WORDS = (
-    "do\\s+not",
-    "don't",
-    "doesn't",
-    "never",
-    "without",
-    "except",
-    "not",
-    "no",
+    # Thai vetoes keep the loose window: spaceless text needs back-tracking
+    # inside a non-space run ("ไม่ต้องใช้python-tdd").
     "ไม่ต้อง",
     "ไม่ใช้",
     "ไม่เอา",
@@ -453,21 +544,60 @@ _NEGATION_WORDS = (
     "อย่า",
     "ไม่",
 )
+_ENGLISH_NEGATION_WORDS = (
+    "do\\s+not",
+    "don't",
+    "doesn't",
+    "never",
+    "without",
+    "except",
+    "not",
+    "no",
+)
+
+# Closed vocabulary for English veto clauses ("don't use the skill X").  Only
+# these words may sit between a negation and the skill name, so a request like
+# "do not forget to use X" is never misread as a veto.
+_NEGATION_FILLERS = (
+    "ever", "really", "actually", "just", "again", "simply", "even",
+    "want", "wants", "wanted", "need", "needs", "needed", "to",
+    "use", "uses", "using", "load", "loads", "loading", "select",
+    "selecting", "choose", "choosing", "pick", "picking", "invoke",
+    "call", "run", "running",
+    "the", "a", "an", "any", "that", "this", "those", "these", "my", "its",
+    "skill", "skills", "สกิล",
+)
+
+
+@lru_cache(maxsize=1024)
+def _negation_patterns(normalized_name: str) -> "tuple[re.Pattern[str], re.Pattern[str]]":
+    """Compiled veto patterns per skill name (compiling per call cost ~1 ms x N skills
+    and overflowed the re module cache on large catalogs)."""
+    tail = r"[`\"']?\$?" + re.escape(normalized_name) + r"(?![a-z0-9_-])"
+    loose = re.compile(r"(?<!\w)(?:" + "|".join(_NEGATION_WORDS) + r")(?:\s*\S+){0,2}\s*" + tail)
+    negations = "|".join(_NEGATION_WORDS + _ENGLISH_NEGATION_WORDS)
+    structured = re.compile(
+        r"(?<!\w)(?:" + negations + r")"
+        r"(?:\s+(?:" + "|".join(_NEGATION_FILLERS) + r"))*"
+        r"\s*" + tail
+    )
+    return loose, structured
 
 
 def _skill_is_negated(name: str, query: str) -> bool:
-    """True when the query vetoes *name* ("don't use X", "ไม่เอา X")."""
+    """True when the query vetoes *name* ("don't use X", "ไม่เอา X").
+
+    Two shapes are accepted: a loose window for Thai vetoes (spaceless text
+    needs back-tracking inside one non-space run) and a filler-vocabulary
+    clause for English vetoes ("do not use the skill X") that still refuses
+    non-veto phrasings such as "do not forget to use X".
+    """
     normalized_name = normalize_identifier(name)
     if not normalized_name:
         return False
-    pattern = (
-        r"(?<!\w)(?:"
-        + "|".join(_NEGATION_WORDS)
-        + r")(?:\s*\S+){0,2}\s*"
-        + re.escape(normalized_name)
-        + r"(?![a-z0-9_-])"
-    )
-    return bool(re.search(pattern, normalize_identifier(query)))
+    normalized_query = normalize_identifier(query)
+    loose, structured = _negation_patterns(normalized_name)
+    return bool(loose.search(normalized_query)) or bool(structured.search(normalized_query))
 
 
 def _phrase_present(shorter: str, longer: str) -> bool:
@@ -667,6 +797,7 @@ class _TurnState:
     availability: str = "local_only"
     local_skill_count: int = 0
     host_name_count: Optional[int] = None
+    host_unindexed: tuple[str, ...] = ()
     performance: dict = field(default_factory=dict)
     source_path_match: str = "unknown"
     compliance: str = "unassessed"
@@ -789,6 +920,11 @@ class SkillProofEngine:
                 "skill compliance or task verification."
             )
         if selection.status == "blocked" and selection.explicit:
+            if selection.reason == "listed_but_unindexed":
+                return (
+                    "Skill Proof: Hermes lists the requested skill, but no local SKILL.md under "
+                    "the configured roots could be indexed for it. Do not claim that it was loaded."
+                )
             return (
                 f"Skill Proof could not resolve the explicitly requested skill "
                 f"({selection.reason}). Do not claim that it was loaded."
@@ -817,9 +953,14 @@ class SkillProofEngine:
             catalog = scan_catalog(self._roots, max_skill_bytes=self.max_skill_bytes, cache=self._catalog_cache, metrics=metrics)
         metrics['scan_ms'] = round((time.perf_counter() - core_started) * 1000, 3)
         local_count = len(catalog.skills)
+        host_unindexed: tuple[str, ...] = ()
         selection_started = time.perf_counter()
         if available_names is not None:
             names = {normalize_identifier(name) for name in available_names}
+            local_indexed = {skill.normalized_name for skill in catalog.skills}
+            host_unindexed = tuple(
+                sorted(str(name) for name in available_names if normalize_identifier(name) not in local_indexed)
+            )
             eligible = tuple(skill for skill in catalog.skills if skill.normalized_name in names)
             filtered_hash = hashlib.sha256(json.dumps(
                 [(s.skill_id, s.source_sha256) for s in eligible], separators=(",", ":")
@@ -838,6 +979,16 @@ class SkillProofEngine:
         )
         if availability_error:
             selection = Selection("blocked", "hermes_catalog_unavailable", None, (), bool(explicit_names), True)
+        elif (
+            selection.status == "blocked"
+            and selection.reason == "unknown_explicit_skill"
+            and host_unindexed
+            and any(normalize_identifier(name) in names for name in explicit_names)
+        ):
+            # Hermes lists the requested skill, but no local SKILL.md under the
+            # configured roots could be indexed for it: say that instead of
+            # claiming the skill is unknown.
+            selection = Selection("blocked", "listed_but_unindexed", None, (), True, True)
         metrics['selection_ms'] = round((time.perf_counter() - selection_started) * 1000, 3)
         metrics['core_ms'] = round((time.perf_counter() - core_started) * 1000, 3)
         context = self._selection_context(selection)
@@ -859,6 +1010,7 @@ class SkillProofEngine:
             errors=errors,
             availability="unavailable" if availability_error else "hermes_list" if available_names is not None else "local_only",
             local_skill_count=local_count,
+            host_unindexed=host_unindexed,
             host_name_count=None if available_names is None or availability_error else len(available_names),
             performance=metrics,
         )
@@ -1141,6 +1293,9 @@ class SkillProofEngine:
                 "availability": state.availability,
                 "local_skill_count": state.local_skill_count,
                 "host_name_count": state.host_name_count,
+                "host_unindexed_count": len(state.host_unindexed),
+                "host_unindexed_sample": list(state.host_unindexed[:10]),
+                "host_unindexed_omitted": max(0, len(state.host_unindexed) - 10),
                 "diagnostics": [{'code': d.code, 'root_id': d.root_id, 'relative_path': d.relative_path[:240]} for d in state.catalog.diagnostics[:20]],
                 "diagnostics_omitted": max(0, len(state.catalog.diagnostics) - 20),
             },

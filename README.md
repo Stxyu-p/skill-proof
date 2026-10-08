@@ -1,17 +1,17 @@
 <div align="center">
 
-# 🛡️ Skill Proof <sub>v0.4.1</sub>
+# 🛡️ Skill Proof <sub>v0.4.2</sub>
 
 **Local skill routing for Hermes agents: deterministic selection, tool gating, truthful receipts**
 
 *Python 3.11, stdlib only, offline, zero external calls, 7 hooks*
 
-[![Release: v0.4.1](https://img.shields.io/badge/Release-v0.4.1-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
+[![Release: v0.4.2](https://img.shields.io/badge/Release-v0.4.2-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
 [![Changelog](https://img.shields.io/badge/Changelog-View_Notes-blueviolet?style=for-the-badge)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 [![Hermes: Native Plugin](https://img.shields.io/badge/Hermes-Native_Plugin-7B61FF?style=for-the-badge)](https://github.com/NousResearch/hermes-agent)
 
-![Tests: 73 OK](https://img.shields.io/badge/Tests-73_OK-brightgreen?style=flat-square)
+![Tests: 89 OK](https://img.shields.io/badge/Tests-89_OK-brightgreen?style=flat-square)
 ![Routing: 12 of 12](https://img.shields.io/badge/Routing-12_of_12-brightgreen?style=flat-square)
 ![Hooks: 7](https://img.shields.io/badge/Hooks-7-blue?style=flat-square)
 ![Dependencies: Zero](https://img.shields.io/badge/Dependencies-Zero-success?style=flat-square)
@@ -53,6 +53,7 @@ Picking a skill from the prompt alone fails in predictable ways. The wrong skill
 - 🚫 **Veto handling in English and Thai:** excluded skills leave the ranking with a `negated_skill` receipt instead of becoming the selection.
 - 🔍 **Token-boundary phrase matching:** short queries stop matching inside longer words. Thai text without word spaces keeps substring matching.
 - 🧾 **Truthful receipts:** lifecycle event, source hash, and tool-result hash behind every claim. Prompts and skill bodies are never stored.
+- 🧭 **Truthful availability:** Windows junctions and other reparse points are classified instead of silently rejected, and a Hermes-listed skill with no local source reports `listed_but_unindexed` instead of `unknown`.
 - 🛡️ **Progressive gating plus invariant checks:** `observe`, `nudge`, and `enforce-tools` modes with `required`, `forbidden`, and `ordered` tool rules.
 
 ## 📊 Feature Comparison
@@ -112,9 +113,9 @@ How a turn is decided, in plain language:
 
 | Metric | Measured Value | Note |
 | :--- | :--- | :--- |
-| **Python files** | 12 | Core, hooks, benchmarks, 7 test files |
-| **Python lines** | 3,069 | Includes tests and benchmarks |
-| **Tests** | 73 passing, 2 skipped | `python -m unittest discover -s tests` |
+| **Python files** | 13 | Core, hooks, benchmarks, 8 test files |
+| **Python lines** | 3,499 | Includes tests and benchmarks |
+| **Tests** | 89 passing, 2 skipped | `python -m unittest discover -s tests` |
 | **Routing cases** | 12 of 12 | `routing_benchmark.py`, zero false selections |
 | **Hooks** | 7 | Pre and post LLM, pre and post tool, transform, lifecycle, session end |
 | **External dependencies** | 0 | Stdlib only |
@@ -167,6 +168,8 @@ plugins:
 ```
 
 Key settings: `mode` (default `nudge`), `skill_roots` (must already be readable through `skill_view`), `visible_receipt` (default `true`), `receipt_style` (`compact` or `verbose`, trace always carries full evidence), `receipt_history_limit` (default 20).
+
+When several roots index the same skill name, the first configured root wins: byte-identical copies collapse as `alias_skipped` (for example a junction facade plus its physical store), divergent copies are reported as `shadowed_by_root`, and same-root collisions stay ambiguous `duplicate_name`.
 
 ---
 
@@ -229,7 +232,7 @@ All version release notes and historical changes are documented in [CHANGELOG.md
 | :--- | :--- |
 | `core.py` | Ranking, negation guard, phrase matching, gating, receipts, invariants |
 | `__init__.py` | Hook wiring, commands, 7 hook registrations |
-| `plugin.yaml` | Manifest, version 0.4.1, config schema |
+| `plugin.yaml` | Manifest, version 0.4.2, config schema |
 | `tests/` | Discovery, ranking, gating, evidence, and isolation suites, 7 files |
 | `routing_benchmark.py`, `routing_cases.json` | Representative synthetic routing cases, 12 of 12 passing |
 | `benchmark.py` | Synthetic core performance probe |
@@ -261,7 +264,7 @@ Copyright (c) 2026 P Choke & SORA.
 
 <div align="center">
 
-**Skill Proof** <sub>v0.4.1</sub> · Built for deterministic routing
+**Skill Proof** <sub>v0.4.2</sub> · Built for deterministic routing
 
 *Local-first, Auditable, Gated, Governed*
 

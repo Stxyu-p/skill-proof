@@ -357,7 +357,7 @@ class SkillProofPlugin:
             with self._health_lock:
                 activity = {name: dict(info) for name, info in self._hook_activity.items()}
             report = {
-                'version': '0.4.1', 'mode': self.engine.mode,
+                'version': '0.4.2', 'mode': self.engine.mode,
                 'turn_status': 'observed' if receipt else 'No turn observed',
                 'receipt_origin': 'current_process' if self.engine.latest_turn_id else 'persisted' if receipt else 'none',
                 'hooks': activity,
