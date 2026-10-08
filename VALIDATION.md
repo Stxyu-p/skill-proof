@@ -62,6 +62,26 @@ Spaceless-script path measured on the real 145-skill catalog: 12-14 ms per
 selection (about 1 ms added over an equivalent Latin query, since the n-gram
 path is skipped entirely for spaced scripts).
 
+## Session memory, dialogue references, and focus — 2026-10-08 (v0.7.0)
+
+`tests/test_v070.py` (48 cases) covers repeat and previous references, focus
+request, decay, expiry, release, veto precedence, ambiguity precedence,
+fallback, unknown skill names, session scoping, and bounds on the session map
+and history stack.
+
+Observed on the live 145-skill catalog, one session, seven turns:
+`keep using ui-ux-pro-max` → `focus_requested` with `focus_remaining: 5`;
+`stop using ui-ux-pro-max` → `focus_released` and the focus cleared;
+`keep using skills-that-do-not-exist` → `dialogue_reference_unknown` (not
+`no_previous_selection`); a Thai turn with no lexical signal abstained while
+focused; an unrelated turn with no competitor selected the focused skill with
+`focus_fallback` (score 0) and a context line stating it is a fallback.
+
+Scope limits: session history records what Skill Proof selected, is bounded to
+64 sessions and 10 entries per session, and is dropped at session end. It is
+not a record of skills a host loaded on its own. `focus_turns` bounds focus to
+5 turns by default. No live model conversation was executed for these checks.
+
 ## Real host integration
 
 Set `HERMES_HOME` to a scratch profile and `PYTHONPATH` to the installed Hermes

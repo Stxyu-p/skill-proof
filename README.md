@@ -1,18 +1,18 @@
 <div align="center">
 
-# 🛡️ Skill Proof <sub>v0.6.0</sub>
+# 🛡️ Skill Proof <sub>v0.7.0</sub>
 
 **Local skill routing for Hermes agents: deterministic selection, tool gating, truthful receipts**
 
 *Python 3.11, stdlib only, offline, zero external calls, 7 hooks*
 
-[![Release: v0.6.0](https://img.shields.io/badge/Release-v0.6.0-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
+[![Release: v0.7.0](https://img.shields.io/badge/Release-v0.7.0-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
 [![Changelog](https://img.shields.io/badge/Changelog-View_Notes-blueviolet?style=for-the-badge)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 [![Hermes: Native Plugin](https://img.shields.io/badge/Hermes-Native_Plugin-7B61FF?style=for-the-badge)](https://github.com/NousResearch/hermes-agent)
 
-![Tests: 119 OK](https://img.shields.io/badge/Tests-119_OK-brightgreen?style=flat-square)
-![Routing: 12 of 12](https://img.shields.io/badge/Routing-12_of_12-brightgreen?style=flat-square)
+![Tests: 199 OK](https://img.shields.io/badge/Tests-199_OK-brightgreen?style=flat-square)
+![Routing: 48 of 48 gated](https://img.shields.io/badge/Routing-48_of_48_gated-brightgreen?style=flat-square)
 ![Hooks: 7](https://img.shields.io/badge/Hooks-7-blue?style=flat-square)
 ![Dependencies: Zero](https://img.shields.io/badge/Dependencies-Zero-success?style=flat-square)
 ![Python: 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square)
@@ -25,7 +25,7 @@
 
 **Skill Proof** answers three questions on every turn: which skill was chosen, why it won, and what evidence backs the claim.
 
-Each user turn scans the configured `SKILL.md` roots, picks one skill with deterministic lexical ranking, gates operational tools by mode, and appends a short receipt to the response. No model call. No network. No vector database. Python 3.11 with stdlib only.
+Each user turn scans the configured `SKILL.md` roots, picks one skill with deterministic lexical ranking, gates operational tools by mode, and appends a short receipt to the response. The session also remembers what it selected, so *use the same skill*, *อันที่แล้ว*, and *keep using X* resolve against that history instead of guessing. No model call. No network. No vector database. Python 3.11 with stdlib only.
 
 What a typical turn looks like:
 
@@ -56,6 +56,7 @@ Picking a skill from the prompt alone fails in predictable ways. The wrong skill
 - 🧭 **Truthful availability:** Windows junctions and other reparse points are classified instead of silently rejected, and a Hermes-listed skill with no local source reports `listed_but_unindexed` instead of `unknown`.
 - 🔗 **Provenance-aware:** the hub lock is cross-checked read-only; receipts carry trust level, scan verdict, pinned revision, and a `match`/`modified`/`unknown` bundle verdict (hash algorithm verified against live lock entries).
 - 🌍 **Language-agnostic matching:** `aliases:` and `synonyms` work in any script — Thai, CJK, Hangul and other spaceless scripts match by substring, spaced scripts keep token boundaries.
+- 🧠 **Multi-turn memory:** session history answers *use the same skill* and *อันที่แล้ว*, a bounded focus keeps the current skill in play for `focus_turns` turns, and both fail closed with a named reason when there is no history to answer from.
 - 🧳 **Beyond Hermes:** the core is host-independent; a portable CLI and a stdlib stdio MCP server bring the same selection engine to Claude Code, Codex, Antigravity, Cursor, Gemini CLI, and any MCP-capable host.
 - 🛡️ **Progressive gating plus invariant checks:** `observe`, `nudge`, and `enforce-tools` modes with `required`, `forbidden`, and `ordered` tool rules.
 
@@ -73,6 +74,7 @@ Picking a skill from the prompt alone fails in predictable ways. The wrong skill
 | **External calls** | Varies | ✅ **Zero, stdlib only, fully offline** |
 | **Hub provenance** | Load claims have no supply-chain context | ✅ **Trust level, scan verdict, pinned revision, bundle `match`/`modified`** |
 | **Non-Hermes hosts** | Locked to one agent platform | ✅ **Portable CLI plus stdio MCP server over the same engine** |
+| **Follow-up turns** | Every turn starts from zero | ✅ **Session history, `same skill`/`อันที่แล้ว` references, bounded focus with expiry** |
 
 ---
 
@@ -91,11 +93,12 @@ flowchart LR
 How a turn is decided, in plain language:
 
 1. Explicit `$name` or `skill:name` wins. A vetoed explicit name falls back to lexical ranking.
-2. Phrase and tag matches score against fixed thresholds (`min_score` 0.28, `min_margin` 0.05).
-3. Vetoed names are excluded with reason `negated_skill`.
-4. Names outside the live listing resolve to `not_in_hermes_list` with no selection.
-5. Ties, unknown names, and multiple requests return no selection with a named reason.
-6. No match allows ordinary work. Only `enforce-tools` mode blocks operational tools.
+2. Without an explicit name, a dialogue reference (*same skill*, *keep using X*, *อันที่แล้ว*) resolves against session history and fails closed when there is no history.
+3. Phrase and tag matches score against fixed thresholds (`min_score` 0.28, `min_margin` 0.05); an active focus adds a bounded, decaying bonus to a skill that already has lexical signal, and carries it (`focus_fallback`, score 0) only when nothing else matched.
+4. Vetoed names are excluded with reason `negated_skill`; a release (`stop using X`) drops the focus and routes the rest of the sentence.
+5. Names outside the live listing resolve to `not_in_hermes_list` with no selection.
+6. Ties, unknown names, and multiple requests return no selection with a named reason.
+7. No match allows ordinary work. Only `enforce-tools` mode blocks operational tools.
 
 ---
 
@@ -111,6 +114,7 @@ How a turn is decided, in plain language:
 | **Receipt Engine** | Compact or verbose footer plus `status`, `explain`, `trace`, `refresh`, `health` | Every claim carries evidence, last 20 receipts retained |
 | **Invariant Verifier** | `required_tools`, `forbidden_tools`, `ordered_tools` from frontmatter or config | Violations fail compliance with a named reason, `enforce-tools` blocks outright |
 | **Alias Matcher** | `aliases:` frontmatter plus `synonyms` config, any script | Language-agnostic recall without embeddings or dictionaries |
+| **Session Memory** | Per-session skill history and a decaying focus bonus | `same skill` / `อันที่แล้ว` / `keep using X` resolve deterministically and fail closed without history |
 | **Hub Provenance** | Read-only cross-check against the local hub lock | `trust_level`, `scan_verdict`, pinned revision, bundle drift |
 | **Portable Entrypoints** | `cli.py` (`roots`/`scan`/`select`) and `mcp_server.py` (stdio JSON-RPC) | The same deterministic engine outside Hermes, stdlib only |
 | **Cache** | Metadata-keyed reuse of parsed skills, at most 100 completed turns | Normal edits detected next turn, `refresh` forces a reread |
@@ -121,9 +125,9 @@ How a turn is decided, in plain language:
 
 | Metric | Measured Value | Note |
 | :--- | :--- | :--- |
-| **Python files** | 18 | Core, hooks, benchmarks, CLI, MCP server, 10 test files |
-| **Python lines** | 5,520 | Includes tests and benchmarks |
-| **Tests** | 151 passing, 2 skipped | `python -m unittest discover -s tests` |
+| **Python files** | 19 | Core, hooks, benchmarks, CLI, MCP server, 11 test files |
+| **Python lines** | 6,592 | Includes tests and benchmarks |
+| **Tests** | 199 passing, 2 skipped | `python -m unittest discover -s tests` |
 | **Routing cases** | 48 of 48 gated | `routing_benchmark.py --gate`, zero false selections, 5 stretch cases reported |
 | **Hooks** | 7 | Pre and post LLM, pre and post tool, transform, lifecycle, session end |
 | **External dependencies** | 0 | Stdlib only |
@@ -141,8 +145,8 @@ How a turn is decided, in plain language:
 
 | Command | What It Shows |
 | :--- | :--- |
-| `/skill-proof status` | Compact state for the latest turn |
-| `/skill-proof explain` | Selection decision and ranked candidates |
+| `/skill-proof status` | Compact state for the latest turn, plus focus and reference |
+| `/skill-proof explain` | Selection decision, ranked candidates, focus, and session history |
 | `/skill-proof trace` | Full bounded JSON receipt |
 | `/skill-proof refresh` | Reread local skill content on the next turn |
 | `/skill-proof health` | Hook activity, catalog diagnostics, and timing |
@@ -184,7 +188,7 @@ aliases:
   - 文档助手
 ```
 
-Key settings: `mode` (default `nudge`), `skill_roots` (must already be readable through `skill_view`), `visible_receipt` (default `true`), `receipt_style` (`compact` or `verbose`, trace always carries full evidence), `receipt_history_limit` (default 20), `hub_provenance` (default `true`, read-only hub lock cross-check), `hub_lock_path` (override; empty auto-detects), `synonyms` (skill name to extra matching terms).
+Key settings: `mode` (default `nudge`), `skill_roots` (must already be readable through `skill_view`), `visible_receipt` (default `true`), `receipt_style` (`compact` or `verbose`, trace always carries full evidence), `receipt_history_limit` (default 20), `hub_provenance` (default `true`, read-only hub lock cross-check), `hub_lock_path` (override; empty auto-detects), `synonyms` (skill name to extra matching terms), `session_memory` (default `true`; skill history for dialogue references), `focus_turns` (default 5, range 0-50; `0` keeps a focus until it is released).
 
 When several roots index the same skill name, the first configured root wins: byte-identical copies collapse as `alias_skipped` (for example a junction facade plus its physical store), divergent copies are reported as `shadowed_by_root`, and same-root collisions stay ambiguous `duplicate_name`.
 
@@ -254,8 +258,10 @@ All version release notes and historical changes are documented in [CHANGELOG.md
 - Compliance without invariants stays `unassessed`, satisfied invariants report `verified`.
 - The local source hash is a filesystem recheck, tool hashes observe results before later output transforms.
 - Lifecycle events carry no turn IDs, so correlation is session and task scoped.
+- Session history records the skills Skill Proof selected, cleared at session end; it is not a log of every skill a host loaded on its own.
+- Focus is a bounded score bonus, never a tie-breaker: a competing match, a veto, or an ambiguity always wins. Only when nothing else matches does `focus_fallback` (score 0) carry the focused skill, and the context says so.
 - Thai matching is lexical and phrase based, with no word segmentation or embeddings.
-- Routing fixtures are synthetic English and Thai examples. No production accuracy claim is supported.
+- Routing fixtures are synthetic English and Thai examples with a gated `core` tier and a reported `stretch` tier. No production accuracy claim is supported.
 - Synthetic core results live in `VALIDATION.md` and exclude listing overhead.
 - Stored per turn: hashes, event flags, and bounded receipts. Stored never: prompts and skill bodies.
 
@@ -267,8 +273,8 @@ All version release notes and historical changes are documented in [CHANGELOG.md
 | :--- | :--- |
 | `core.py` | Ranking, negation guard, phrase matching, gating, receipts, invariants |
 | `__init__.py` | Hook wiring, commands, 7 hook registrations |
-| `plugin.yaml` | Manifest, version 0.6.0, config schema |
-| `tests/` | Discovery, ranking, gating, evidence, and isolation suites, 10 files |
+| `plugin.yaml` | Manifest, version 0.7.0, config schema |
+| `tests/` | Discovery, ranking, gating, evidence, and isolation suites, 11 files |
 | `routing_benchmark.py`, `routing_cases.json` | Labeled routing corpus with tiers, gate, and threshold sweep, 48 of 48 gated passing |
 | `benchmark.py` | Synthetic core performance probe |
 | `host_smoke.py` | Optional live listing and filter check against the host source |
@@ -289,7 +295,7 @@ python routing_benchmark.py --gate
 python routing_benchmark.py --sweep
 ```
 
-**Verification Status:** **151 tests passing (2 skipped), 48 of 48 gated routing cases (0 false selections), doctor OK as standalone with 7 hooks.**
+**Verification Status:** **199 tests passing (2 skipped), 48 of 48 gated routing cases (0 false selections), doctor OK as standalone with 7 hooks.**
 
 ---
 
@@ -300,7 +306,7 @@ Copyright (c) 2026 P Choke & SORA.
 
 <div align="center">
 
-**Skill Proof** <sub>v0.6.0</sub> · Built for deterministic routing
+**Skill Proof** <sub>v0.7.0</sub> · Built for deterministic routing
 
 *Local-first, Auditable, Gated, Governed*
 

@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -677,7 +677,9 @@ def _tokens(value: str) -> tuple[str, ...]:
 
 @lru_cache(maxsize=2048)
 def _identifier_pattern(normalized_identifier: str) -> "re.Pattern[str]":
-    return re.compile(rf"(?<!\w){re.escape(normalized_identifier)}(?!\w)")
+    # Hyphen is a boundary too: "frontend-design" must not match inside
+    # "frontend-design-pro". The negation patterns already refuse it.
+    return re.compile(rf"(?<![\w-]){re.escape(normalized_identifier)}(?![\w-])")
 
 
 def _identifier_in_query(identifier: str, query: str) -> bool:
@@ -827,6 +829,180 @@ def _phrase_present(shorter: str, longer: str) -> bool:
     return bool(re.search(rf"(?<!\w){re.escape(shorter)}(?!\w)", longer))
 
 
+# Closed vocabularies for requests that point at the *ongoing* skill instead of
+# describing a task.  Only these phrasings are accepted: an ordinary sentence
+# that happens to contain "again" or "เดิม" must keep routing lexically.
+_DIALOGUE_RELEASE_PHRASES = (
+    "stop using",
+    "stop focusing",
+    "stop with",
+    "unfocus",
+    "no longer use",
+    "forget the skill",
+    "เลิกใช้",
+    "หยุดใช้",
+    "เลิกโฟกัส",
+    "เลิกทำ",
+)
+_DIALOGUE_FOCUS_PHRASES = (
+    "keep using",
+    "keep working with",
+    "keep going with",
+    "stick with",
+    "stay on",
+    "from now on use",
+    "continue with",
+    "carry on with",
+    "ใช้ต่อ",
+    "ใช้ตัวนี้ต่อ",
+    "ทำต่อด้วย",
+    "ใช้ต่อไป",
+)
+_DIALOGUE_REPEAT_PHRASES = (
+    "same skill",
+    "the same one",
+    "same one",
+    "same as before",
+    "like before",
+    "that skill again",
+    "that one again",
+    "do the same",
+    "same as last time",
+    "ใช้ตัวเดิม",
+    "ตัวเดิม",
+    "อันเดิม",
+    "เหมือนเดิม",
+    "แบบเดิม",
+    "อย่างเมื่อกี้",
+    "เมื่อกี้",
+)
+_DIALOGUE_PREVIOUS_PHRASES = (
+    "previous skill",
+    "the one before",
+    "skill before",
+    "ครั้งก่อน",
+    "ก่อนหน้า",
+    "อันที่แล้ว",
+    "ตัวที่แล้ว",
+    "อันก่อน",
+)
+_DIALOGUE_FAMILIES = tuple(
+    # Phrases are normalized the same way queries are: NFKC rewrites Thai SARA AM
+    # (\u0e33) into NIKHANIT + SARA AA, so an unnormalized phrase silently never matches.
+    (
+        kind,
+        tuple(unicodedata.normalize("NFKC", phrase).casefold() for phrase in phrases),
+    )
+    for kind, phrases in (
+        ("release", _DIALOGUE_RELEASE_PHRASES),
+        ("focus", _DIALOGUE_FOCUS_PHRASES),
+        ("repeat", _DIALOGUE_REPEAT_PHRASES),
+        ("previous", _DIALOGUE_PREVIOUS_PHRASES),
+    )
+)
+
+
+def _named_skill_in_query(query: str, known_names: Sequence[str]) -> str:
+    """Return the *known* skill the request names, or "".
+
+    Only catalog names count: an unknown token after "skill" ("stop using the
+    skill now") must not drive focus or release.
+    """
+    known = tuple(str(name) for name in known_names if name)
+    known_ids = {normalize_identifier(name) for name in known}
+    for candidate in extract_explicit_skill_names(query, known_names=known_ids):
+        if normalize_identifier(candidate) in known_ids:
+            return str(candidate)
+    for name in known:
+        if _identifier_in_query(name, query):
+            return name
+    return ""
+
+
+# Lead-in words that may sit between "keep using" and the skill name.
+_DIALOGUE_FILLER = frozenset({
+    "the", "a", "an", "skill", "skills", "my", "this", "that", "current",
+    "สกิล", "ตัว", "อัน", "ตัวนี้", "อันนี้", "ของ",
+})
+_IDENTIFIER_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+
+
+def _skill_named_after(query: str, phrase: str) -> str:
+    """First identifier-shaped token after *phrase* ("keep using X").
+
+    The token may be a skill that is not in the catalog; reporting it as
+    unknown is more truthful than silently falling back to session history.
+    """
+    at = query.casefold().find(phrase)
+    if at < 0:
+        return ""
+    tail = query[at + len(phrase) :].lstrip(" \t,.;:!?—–-")
+    for _ in range(4):
+        match = _IDENTIFIER_TOKEN.match(tail)
+        if not match:
+            return ""
+        token = match.group(0).rstrip(".,;:!?)]}")
+        if token and token.casefold() not in _DIALOGUE_FILLER:
+            return token
+        tail = tail[match.end() :].lstrip(" \t,.;:!?—–-")
+    return ""
+
+
+@dataclass(frozen=True)
+class DialogueReference:
+    """A request that refers to the session's skill history instead of a task."""
+
+    kind: str
+    phrase: str = ""
+    name: str = ""
+
+
+def parse_dialogue_reference(
+    query: str,
+    *,
+    known_names: Sequence[str] = (),
+) -> Optional[DialogueReference]:
+    """Detect "use the same skill", "keep using X", "stop using X", "อันที่แล้ว"..."""
+    text = unicodedata.normalize("NFKC", str(query or "")).casefold().strip()
+    if not text:
+        return None
+    for kind, phrases in _DIALOGUE_FAMILIES:
+        for phrase in phrases:
+            if _phrase_present(phrase, text):
+                name = _named_skill_in_query(text, known_names)
+                if not name and kind in ("focus", "release"):
+                    name = _skill_named_after(text, phrase)
+                return DialogueReference(kind, phrase, name)
+    return None
+
+
+def _release_remainder(query: str, reference: DialogueReference, released: str) -> "Optional[str]":
+    """Text that follows the release clause, or ``None`` when nothing was cut.
+
+    "stop using python-tdd and design a landing page" must still route to the
+    second half: the release only cancels the focus, not the rest of the turn.
+    An empty string means the clause was cut and nothing else was asked, so the
+    full query (which still contains the released name) must not be ranked.
+    """
+    text = str(query or "")
+    if not text.strip():
+        return ""
+    # Work on a normalized copy: NFKC can change length (Thai SARA AM), so
+    # positions are only safe when both the haystack and the anchor are folded.
+    folded = unicodedata.normalize("NFKC", text).casefold()
+    anchor = unicodedata.normalize("NFKC", str(released or "")).casefold().strip()
+    index = folded.find(anchor) if anchor else -1
+    if index >= 0:
+        rest = folded[index + len(anchor) :]
+    else:
+        phrase = reference.phrase or ""
+        at = folded.find(phrase)
+        if at < 0:
+            return None
+        rest = folded[at + len(phrase) :]
+    return rest.lstrip(" \t,.;:!?—–-")
+
+
 @dataclass(frozen=True)
 class RankedCandidate:
     skill: SkillRecord
@@ -848,8 +1024,15 @@ def _rank(
     catalog: Catalog,
     query: str,
     synonyms: Optional[Mapping[str, Sequence[str]]] = None,
+    *,
+    exclude: Sequence[str] = (),
+    preferred: Optional[str] = None,
+    preferred_bonus: float = 0.0,
 ) -> list[RankedCandidate]:
     synonyms = synonyms or {}
+    excluded = {normalize_identifier(name) for name in exclude if normalize_identifier(name)}
+    preferred_normalized = normalize_identifier(preferred) if preferred else ""
+    bonus = max(0.0, float(preferred_bonus))
     query_tokens = set(_tokens(query))
     query_ngrams = _char_ngrams(query)
     normalized_query = normalize_identifier(query)
@@ -867,7 +1050,7 @@ def _rank(
 
     ranked: list[RankedCandidate] = []
     for skill in catalog.skills:
-        if skill.normalized_name in duplicate_names:
+        if skill.normalized_name in duplicate_names or skill.normalized_name in excluded:
             continue
         if _skill_is_negated(skill.name, query):
             continue
@@ -939,6 +1122,12 @@ def _rank(
                     score += 0.34 * description_coverage
                     reasons.append("description_terms")
 
+        # A focused skill only wins when it is already a plausible candidate:
+        # focus nudges the ranking, it never hijacks an unrelated turn.
+        if bonus and score > 0 and skill.normalized_name == preferred_normalized:
+            score += bonus
+            reasons.append("dialogue_focus")
+
         if score > 0:
             ranked.append(RankedCandidate(skill, round(min(1.0, score), 6), tuple(reasons)))
     ranked.sort(key=lambda item: (-item.score, item.skill.skill_id, item.skill.relative_path))
@@ -954,6 +1143,9 @@ def select_skill(
     min_margin: float = 0.05,
     limit: int = 3,
     synonyms: Optional[Mapping[str, Sequence[str]]] = None,
+    exclude: Sequence[str] = (),
+    preferred: Optional[str] = None,
+    preferred_bonus: float = 0.0,
 ) -> Selection:
     """Choose one skill conservatively or return a reason for not choosing."""
     if not 0 <= float(min_score) <= 1:
@@ -986,10 +1178,14 @@ def select_skill(
     if unique_explicit and not requested:
         # Every explicit name was vetoed: lexical ranking (which also skips
         # vetoed skills) decides; an explicit-only veto must not select.
-        ranked_vetoed = _rank(catalog, query, synonyms)
+        ranked_vetoed = _rank(
+            catalog, query, synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
+        )
         return Selection("no_match", "negated_skill", None, tuple(ranked_vetoed[:limit]), False, False)
 
-    ranked = _rank(catalog, query, synonyms)
+    ranked = _rank(
+        catalog, query, synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
+    )
     if not ranked or ranked[0].score < float(min_score):
         if any(_skill_is_negated(skill.name, query) for skill in catalog.skills):
             return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False)
@@ -1043,10 +1239,20 @@ class _TurnState:
     host_name_count: Optional[int] = None
     host_unindexed: tuple[str, ...] = ()
     hub: dict = field(default_factory=dict)
+    session: dict = field(default_factory=dict)
     performance: dict = field(default_factory=dict)
     source_path_match: str = "unknown"
     compliance: str = "unassessed"
     compliance_reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _SessionMemory:
+    """What this session was just using, for dialogue references and focus."""
+
+    stack: list[str] = field(default_factory=list)
+    focus: Optional[str] = None
+    focus_remaining: int = 0
 
 
 class SkillProofEngine:
@@ -1054,6 +1260,13 @@ class SkillProofEngine:
 
     _MODES = frozenset({"observe", "nudge", "enforce-tools"})
     _MODE_ALIASES = {"enforce": "enforce-tools"}
+    _SESSION_LIMIT = 64
+    _STACK_LIMIT = 10
+    # Focus is a bounded, decaying boost that only applies to a skill that
+    # already has lexical signal: it decides close calls, never unrelated turns.
+    _FOCUS_BONUS = 0.20
+    _FOCUS_BONUS_STEP = 0.04
+    _FOCUS_BONUS_FLOOR = 0.04
     _SKILL_TOOLS = frozenset({"skill_view", "skills_list", "skill_search", "skill_manage"})
 
     def __init__(
@@ -1071,6 +1284,8 @@ class SkillProofEngine:
         invariants: Optional[Mapping[str, Mapping[str, Any]]] = None,
         hub_lock_path: Optional[str | os.PathLike[str]] = None,
         synonyms: Optional[Mapping[str, Any]] = None,
+        session_memory: bool = True,
+        focus_turns: int = 5,
     ) -> None:
         normalized_mode = normalize_identifier(mode)
         normalized_mode = self._MODE_ALIASES.get(normalized_mode, normalized_mode)
@@ -1129,6 +1344,13 @@ class SkillProofEngine:
                 )[:32]
                 if normalized_terms:
                     self.synonyms[normalize_identifier(sname)] = normalized_terms
+        if not isinstance(session_memory, bool):
+            raise ValueError("session_memory must be a boolean")
+        if isinstance(focus_turns, bool) or not isinstance(focus_turns, int) or not 0 <= focus_turns <= 50:
+            raise ValueError("focus_turns must be an integer between 0 and 50")
+        self.session_memory = session_memory
+        self.focus_turns = focus_turns
+        self._sessions: dict[str, _SessionMemory] = {}
         self._catalog_cache: dict = {}
         self._turns: dict[str, _TurnState] = {}
         self._latest_by_task: dict[tuple[str, str], str] = {}
@@ -1170,9 +1392,150 @@ class SkillProofEngine:
                 return self._turns.get(resolved_turn)
         return None
 
+    def _focus_fallback(
+        self,
+        selection: Selection,
+        catalog: Catalog,
+        focus: Optional[str],
+        query: str,
+    ) -> Selection:
+        """Use the focused skill only when nothing else matched.
+
+        "keep using X" is an explicit instruction, so an unrelated turn that has
+        no competitor falls back to X instead of silently dropping it. A veto,
+        an ambiguity, or a competing match always wins: focus never decides a
+        close call, and it never survives its own release.
+        """
+        if not focus or selection.status != "no_match" or selection.reason != "below_threshold":
+            return selection
+        matches = catalog.by_name(focus)
+        if len(matches) != 1 or _skill_is_negated(matches[0].name, query):
+            return selection
+        candidate = RankedCandidate(matches[0], 0.0, ("dialogue_focus_fallback",))
+        return Selection("selected", "focus_fallback", candidate, (candidate,), False, False)
+
+    @staticmethod
+    def _session_evidence(memory: _SessionMemory, dialogue: Mapping[str, Any]) -> dict[str, Any]:
+        evidence: dict[str, Any] = {}
+        if memory.focus:
+            evidence["focus"] = memory.focus
+            evidence["focus_remaining"] = memory.focus_remaining
+        if memory.stack:
+            evidence["history"] = list(memory.stack[-5:])
+        if dialogue:
+            evidence["reference"] = dict(dialogue)
+        return evidence
+
+    def _session(self, session_id: str) -> Optional[_SessionMemory]:
+        """Session-scoped memory, bounded to the most recent sessions."""
+        if not self.session_memory or not session_id:
+            return None
+        memory = self._sessions.get(session_id)
+        if memory is None:
+            memory = _SessionMemory()
+            self._sessions[session_id] = memory
+            while len(self._sessions) > self._SESSION_LIMIT:
+                self._sessions.pop(next(iter(self._sessions)))
+        return memory
+
+    def _touch_stack(self, memory: _SessionMemory, name: str) -> None:
+        normalized = normalize_identifier(name)
+        if not normalized:
+            return
+        if memory.stack and memory.stack[-1] == normalized:
+            return
+        memory.stack.append(normalized)
+        del memory.stack[: max(0, len(memory.stack) - self._STACK_LIMIT)]
+
+    def _focus_bonus(self, memory: _SessionMemory) -> float:
+        """Focus decays each turn so it nudges the ranking without becoming sticky forever."""
+        if not memory.focus:
+            return 0.0
+        if self.focus_turns <= 0:
+            return self._FOCUS_BONUS
+        used = max(0, self.focus_turns - memory.focus_remaining)
+        bonus = self._FOCUS_BONUS - self._FOCUS_BONUS_STEP * used
+        return round(max(self._FOCUS_BONUS_FLOOR, bonus), 4)
+
+    def _dialogue_selection(
+        self,
+        memory: _SessionMemory,
+        catalog: Catalog,
+        reference: DialogueReference,
+    ) -> Optional[Selection]:
+        """Resolve a reference to session history; ``None`` means "fall through"."""
+        if reference.kind == "focus":
+            if reference.name:
+                matches = catalog.by_name(reference.name)
+                if not matches:
+                    return Selection(
+                        "no_match", "dialogue_reference_unknown", None, (), False, False
+                    )
+            elif memory.stack:
+                matches = catalog.by_name(memory.stack[-1])
+                if not matches:
+                    return Selection(
+                        "no_match", "dialogue_reference_unavailable", None, (), False, False
+                    )
+            else:
+                return Selection("no_match", "no_previous_selection", None, (), False, False)
+            memory.focus = matches[0].normalized_name
+            memory.focus_remaining = self.focus_turns
+            candidate = RankedCandidate(matches[0], 1.0, ("dialogue_focus_request",))
+            return Selection("selected", "focus_requested", candidate, (candidate,), False, False)
+        if reference.kind in ("repeat", "previous"):
+            depth = 1 if reference.kind == "repeat" else 2
+            if len(memory.stack) < depth:
+                return Selection("no_match", "no_previous_selection", None, (), False, False)
+            matches = catalog.by_name(memory.stack[-depth])
+            if len(matches) != 1:
+                return Selection("no_match", "dialogue_reference_unavailable", None, (), False, False)
+            reason = "dialogue_reference" if depth == 1 else "dialogue_reference_previous"
+            candidate = RankedCandidate(matches[0], 1.0, (reason,))
+            return Selection("selected", reason, candidate, (candidate,), False, False)
+        return None
+
+    def forget_session(self, session_id: str) -> bool:
+        """Drop session memory (skill history and focus) without touching audit turns."""
+        clean = self._text_id(session_id)
+        if not clean:
+            return False
+        with self._lock:
+            return self._sessions.pop(clean, None) is not None
+
+    def session_state(self, session_id: str) -> dict[str, Any]:
+        """Read-only view of what this session is holding on to."""
+        with self._lock:
+            memory = self._sessions.get(self._text_id(session_id))
+            if memory is None:
+                return {"enabled": self.session_memory, "history": [], "focus": "", "focus_remaining": 0}
+            return {
+                "enabled": self.session_memory,
+                "history": list(memory.stack),
+                "focus": memory.focus or "",
+                "focus_remaining": memory.focus_remaining if memory.focus else 0,
+            }
+
     def _selection_context(self, selection: Selection) -> str:
         if selection.status == "selected" and selection.selected is not None:
             name = selection.selected.skill.name
+            if selection.reason in ("dialogue_reference", "dialogue_reference_previous"):
+                return (
+                    f'Skill Proof selected "{name}" because the request refers to a skill already '
+                    f'used in this session. Call skill_view with name="{name}". The selection did not '
+                    "come from the current wording, so do not present it as a fresh match."
+                )
+            if selection.reason == "focus_requested":
+                return (
+                    f'Skill Proof selected "{name}" and kept it as the session focus for the next '
+                    f'turns. Call skill_view with name="{name}" before operational tools.'
+                )
+            if selection.reason == "focus_fallback":
+                return (
+                    f'Skill Proof selected "{name}" only because the session focus is active and '
+                    f'nothing else matched; its score is 0. If {name} does not fit this task, '
+                    f'answer directly without it. Otherwise call skill_view with name="{name}".'
+                )
             if self.mode == "observe":
                 return (
                     f'Skill Proof candidate: "{name}". If you use it, call skill_view with '
@@ -1198,6 +1561,25 @@ class SkillProofEngine:
             return (
                 f"Skill Proof could not resolve the explicitly requested skill "
                 f"({selection.reason}). Do not claim that it was loaded."
+            )
+        if selection.status == "no_match" and selection.reason == "no_previous_selection":
+            return (
+                "Skill Proof: the request refers to a previously used skill, but this session has no "
+                "skill history yet. Ask which skill to load; do not claim one was selected."
+            )
+        if selection.status == "no_match" and selection.reason == "dialogue_reference_unavailable":
+            return (
+                "Skill Proof: the previously used skill in this session is no longer available in the "
+                "current catalog. Do not claim that it was loaded."
+            )
+        if selection.status == "no_match" and selection.reason == "dialogue_reference_unknown":
+            return (
+                "Skill Proof: the request names a skill that is not in the current catalog. Ask the "
+                "user which skill they mean; do not claim one was selected."
+            )
+        if selection.status == "no_match" and selection.reason == "focus_released":
+            return (
+                "Skill Proof: session focus cleared; no skill was selected for this instruction."
             )
         return ""
 
@@ -1238,16 +1620,76 @@ class SkillProofEngine:
             exclusions = tuple(Diagnostic('not_in_hermes_list', skill.root_id, skill.relative_path)
                                for skill in catalog.skills if skill.normalized_name not in names)
             catalog = Catalog(eligible, catalog.diagnostics + exclusions, filtered_hash)
-        explicit_names = extract_explicit_skill_names(query_text, known_names=(s.name for s in catalog.skills))
-        selection = select_skill(
-            catalog,
-            query_text,
-            explicit_names=explicit_names,
-            min_score=self.min_score,
-            min_margin=self.min_margin,
-            limit=self.max_candidates,
-            synonyms=self.synonyms,
-        )
+        known_names = tuple(skill.name for skill in catalog.skills)
+        explicit_names = extract_explicit_skill_names(query_text, known_names=known_names)
+        memory = self._session(clean_session_id)
+        dialogue: dict[str, Any] = {}
+        selection: Optional[Selection] = None
+        if memory is not None and not explicit_names:
+            if memory.focus and self.focus_turns > 0 and memory.focus_remaining <= 0:
+                memory.focus = None
+            reference = parse_dialogue_reference(query_text, known_names=known_names)
+            if reference is not None:
+                dialogue = {"kind": reference.kind, "phrase": reference.phrase}
+                if reference.name:
+                    dialogue["name"] = reference.name
+                selection = self._dialogue_selection(memory, catalog, reference)
+                if selection is None:
+                    # A release has no skill of its own: clear the focus and let
+                    # lexical ranking decide what (if anything) comes next, but
+                    # never re-select the skill the user just released.
+                    named = normalize_identifier(dialogue.get("name") or "")
+                    # A name that is not in the catalog must not redirect the
+                    # release: the current focus is what gets dropped.
+                    released = (
+                        named if named and len(catalog.by_name(named)) == 1
+                        else normalize_identifier(memory.focus or "")
+                    )
+                    if released and normalize_identifier(memory.focus or "") == released:
+                        memory.focus = None
+                    memory.focus_remaining = 0
+                    # Rank what the user asked for *after* the release clause,
+                    # not the whole sentence that contains it.
+                    remainder = _release_remainder(
+                        query_text, reference, named or released
+                    )
+                    selection = select_skill(
+                        catalog,
+                        query_text if remainder is None else remainder,
+                        explicit_names=explicit_names,
+                        min_score=self.min_score,
+                        min_margin=self.min_margin,
+                        limit=self.max_candidates,
+                        synonyms=self.synonyms,
+                        exclude=(released,) if released else (),
+                    )
+                    if selection.status == "no_match":
+                        dialogue["released"] = released or named
+                        selection = Selection(
+                            "no_match", "focus_released", None, selection.candidates, False, False
+                        )
+        if selection is None:
+            focus = memory.focus if memory is not None else None
+            if focus and len(catalog.by_name(focus)) != 1:
+                memory.focus = None
+                focus = None
+            selection = select_skill(
+                catalog,
+                query_text,
+                explicit_names=explicit_names,
+                min_score=self.min_score,
+                min_margin=self.min_margin,
+                limit=self.max_candidates,
+                synonyms=self.synonyms,
+                preferred=focus,
+                preferred_bonus=self._focus_bonus(memory) if (memory and focus) else 0.0,
+            )
+            selection = self._focus_fallback(selection, catalog, focus, query_text)
+        session_evidence: dict[str, Any] = {}
+        if memory is not None:
+            if selection.selected is not None:
+                self._touch_stack(memory, selection.selected.skill.normalized_name)
+            session_evidence = self._session_evidence(memory, dialogue)
         if availability_error:
             selection = Selection("blocked", "hermes_catalog_unavailable", None, (), bool(explicit_names), True)
         elif (
@@ -1283,6 +1725,7 @@ class SkillProofEngine:
             local_skill_count=local_count,
             host_unindexed=host_unindexed,
             host_name_count=None if available_names is None or availability_error else len(available_names),
+            session=session_evidence,
             performance=metrics,
         )
         with self._lock:
@@ -1590,6 +2033,7 @@ class SkillProofEngine:
                 "source_error": state.source_error,
                 "source_path_match": state.source_path_match,
                 "hub": dict(state.hub),
+                "session": dict(state.session),
                 "tool_result_sha256_pre_transform": state.tool_result_sha256_pre_transform,
                 "tool_result_bytes_pre_transform": state.tool_result_bytes_pre_transform,
             },
@@ -1631,6 +2075,11 @@ class SkillProofEngine:
             if state is None:
                 return {}
             state.complete = True
+            # Focus lasts a bounded number of turns, counted including the turn
+            # that requested it.
+            memory = self._sessions.get(state.session_id)
+            if memory is not None and memory.focus and memory.focus_remaining > 0:
+                memory.focus_remaining -= 1
             payload = self._receipt_payload(state)
             completed = [key for key, value in self._turns.items() if value.complete]
             for key in completed[:-self.retained_turn_limit]:

@@ -1,5 +1,5 @@
 name: skill-proof
-version: 0.6.0
+version: 0.7.0
 description: Local skill discovery, tool gating, truthful load receipts, and invariant compliance verification
 kind: standalone
 manifest_version: 2
@@ -65,3 +65,11 @@ config_schema:
     type: dict
     default: {}
     description: Skill name to extra matching terms (any language), merged with frontmatter aliases
+  session_memory:
+    type: bool
+    default: true
+    description: Remember the session's skill history so 'use the same skill' and 'อันที่แล้ว' resolve
+  focus_turns:
+    type: int
+    default: 5
+    description: Turns a focused skill stays focused (0 keeps it until released)

@@ -4,6 +4,22 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-08
+
+### Added
+- **Session Skill History**: each session keeps the skills it selected, so a follow-up that only says *use the same skill*, *the same one*, *same as before*, *เหมือนเดิม*, or *ตัวเดิม* resolves to the last skill with reason `dialogue_reference`. Asking for *the previous one* / *อันที่แล้ว* walks one step back (`dialogue_reference_previous`). With no history the request fails closed as `no_previous_selection` instead of guessing.
+- **Bounded Focus**: *keep using X* / *stick with X* / *ใช้ต่อไป* holds `X` as the session focus for `focus_turns` turns (default 5, `0` means until released). Focus is a decaying, bounded score bonus that only applies to a skill that already has lexical signal: it decides close calls, never beats a competing match, a veto, or an ambiguity, and expires by itself. When nothing else matches it still carries `X` with `focus_fallback` (score 0) and a context line that says it is a fallback. *stop using X* / *เลิกใช้ X* releases it and routes the rest of the sentence ("stop using python-tdd and design a landing page" still selects `frontend-design`).
+- **Evidence and Surfaces**: receipts carry `evidence.session` (`history`, `focus`, `focus_remaining`, `reference`), `status`/`explain` show focus and reference lines, `health` reports `session`, and the compact footer shows `focus <name> (<n> turns)`.
+- **Config**: `session_memory` (default `true`) and `focus_turns` (default 5, range 0-50). `on_session_end` drops the memory immediately, so history never crosses sessions.
+
+### Fixed
+- **NFKC and Thai SARA AM**: dialogue phrases are now normalized identically to queries. NFKC rewrites `ำ` (U+0E33) into `ํา`, so a raw phrase such as `ทำต่อด้วย` never matched a normalized query.
+- **Unknown Tokens as Skill Names**: a token after "skill" ("stop using the skill now") is no longer treated as a skill name, so it can neither trigger nor block a release.
+- **Hyphen Identifier Boundaries**: `frontend-design` no longer matches inside `frontend-design-pro`; identifiers now stop at `-` as well as at word boundaries, matching what the negation patterns already did.
+
+### Validation
+- 199 tests passing (2 skipped), 48/48 gated routing cases, Hermes plugin doctor OK with 7 hooks registered. Focus, expiry, release, reference, and fallback behavior are covered by `tests/test_v070.py` (48 cases).
+
 ## [0.6.0] - 2026-10-08
 
 ### Added

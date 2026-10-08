@@ -64,6 +64,17 @@ def _bool_setting(value: Any, default: bool) -> bool:
     return value if isinstance(value, bool) else default
 
 
+def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
+    """Integer setting whose default includes the low bound (focus_turns may be 0)."""
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if low <= parsed <= high else default
+
+
 def _default_profile_home() -> pathlib.Path:
     configured = os.environ.get("HERMES_HOME", "").strip()
     if configured:
@@ -120,6 +131,8 @@ class SkillProofPlugin:
             invariants=invariants if isinstance(invariants, Mapping) else None,
             hub_lock_path=hub_lock_path,
             synonyms=synonyms if isinstance(synonyms, Mapping) else None,
+            session_memory=_bool_setting(ctx.get_config("session_memory", True), True),
+            focus_turns=_bounded_int(ctx.get_config("focus_turns", 5), 5, 0, 50),
         )
         self.visible_receipt = _bool_setting(ctx.get_config("visible_receipt", True), True)
         self.receipt_style = ctx.get_config("receipt_style", "compact")
@@ -299,6 +312,11 @@ class SkillProofPlugin:
         hub_record = hub_evidence.get("hub") if isinstance(hub_evidence.get("hub"), Mapping) else {}
         if hub_record.get("bundle") == "modified":
             problems.append("hub_bundle_modified")
+        session_record = (
+            hub_evidence.get("session") if isinstance(hub_evidence.get("session"), Mapping) else {}
+        )
+        if session_record.get("focus"):
+            detail += f" | focus {session_record.get('focus')} ({session_record.get('focus_remaining')} turns)"
         if problems:
             detail += " | " + ", ".join(dict.fromkeys(problems)) + "; see /skill-proof explain"
         return f"{response_text}{marker} {detail}]"
@@ -309,13 +327,20 @@ class SkillProofPlugin:
         selected_name = selected.get("name") if isinstance(selected, Mapping) else "none"
         evidence = receipt.get("evidence") if isinstance(receipt.get("evidence"), Mapping) else {}
         runtime = receipt.get("runtime") if isinstance(receipt.get("runtime"), Mapping) else {}
-        return (
+        session = evidence.get("session") if isinstance(evidence.get("session"), Mapping) else {}
+        summary = (
             f"Skill Proof: selected={selected_name} "
             f"loaded={'yes' if evidence.get('hermes_loaded_event') else 'no'} "
             f"active={'yes' if runtime.get('active') else 'no'} "
             f"compliance={receipt.get('compliance', 'unassessed')} "
             f"verification={receipt.get('verification', 'unverified')}"
         )
+        if session.get("focus"):
+            summary += f" focus={session.get('focus')}({session.get('focus_remaining')} turns)"
+        reference = session.get("reference") if isinstance(session.get("reference"), Mapping) else {}
+        if reference.get("kind"):
+            summary += f" reference={reference.get('kind')}:{reference.get('phrase', '')}"
+        return summary
 
     def _latest_receipt(self) -> dict[str, Any]:
         live = self.engine.receipt(turn_id=self.engine.latest_turn_id)
@@ -362,6 +387,9 @@ class SkillProofPlugin:
         turn_id = str(current.get("turn_id") or "")
         if turn_id:
             self._persist(self.engine.finish_turn(turn_id=turn_id))
+        # Skill history and focus belong to this session only; drop them at once
+        # instead of carrying them across sessions.
+        self.engine.forget_session(str(session_id or ""))
 
     def handle_command(self, raw_args: str = "") -> str:
         command = str(raw_args or "").strip().casefold() or "status"
@@ -381,6 +409,7 @@ class SkillProofPlugin:
                 'errors': receipt.get('errors', []),
                 'hub': self.engine.hub_status(),
                 'root_suggestions': self.engine.root_suggestions(),
+                'session': (receipt.get('evidence') or {}).get('session', {}),
                 'note': 'Hook counts mean invocation, not success. Timing is plugin pre-LLM work, not model latency.',
             }
             return json.dumps(report, ensure_ascii=False, indent=2)
@@ -419,6 +448,20 @@ class SkillProofPlugin:
         if receipt.get("compliance") != "unassessed" or receipt.get("compliance_reasons"):
             reasons_str = f" ({','.join(receipt.get('compliance_reasons') or [])})" if receipt.get('compliance_reasons') else ""
             lines.append(f"Compliance: {receipt.get('compliance', 'unassessed')}{reasons_str}")
+        evidence = receipt.get("evidence") if isinstance(receipt.get("evidence"), Mapping) else {}
+        session = evidence.get("session") if isinstance(evidence.get("session"), Mapping) else {}
+        if session.get("reference"):
+            reference = session.get("reference")
+            if isinstance(reference, Mapping):
+                lines.append(
+                    f"Dialogue reference: {reference.get('kind')} matched {reference.get('phrase')!r}"
+                )
+        if session.get("focus"):
+            lines.append(
+                f"Focus: {session.get('focus')} ({session.get('focus_remaining')} turns left)"
+            )
+        if session.get("history"):
+            lines.append(f"Session history: {', '.join(session.get('history'))}")
         lines.append(self._receipt_summary(receipt))
         return "\n".join(lines)
 
