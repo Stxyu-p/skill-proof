@@ -4,6 +4,17 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-10-08
+
+### Added
+- **Overlap and Pruning Report**: `overlap_report()` compares every skill pair by Jaccard similarity over name, description, tag, and alias tokens (pure vocabulary overlap, no embeddings, no network) and returns the pairs above a threshold with the shared terms and a recommendation. Exact copies never surface here because the catalog already collapsed them (`alias_skipped`) or shadowed them (`shadowed_by_root`); both counts are included in the report.
+- **`cli.py overlap`**: `--min-similarity` (default 0.4), `--limit`, `--json`, `--root`; plain text lists both sides, their roots, the shared vocabulary, and the recommendation. Invalid thresholds exit 2.
+- **`/skill-proof overlap`**: the same report inside the session, annotated with usage from the audit log — how often the host loaded each side and which one to consider dropping. Without an audit log it says so instead of guessing.
+
+### Validation
+- 261 tests passing (2 skipped), 48/48 gated routing cases, Hermes plugin doctor OK with 7 hooks registered. `tests/test_v0100.py` (19 cases) covers identical descriptions, threshold filtering, pair counts, sorting and limits, the truncated flag, determinism, argument validation, exact-copy collapse across roots, the CLI surface, and the plugin command including drop-candidate selection from usage.
+- Live measurement on the real 145-skill catalog: 10,440 pairs checked in 59 ms, 3 pairs at `>= 0.4` (`claude-code`/`grok`/`opencode`), 6 at `>= 0.31`, 0 identical descriptions, 17 exact copies already collapsed, 12 divergent copies shadowed.
+
 ## [0.9.0] - 2026-10-08
 
 ### Added

@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -614,6 +614,98 @@ def scan_catalog(
         json.dumps(catalog_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     return Catalog(tuple(found), tuple(diagnostics), catalog_hash)
+
+
+def overlap_report(
+    catalog: Catalog,
+    *,
+    min_similarity: float = 0.4,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Near-duplicate skills, so a library can be pruned with evidence.
+
+    Similarity is the Jaccard index over the union of name, description, tag,
+    and alias tokens: pure vocabulary overlap, no embeddings, no network. Exact
+    duplicates never appear here because the catalog already collapsed them
+    (``alias_skipped``) or shadowed them (``shadowed_by_root``).
+    """
+    if not 0.0 <= float(min_similarity) <= 1.0:
+        raise ValueError("min_similarity must be between 0 and 1")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
+
+    threshold = float(min_similarity)
+    bags: list[set[str]] = []
+    for skill in catalog.skills:
+        bags.append(
+            set(
+                _tokens(
+                    " ".join(
+                        (
+                            skill.name.replace("-", " ").replace("_", " "),
+                            skill.description,
+                            " ".join(skill.tags),
+                            " ".join(skill.aliases),
+                        )
+                    )
+                )
+            )
+        )
+    diagnostics = Counter(item.code for item in catalog.diagnostics)
+    rows: list[dict[str, Any]] = []
+    checked = 0
+    for left in range(len(catalog.skills)):
+        a = bags[left]
+        if not a:
+            continue
+        for right in range(left + 1, len(catalog.skills)):
+            b = bags[right]
+            if not b:
+                continue
+            checked += 1
+            shared = sorted(a & b)
+            if not shared:
+                continue
+            similarity = len(shared) / len(a | b)
+            if similarity < threshold:
+                continue
+            first, second = catalog.skills[left], catalog.skills[right]
+            rows.append(
+                {
+                    "a": first.name,
+                    "b": second.name,
+                    "root_a": first.root_id,
+                    "root_b": second.root_id,
+                    "similarity": round(similarity, 4),
+                    "dice": round((2.0 * len(shared)) / (len(a) + len(b)), 4),
+                    "shared": shared[:12],
+                    "shared_count": len(shared),
+                    "recommendation": _overlap_recommendation(first, second, similarity),
+                }
+            )
+    rows.sort(key=lambda row: (-row["similarity"], row["a"], row["b"]))
+    total = len(rows)
+    return {
+        "skills": len(catalog.skills),
+        "pairs_checked": checked,
+        "min_similarity": threshold,
+        "limit": int(limit),
+        "total_found": total,
+        "truncated": total > int(limit),
+        "exact_copies": int(diagnostics.get("alias_skipped", 0)),
+        "shadowed_copies": int(diagnostics.get("shadowed_by_root", 0)),
+        "pairs": rows[: int(limit)],
+    }
+
+
+def _overlap_recommendation(first: SkillRecord, second: SkillRecord, similarity: float) -> str:
+    if first.description.strip().casefold() == second.description.strip().casefold():
+        return "identical description: pick one name, point aliases at it, delete the other"
+    if similarity >= 0.95:
+        return "same content in practice: keep one name and delete the other"
+    if first.root_id == second.root_id:
+        return "same root: merge the descriptions or delete the weaker one"
+    return "near-duplicate: merge, or differentiate the descriptions before both stay indexed"
 
 
 def extract_explicit_skill_names(query: str, *, known_names=None) -> tuple[str, ...]:
@@ -2317,6 +2409,19 @@ class SkillProofEngine:
             self._latest_by_task = {k: v for k, v in self._latest_by_task.items() if v in self._turns}
             self._latest_by_session = {k: v for k, v in self._latest_by_session.items() if v in self._turns}
             return payload
+
+    def overlap(
+        self,
+        *,
+        min_similarity: float = 0.4,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Near-duplicate skills across the configured roots (read-only)."""
+        with self._lock:
+            catalog = scan_catalog(
+                self._roots, max_skill_bytes=self.max_skill_bytes, cache=self._catalog_cache
+            )
+        return overlap_report(catalog, min_similarity=min_similarity, limit=limit)
 
     def refresh_catalog(self) -> None:
         """Force a content reread next turn; existing turn evidence stays unchanged."""

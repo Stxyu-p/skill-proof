@@ -5,6 +5,7 @@ Usage:
   python cli.py roots  [--json]
   python cli.py scan   [--root DIR ...] [--json]
   python cli.py select --query "..." [--root DIR ...] [--json] [--min-score N] [--min-margin N]
+  python cli.py overlap [--root DIR ...] [--json] [--min-similarity N] [--limit N]
 
 Without --root, every existing skill directory from common agent ecosystems is
 used (Codex, Claude Code, Gemini/Antigravity CLI, Cursor, OpenCode, Cline,
@@ -92,6 +93,38 @@ def _select_payload(roots, query, min_score, min_margin, limit):
     }
 
 
+def _overlap_payload(roots, min_similarity, limit):
+    catalog = core.scan_catalog(roots)
+    report = core.overlap_report(catalog, min_similarity=min_similarity, limit=limit)
+    return {"version": core.__version__, "roots": _root_map(roots), **report}
+
+
+def _format_overlap(payload):
+    lines = [
+        f"Skill Proof {payload['version']}: {payload['skills']} skills, "
+        f"{payload['pairs_checked']} pairs checked at similarity >= {payload['min_similarity']}",
+        (
+            f"exact copies already collapsed: {payload['exact_copies']}  "
+            f"divergent copies shadowed: {payload['shadowed_copies']}  "
+            f"near-duplicates: {payload['total_found']}"
+        ),
+    ]
+    for row in payload["pairs"]:
+        lines.append(
+            f"{row['similarity']:.3f}  {row['a']} ({row['root_a']})  <->  "
+            f"{row['b']} ({row['root_b']})"
+        )
+        lines.append(f"         shares: {', '.join(row['shared'])}")
+        lines.append(f"         -> {row['recommendation']}")
+    if payload["truncated"]:
+        lines.append(
+            f"... {payload['total_found'] - len(payload['pairs'])} more pair(s) hidden by --limit"
+        )
+    if not payload["pairs"]:
+        lines.append("No near-duplicates above the threshold.")
+    return "\n".join(lines)
+
+
 def _format_scan(payload):
     lines = [
         f"Skill Proof {payload['version']}: {payload['skill_count']} skills from "
@@ -142,6 +175,11 @@ def main(argv=None) -> int:
     select_parser.add_argument("--min-score", type=float, default=0.28)
     select_parser.add_argument("--min-margin", type=float, default=0.05)
     select_parser.add_argument("--limit", type=int, default=3)
+    overlap_parser = subparsers.add_parser(
+        "overlap", parents=[common], help="near-duplicate skills worth pruning"
+    )
+    overlap_parser.add_argument("--min-similarity", type=float, default=0.4)
+    overlap_parser.add_argument("--limit", type=int, default=20)
     args = parser.parse_args(argv)
 
     roots = _collect_roots(args.root)
@@ -160,6 +198,18 @@ def main(argv=None) -> int:
             json.dumps(payload, indent=2, ensure_ascii=False)
             if args.json
             else _format_scan(payload)
+        )
+        return 0
+    if args.command == "overlap":
+        try:
+            payload = _overlap_payload(roots, args.min_similarity, args.limit)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+        print(
+            json.dumps(payload, indent=2, ensure_ascii=False)
+            if args.json
+            else _format_overlap(payload)
         )
         return 0
     payload = _select_payload(roots, args.query, args.min_score, args.min_margin, args.limit)

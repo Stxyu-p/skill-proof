@@ -122,6 +122,27 @@ Observed on a six-turn three-skill fixture driven through the real hooks:
 `vetoed 1`, `hit_rate 50.0%`; the per-skill table and `overrides: slides x3`
 matched hand-counted expectations, and no audit line contained prompt text.
 
+## Overlap and pruning — 2026-10-08 (v0.10.0)
+
+`tests/test_v0100.py` (19 cases) covers identical descriptions, threshold
+filtering, pair counts, ordering and limits, the truncated flag, determinism,
+argument validation, exact-copy collapse across roots, the CLI text and JSON
+surfaces, and the plugin command including drop-candidate selection from audit
+usage.
+
+Measured on the live 145-skill catalog: 10,440 pairs checked in 59 ms;
+3 pairs at `similarity >= 0.4` (`claude-code`/`grok` 0.625,
+`claude-code`/`opencode` 0.500, `grok`/`opencode` 0.500), 6 pairs at
+`>= 0.31`, 0 identical descriptions, 17 exact copies already collapsed by
+cross-root precedence, and 12 divergent copies shadowed. Diagnostics also show
+72 `unsafe_reparse` and 2 `invalid_frontmatter` entries.
+
+Scope limits: similarity is lexical overlap, so it flags shared vocabulary
+describing different tasks (the `9router-*` family sits just below the default
+threshold for that reason) and misses duplicates that are paraphrased. It says
+nothing about which skill is better — only which pair is redundant and, when
+the audit log exists, which side the host actually loads.
+
 Scope limits: `hit_rate = loaded / (routed - fallback)` and says nothing about
 whether the skill was *useful* — only that the host loaded it. Overrides count
 skills the host loaded that we had not selected; they are never treated as

@@ -34,6 +34,7 @@ Usage:
   /skill-proof explain     Selection decision and ranked candidates
   /skill-proof why <name>  Why this skill won, lost, or was vetoed
   /skill-proof stats      Hit rate, misses, and overrides from the audit log
+  /skill-proof overlap    Near-duplicate skills worth pruning
   /skill-proof trace       Full bounded JSON receipt
   /skill-proof refresh     Reread local skill content on the next turn
   /skill-proof health      Hook activity, catalog diagnostics, and timing
@@ -515,6 +516,73 @@ class SkillProofPlugin:
         kept = [line for line in lines[-self.audit_limit:] if line.strip()]
         self.audit_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
 
+    def _overlap_report(self, min_similarity: float, limit: int):
+        """Near-duplicates plus which side the host actually loads (audit hits)."""
+        try:
+            report = self.engine.overlap(min_similarity=min_similarity, limit=limit)
+        except ValueError as error:
+            return (
+                "Usage: /skill-proof overlap [--min-similarity 0.4] [--limit 10] [--json]\n"
+                f"{error}"
+            )
+        stats = self.stats()
+        hits: dict[str, int] = {}
+        if isinstance(stats, dict) and isinstance(stats.get("skills"), Mapping):
+            for name, row in stats["skills"].items():
+                if isinstance(row, Mapping):
+                    hits[str(name)] = int(row.get("loaded") or 0)
+        for row in report["pairs"]:
+            left = hits.get(str(row["a"]), 0)
+            right = hits.get(str(row["b"]), 0)
+            row["hits_a"] = left
+            row["hits_b"] = right
+            row["drop_candidate"] = (
+                None if left == right else (str(row["a"]) if left < right else str(row["b"]))
+            )
+        report["version"] = CORE_VERSION
+        report["audit_hits_available"] = bool(hits)
+        return report
+
+    @staticmethod
+    def _format_overlap(report: Mapping[str, Any]) -> str:
+        lines = [
+            (
+                f"Skill Proof overlap — {report.get('skills')} skills, "
+                f"{report.get('pairs_checked')} pairs checked, "
+                f"similarity >= {report.get('min_similarity')}"
+            ),
+            (
+                f"exact copies collapsed: {report.get('exact_copies')}  "
+                f"divergent copies shadowed: {report.get('shadowed_copies')}  "
+                f"near-duplicates found: {report.get('total_found')}"
+            ),
+        ]
+        pairs = report.get("pairs") or []
+        if not pairs:
+            lines.append("No near-duplicates above the threshold.")
+        for row in pairs:
+            lines.append(
+                f"{row['similarity']:.3f}  {row['a']} ({row['root_a']})  <->  "
+                f"{row['b']} ({row['root_b']})"
+            )
+            lines.append(f"         shares: {', '.join(row['shared'])}")
+            lines.append(f"         -> {row['recommendation']}")
+            if report.get("audit_hits_available"):
+                loaded = (
+                    f"         usage: {row['a']} loaded {row['hits_a']}x, "
+                    f"{row['b']} loaded {row['hits_b']}x"
+                )
+                if row.get("drop_candidate"):
+                    loaded += f" -> consider dropping {row['drop_candidate']}"
+                lines.append(loaded)
+        if report.get("truncated"):
+            lines.append(
+                f"... {int(report.get('total_found', 0)) - len(pairs)} more pair(s) hidden by --limit"
+            )
+        if not report.get("audit_hits_available"):
+            lines.append("No audit hits available yet, so usage cannot break the tie.")
+        return "\n".join(lines)
+
     def stats(self) -> dict[str, Any]:
         """Aggregate the append-only audit log into per-skill outcomes.
 
@@ -682,6 +750,26 @@ class SkillProofPlugin:
                     "cannot be explained. Use /skill-proof trace for the persisted receipt."
                 )
             return self._format_why(report, argument)
+        if command == "overlap":
+            tokens = str(argument).split()
+            min_similarity = 0.4
+            limit = 10
+            try:
+                for index, token in enumerate(tokens):
+                    if token == "--min-similarity" and index + 1 < len(tokens):
+                        min_similarity = float(tokens[index + 1])
+                    elif token == "--limit" and index + 1 < len(tokens):
+                        limit = int(tokens[index + 1])
+                    elif token == "--json":
+                        pass
+            except ValueError:
+                return "Usage: /skill-proof overlap [--min-similarity 0.4] [--limit 10] [--json]"
+            report = self._overlap_report(min_similarity, limit)
+            if isinstance(report, str):
+                return report
+            if "--json" in tokens:
+                return json.dumps(report, ensure_ascii=False, indent=2)
+            return self._format_overlap(report)
         if command == "stats":
             payload = self.stats()
             if payload.get("error"):
@@ -790,7 +878,7 @@ class SkillProofPlugin:
             "skill-proof",
             handler=self.handle_command,
             description="Inspect skill selection, load evidence, and proof limits.",
-            args_hint="status|explain|why <name>|stats [--json]|trace|refresh|health",
+            args_hint="status|explain|why <name>|stats [--json]|overlap [--json]|trace|refresh|health",
             argument_mode="options",
         )
 
