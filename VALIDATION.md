@@ -109,6 +109,26 @@ table; `/skill-proof trace` remains available and holds no prompt). The audit
 file stores derived numbers only, is append-only with tail rotation, and is
 disabled by `audit_log: false`.
 
+## Outcome telemetry — 2026-10-08 (v0.9.0)
+
+`tests/test_v090.py` (16 cases) covers override capture in every position
+(matching load, mismatched load, load while we abstained, unknown turn), the
+aggregation math (fallback excluded from hit rate, null hit rate when only
+fallbacks exist, per-skill rows summing to totals), corrupt and foreign audit
+lines, and the `stats` command surface.
+
+Observed on a six-turn three-skill fixture driven through the real hooks:
+`routed 4 (66.7%) loaded 2 miss 2 fallback 0`, `abstained 2`, `overridden 3`,
+`vetoed 1`, `hit_rate 50.0%`; the per-skill table and `overrides: slides x3`
+matched hand-counted expectations, and no audit line contained prompt text.
+
+Scope limits: `hit_rate = loaded / (routed - fallback)` and says nothing about
+whether the skill was *useful* — only that the host loaded it. Overrides count
+skills the host loaded that we had not selected; they are never treated as
+load evidence for our decision. A user re-asking the same question is not
+measured, because that needs prompt text and prompts are never stored. The
+metric requires `audit_log: true` (the default) and a readable audit file.
+
 ## Real host integration
 
 Set `HERMES_HOME` to a scratch profile and `PYTHONPATH` to the installed Hermes

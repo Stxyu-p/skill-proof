@@ -4,6 +4,15 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-08
+
+### Added
+- **Override Capture**: a skill the host loads while Skill Proof selected something else (or had nothing selected) is recorded as `evidence.override_loaded` instead of being dropped. It never sets `hermes_loaded_event` and never satisfies compliance: a load we did not select is an override, not proof of our decision.
+- **`/skill-proof stats [--json]`**: aggregates the append-only audit log into outcomes — turns, routed, loaded, miss, focus fallback, abstained, overridden, vetoed, a per-skill hit-rate table, and the override list. `hit_rate = loaded / (routed - fallback)`, so focus carries (score 0) are never counted as routing wins. Unreadable audit lines are counted and reported rather than silently ignored.
+
+### Validation
+- 242 tests passing (2 skipped), 48/48 gated routing cases, Hermes plugin doctor OK with 7 hooks registered. `tests/test_v090.py` (16 cases) covers override capture in every position (matching load, mismatched load, load while abstained, unknown turn), the aggregation math including fallback exclusion and null hit rates, corrupt-line handling, and the command surface.
+
 ## [0.8.0] - 2026-10-08
 
 ### Added

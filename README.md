@@ -1,17 +1,17 @@
 <div align="center">
 
-# 🛡️ Skill Proof <sub>v0.8.0</sub>
+# 🛡️ Skill Proof <sub>v0.9.0</sub>
 
 **Local skill routing for Hermes agents: deterministic selection, tool gating, truthful receipts**
 
 *Python 3.11, stdlib only, offline, zero external calls, 7 hooks*
 
-[![Release: v0.8.0](https://img.shields.io/badge/Release-v0.8.0-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
+[![Release: v0.9.0](https://img.shields.io/badge/Release-v0.9.0-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
 [![Changelog](https://img.shields.io/badge/Changelog-View_Notes-blueviolet?style=for-the-badge)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 [![Hermes: Native Plugin](https://img.shields.io/badge/Hermes-Native_Plugin-7B61FF?style=for-the-badge)](https://github.com/NousResearch/hermes-agent)
 
-![Tests: 226 OK](https://img.shields.io/badge/Tests-226_OK-brightgreen?style=flat-square)
+![Tests: 242 OK](https://img.shields.io/badge/Tests-242_OK-brightgreen?style=flat-square)
 ![Routing: 48 of 48 gated](https://img.shields.io/badge/Routing-48_of_48_gated-brightgreen?style=flat-square)
 ![Hooks: 7](https://img.shields.io/badge/Hooks-7-blue?style=flat-square)
 ![Dependencies: Zero](https://img.shields.io/badge/Dependencies-Zero-success?style=flat-square)
@@ -39,7 +39,7 @@ When something needs attention, the receipt says so and points at the detail:
 [Skill Proof: none | not loaded | missing_required_tool:terminal; see /skill-proof explain]
 ```
 
-Six commands inspect the evidence: `/skill-proof status`, `explain`, `why <name>`, `trace`, `refresh`, `health`.
+Seven commands inspect the evidence: `/skill-proof status`, `explain`, `why <name>`, `stats`, `trace`, `refresh`, `health`.
 
 ---
 
@@ -59,6 +59,7 @@ Picking a skill from the prompt alone fails in predictable ways. The wrong skill
 - 🧠 **Multi-turn memory:** session history answers *use the same skill* and *อันที่แล้ว*, a bounded focus keeps the current skill in play for `focus_turns` turns, and both fail closed with a named reason when there is no history to answer from.
 - ❓ **Answerable decisions:** `/skill-proof why <name>` gives the exact score, threshold, gap to the top, matching terms, or the veto that kept a skill out — from stored numbers, never from prompt text.
 - 📒 **Append-only audit:** one derived-numbers JSON line per turn (`audit_log`), rotated by `audit_limit`, with prompts and skill bodies never written to disk.
+- 📈 **Measured outcomes:** `/skill-proof stats` turns that audit into per-skill hit rates, misses, focus-fallbacks, and the loads the host made *instead* of our selection.
 - 🧳 **Beyond Hermes:** the core is host-independent; a portable CLI and a stdlib stdio MCP server bring the same selection engine to Claude Code, Codex, Antigravity, Cursor, Gemini CLI, and any MCP-capable host.
 - 🛡️ **Progressive gating plus invariant checks:** `observe`, `nudge`, and `enforce-tools` modes with `required`, `forbidden`, and `ordered` tool rules.
 
@@ -79,6 +80,7 @@ Picking a skill from the prompt alone fails in predictable ways. The wrong skill
 | **Follow-up turns** | Every turn starts from zero | ✅ **Session history, `same skill`/`อันที่แล้ว` references, bounded focus with expiry** |
 | **Asking why** | Re-reading prose and guessing | ✅ **`/skill-proof why` with exact score, threshold, gap, and veto list** |
 | **Decision history** | Nothing retained | ✅ **Append-only JSONL audit of derived numbers, rotated by limit** |
+| **Outcome measurement** | No way to tell if routing helped | ✅ **`/skill-proof stats`: per-skill hit rate, misses, overrides** |
 
 ---
 
@@ -121,6 +123,7 @@ How a turn is decided, in plain language:
 | **Session Memory** | Per-session skill history and a decaying focus bonus | `same skill` / `อันที่แล้ว` / `keep using X` resolve deterministically and fail closed without history |
 | **Explain Engine** | `/skill-proof why` over a bounded rank table and veto list | Exact per-skill score and gap with no prompt read or returned |
 | **Audit Log** | One JSON line per turn, append-only with tail rotation | Derived numbers only; a broken path stops logging instead of failing a turn |
+| **Outcome Telemetry** | Hit rate, misses, and overrides derived from the audit log | Fallbacks excluded from hit rate; overrides never count as our load evidence |
 | **Hub Provenance** | Read-only cross-check against the local hub lock | `trust_level`, `scan_verdict`, pinned revision, bundle drift |
 | **Portable Entrypoints** | `cli.py` (`roots`/`scan`/`select`) and `mcp_server.py` (stdio JSON-RPC) | The same deterministic engine outside Hermes, stdlib only |
 | **Cache** | Metadata-keyed reuse of parsed skills, at most 100 completed turns | Normal edits detected next turn, `refresh` forces a reread |
@@ -131,9 +134,9 @@ How a turn is decided, in plain language:
 
 | Metric | Measured Value | Note |
 | :--- | :--- | :--- |
-| **Python files** | 20 | Core, hooks, benchmarks, CLI, MCP server, 12 test files |
-| **Python lines** | 7,378 | Includes tests and benchmarks |
-| **Tests** | 226 passing, 2 skipped | `python -m unittest discover -s tests` |
+| **Python files** | 21 | Core, hooks, benchmarks, CLI, MCP server, 13 test files |
+| **Python lines** | 7,838 | Includes tests and benchmarks |
+| **Tests** | 242 passing, 2 skipped | `python -m unittest discover -s tests` |
 | **Routing cases** | 48 of 48 gated | `routing_benchmark.py --gate`, zero false selections, 5 stretch cases reported |
 | **Hooks** | 7 | Pre and post LLM, pre and post tool, transform, lifecycle, session end |
 | **External dependencies** | 0 | Stdlib only |
@@ -154,6 +157,7 @@ How a turn is decided, in plain language:
 | `/skill-proof status` | Compact state for the latest turn, plus focus and reference |
 | `/skill-proof explain` | Selection decision, ranked candidates, focus, and session history |
 | `/skill-proof why <name>` | Why this skill won, lost, or was vetoed this turn |
+| `/skill-proof stats` | Hit rate, misses, focus-fallbacks, and overrides from the audit log |
 | `/skill-proof trace` | Full bounded JSON receipt |
 | `/skill-proof refresh` | Reread local skill content on the next turn |
 | `/skill-proof health` | Hook activity, catalog diagnostics, and timing |
@@ -273,6 +277,7 @@ All version release notes and historical changes are documented in [CHANGELOG.md
 - Stored per turn: hashes, event flags, and bounded receipts. Stored never: prompts and skill bodies.
 - The audit file (`audit_log`, default on) stores one JSON line of derived numbers per turn and rotates to `audit_limit` lines; it contains `query_sha256`, never query text, and session ids are hashed. `audit_log: false` writes nothing.
 - `/skill-proof why` reads only the live in-process turn state; after a restart use `/skill-proof trace`, which holds no prompt either.
+- `hit_rate` counts a selected skill the host actually loaded, over `routed - fallback`; focus carries (score 0) are excluded on purpose. A user re-asking the same question is *not* measured, because detecting it would require storing prompt text.
 
 ---
 
@@ -282,8 +287,8 @@ All version release notes and historical changes are documented in [CHANGELOG.md
 | :--- | :--- |
 | `core.py` | Ranking, negation guard, phrase matching, gating, receipts, invariants |
 | `__init__.py` | Hook wiring, commands, 7 hook registrations |
-| `plugin.yaml` | Manifest, version 0.8.0, config schema |
-| `tests/` | Discovery, ranking, gating, evidence, and isolation suites, 12 files |
+| `plugin.yaml` | Manifest, version 0.9.0, config schema |
+| `tests/` | Discovery, ranking, gating, evidence, and isolation suites, 13 files |
 | `routing_benchmark.py`, `routing_cases.json` | Labeled routing corpus with tiers, gate, and threshold sweep, 48 of 48 gated passing |
 | `benchmark.py` | Synthetic core performance probe |
 | `host_smoke.py` | Optional live listing and filter check against the host source |
@@ -304,7 +309,7 @@ python routing_benchmark.py --gate
 python routing_benchmark.py --sweep
 ```
 
-**Verification Status:** **226 tests passing (2 skipped), 48 of 48 gated routing cases (0 false selections), doctor OK as standalone with 7 hooks.**
+**Verification Status:** **242 tests passing (2 skipped), 48 of 48 gated routing cases (0 false selections), doctor OK as standalone with 7 hooks.**
 
 ---
 
@@ -315,7 +320,7 @@ Copyright (c) 2026 P Choke & SORA.
 
 <div align="center">
 
-**Skill Proof** <sub>v0.8.0</sub> · Built for deterministic routing
+**Skill Proof** <sub>v0.9.0</sub> · Built for deterministic routing
 
 *Local-first, Auditable, Gated, Governed*
 

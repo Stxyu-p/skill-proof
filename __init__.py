@@ -16,7 +16,7 @@ import time
 import threading
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 try:  # Hermes loads directory plugins as packages; direct unit tests do not.
     from .core import SkillProofEngine, __version__ as CORE_VERSION, normalize_identifier
@@ -32,7 +32,8 @@ _HELP = """\
 Usage:
   /skill-proof status      Compact state for the latest turn
   /skill-proof explain     Selection decision and ranked candidates
-  /skill-proof why <name>  Why this skill won, lost, or was vetoed this turn
+  /skill-proof why <name>  Why this skill won, lost, or was vetoed
+  /skill-proof stats      Hit rate, misses, and overrides from the audit log
   /skill-proof trace       Full bounded JSON receipt
   /skill-proof refresh     Reread local skill content on the next turn
   /skill-proof health      Hook activity, catalog diagnostics, and timing
@@ -477,6 +478,7 @@ class SkillProofPlugin:
             "score": selected.get("score"),
             "reasons": list(selected.get("reasons") or []),
             "explicit": bool(decision.get("explicit")),
+            "override_loaded": evidence.get("override_loaded") or None,
             "focus": session.get("focus"),
             "loaded": bool(evidence.get("hermes_loaded_event")),
             "compliance": receipt.get("compliance"),
@@ -512,6 +514,130 @@ class SkillProofPlugin:
             return
         kept = [line for line in lines[-self.audit_limit:] if line.strip()]
         self.audit_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+    def stats(self) -> dict[str, Any]:
+        """Aggregate the append-only audit log into per-skill outcomes.
+
+        Read-only and derived: hit rate counts a selected skill the host
+        actually loaded, misses are selections nothing loaded, fallback is a
+        focus carry (score 0) and is excluded from the hit rate, and an
+        override is a skill the host loaded that we had not selected.
+        """
+        if not self.audit_enabled:
+            return {"error": "audit_log is disabled, so there are no outcomes to aggregate."}
+        if not self.audit_path.is_file():
+            return {"error": f"No audit log at {self.audit_path} yet."}
+        try:
+            raw = self.audit_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return {"error": f"Could not read {self.audit_path}."}
+        records: list[dict[str, Any]] = []
+        corrupt = 0
+        for line in raw:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                corrupt += 1
+                continue
+            if isinstance(item, dict) and item.get("schema") == "skill-proof.audit.v1":
+                records.append(item)
+        return self._aggregate_audit(records, corrupt=corrupt, path=str(self.audit_path))
+
+    @staticmethod
+    def _aggregate_audit(
+        records: Sequence[Mapping[str, Any]], *, corrupt: int = 0, path: str = ""
+    ) -> dict[str, Any]:
+        totals: dict[str, Any] = {
+            "turns": len(records), "routed": 0, "loaded": 0, "miss": 0,
+            "fallback": 0, "abstained": 0, "overridden": 0, "vetoed": 0,
+        }
+        skills: dict[str, dict[str, int]] = {}
+        overrides: dict[str, int] = {}
+        for record in records:
+            if record.get("reason") == "negated_skill":
+                totals["vetoed"] += 1
+            override = record.get("override_loaded")
+            if override:
+                totals["overridden"] += 1
+                name = str(override)
+                overrides[name] = overrides.get(name, 0) + 1
+            selected = record.get("selected")
+            if not selected:
+                totals["abstained"] += 1
+                continue
+            totals["routed"] += 1
+            name = str(selected)
+            row = skills.setdefault(name, {"routed": 0, "loaded": 0, "miss": 0, "fallback": 0})
+            row["routed"] += 1
+            if record.get("reason") == "focus_fallback":
+                row["fallback"] += 1
+                totals["fallback"] += 1
+            elif record.get("loaded"):
+                row["loaded"] += 1
+                totals["loaded"] += 1
+            else:
+                row["miss"] += 1
+                totals["miss"] += 1
+        effective = totals["routed"] - totals["fallback"]
+        totals["hit_rate"] = round(totals["loaded"] / effective, 4) if effective else None
+        totals["routed_rate"] = (
+            round(totals["routed"] / totals["turns"], 4) if totals["turns"] else None
+        )
+        skill_rows: dict[str, dict[str, Any]] = {}
+        for name in sorted(skills):
+            row = dict(skills[name])
+            rows_effective = row["routed"] - row["fallback"]
+            row["hit_rate"] = round(row["loaded"] / rows_effective, 4) if rows_effective else None
+            skill_rows[name] = row
+        return {
+            "schema": "skill-proof.stats.v1",
+            "path": path,
+            "records": len(records),
+            "corrupt_lines": corrupt,
+            "totals": totals,
+            "skills": skill_rows,
+            "overrides": dict(sorted(overrides.items(), key=lambda item: (-item[1], item[0]))),
+        }
+
+    @staticmethod
+    def _format_stats(payload: Mapping[str, Any]) -> str:
+        totals = payload.get("totals") if isinstance(payload.get("totals"), Mapping) else {}
+
+        def percent(value: Any) -> str:
+            return "n/a" if value is None else f"{float(value) * 100:.1f}%"
+
+        lines = [
+            f"Skill Proof stats — {payload.get('records')} records from {payload.get('path')}",
+            f"turns      {totals.get('turns', 0)}",
+            (
+                f"routed     {totals.get('routed', 0)} ({percent(totals.get('routed_rate'))})  "
+                f"loaded {totals.get('loaded', 0)}  miss {totals.get('miss', 0)}  "
+                f"fallback {totals.get('fallback', 0)}"
+            ),
+            f"abstained  {totals.get('abstained', 0)}",
+            f"overridden {totals.get('overridden', 0)}  (host loaded something we did not select)",
+            f"vetoed     {totals.get('vetoed', 0)}",
+            f"hit_rate   {percent(totals.get('hit_rate'))}  = loaded / (routed - fallback)",
+        ]
+        skills = payload.get("skills") if isinstance(payload.get("skills"), Mapping) else {}
+        if skills:
+            lines += ["", f"{'skill':<34} {'routed':>6} {'loaded':>6} {'miss':>5} {'fall':>5} {'hit':>7}"]
+            for name, row in skills.items():
+                lines.append(
+                    f"{name[:34]:<34} {row.get('routed', 0):>6} {row.get('loaded', 0):>6} "
+                    f"{row.get('miss', 0):>5} {row.get('fallback', 0):>5} "
+                    f"{percent(row.get('hit_rate')):>7}"
+                )
+        overrides = payload.get("overrides") if isinstance(payload.get("overrides"), Mapping) else {}
+        if overrides:
+            lines += ["", "overrides (loaded instead of our selection):"]
+            for name, count in overrides.items():
+                lines.append(f"  {name} x{count}")
+        if payload.get("corrupt_lines"):
+            lines.append(f"\nskipped {payload['corrupt_lines']} unreadable audit line(s)")
+        return "\n".join(lines)
 
     def _audit_tail(self, limit: int = 5) -> list[dict[str, Any]]:
         """Most recent audit records (read-only, for health/reporting)."""
@@ -556,6 +682,13 @@ class SkillProofPlugin:
                     "cannot be explained. Use /skill-proof trace for the persisted receipt."
                 )
             return self._format_why(report, argument)
+        if command == "stats":
+            payload = self.stats()
+            if payload.get("error"):
+                return str(payload["error"])
+            if "--json" in str(argument):
+                return json.dumps(payload, ensure_ascii=False, indent=2)
+            return self._format_stats(payload)
         if command == "health":
             receipt = self._latest_receipt()
             with self._health_lock:
@@ -657,7 +790,7 @@ class SkillProofPlugin:
             "skill-proof",
             handler=self.handle_command,
             description="Inspect skill selection, load evidence, and proof limits.",
-            args_hint="status|explain|why <name>|trace|refresh|health",
+            args_hint="status|explain|why <name>|stats [--json]|trace|refresh|health",
             argument_mode="options",
         )
 

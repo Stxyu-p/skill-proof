@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -1272,6 +1272,9 @@ class _TurnState:
     hub: dict = field(default_factory=dict)
     session: dict = field(default_factory=dict)
     vetoed: tuple[str, ...] = ()
+    # A skill the host loaded that we did not select (or had nothing selected):
+    # the override signal telemetry needs. It never sets hermes_loaded_event.
+    override_loaded: str = ""
     # Normalized names of the *unfiltered* local catalog, kept so "why" can
     # tell "not indexed" apart from "excluded by the host listing".
     indexed_names: frozenset = frozenset()
@@ -2016,10 +2019,17 @@ class SkillProofEngine:
     ) -> bool:
         with self._lock:
             state = self._state(session_id=session_id, task_id=task_id)
-            if state is None or state.selection.selected is None:
+            if state is None:
+                return False
+            if state.selection.selected is None:
+                # The host loaded a skill on its own while we abstained.
+                if skill_name:
+                    state.override_loaded = str(skill_name)
                 return False
             selected = state.selection.selected.skill
             if normalize_identifier(skill_name) != selected.normalized_name:
+                # The host loaded something other than the selected skill.
+                state.override_loaded = str(skill_name)
                 return False
             state.hermes_loaded_event = True
             state.loaded_provenance = None if provenance is None else str(provenance)
@@ -2243,6 +2253,7 @@ class SkillProofEngine:
             "candidates": [self._candidate_payload(item) for item in state.selection.candidates],
             "evidence": {
                 "hermes_loaded_event": state.hermes_loaded_event,
+                "override_loaded": state.override_loaded,
                 "provenance": state.loaded_provenance,
                 "use_count": state.loaded_use_count,
                 "reused": state.loaded_reused,
