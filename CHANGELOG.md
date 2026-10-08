@@ -4,6 +4,21 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-08
+
+### Added
+- **Hub Provenance and Drift Evidence**: When the local Hermes hub lock exists, a loaded skill's receipt now carries `trust_level`, `scan_verdict`, pinned `source_revision`, and a `bundle` verdict (`match`, `modified`, or `unknown`). The bundle hash reproduces the hub's `skills-guard` algorithm (sha256 over sorted `name\\0content` pairs, verified against live lock entries), so drift is detected without trusting the lock blindly.
+- **Aliases and Synonyms**: Skills can declare `aliases:` in frontmatter (inline or block list), and `synonyms` can map skill names to extra terms in config. Matching is language-agnostic: spaceless scripts (Thai, Lao, Myanmar, Khmer, CJK, Hangul) match by substring, spaced scripts keep token boundaries. Aliases score below exact names and above tag terms.
+- **Candidate Hints on Ambiguity**: An ambiguous turn now injects the bounded candidate names and asks which skill to load instead of staying silent.
+- **Canonical Root Suggestions**: `suggest_roots()` resolves junction/symlink facades and reports which target directories should be added to `skill_roots`; `/skill-proof health` includes `hub` status and `root_suggestions`.
+- **Portable CLI (`cli.py`)**: `roots`, `scan`, and `select --query` over any SKILL.md directory, with agent-root auto-detection (project and user `.agents/skills`, Claude Code, Gemini, Antigravity, Cursor, OpenCode, Copilot, Windsurf, Kilo, Hermes).
+- **stdio MCP Server (`mcp_server.py`)**: `skill_roots`, `skill_scan`, and `skill_select` tools over newline-delimited JSON-RPC for MCP-capable hosts (Claude Code, Codex, Antigravity, Cursor, ...). Stdlib only, offline.
+- **Single version source**: `core.__version__` is the authority; the plugin health command and manifest are checked against it by tests.
+
+### Validation
+- 119 tests passing (2 skipped), 12/12 routing benchmark cases passing, Hermes plugin doctor OK with 7 hooks registered.
+- Real-machine checks: 145 skills indexed across detected roots; hub bundle `match` for `caveman`/`blackbox` and `modified` for `adversarial-ux-test`; root suggestion pointed at the canonical `~/.agents/skills` store.
+
 ## [0.4.2] - 2026-10-08
 
 ### Added

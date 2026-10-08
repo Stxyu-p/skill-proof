@@ -18,9 +18,9 @@ from functools import wraps
 from typing import Any, Mapping, Optional
 
 try:  # Hermes loads directory plugins as packages; direct unit tests do not.
-    from .core import SkillProofEngine, normalize_identifier
+    from .core import SkillProofEngine, __version__ as CORE_VERSION, normalize_identifier
 except ImportError:  # pragma: no cover - exercised by direct adapter tests
-    from core import SkillProofEngine, normalize_identifier
+    from core import SkillProofEngine, __version__ as CORE_VERSION, normalize_identifier
 
 
 logger = logging.getLogger(__name__)
@@ -95,6 +95,15 @@ class SkillProofPlugin:
         self.roots = _resolve_roots(ctx.get_config("skill_roots", []))
         mode = str(ctx.get_config("mode", "nudge") or "nudge")
         invariants = ctx.get_config("invariants", {})
+        synonyms = ctx.get_config("synonyms", {})
+        hub_lock_path: Optional[pathlib.Path] = None
+        if _bool_setting(ctx.get_config("hub_provenance", True), True):
+            configured_hub = str(ctx.get_config("hub_lock_path", "") or "").strip()
+            hub_lock_path = (
+                pathlib.Path(configured_hub).expanduser()
+                if configured_hub
+                else _default_profile_home() / "skills" / ".hub" / "lock.json"
+            )
         self.engine = SkillProofEngine(
             self.roots,
             mode=mode,
@@ -109,6 +118,8 @@ class SkillProofPlugin:
             ),
             observed_tool_limit=_positive_int(ctx.get_config("observed_tool_limit", 16), 16, 100),
             invariants=invariants if isinstance(invariants, Mapping) else None,
+            hub_lock_path=hub_lock_path,
+            synonyms=synonyms if isinstance(synonyms, Mapping) else None,
         )
         self.visible_receipt = _bool_setting(ctx.get_config("visible_receipt", True), True)
         self.receipt_style = ctx.get_config("receipt_style", "compact")
@@ -284,6 +295,10 @@ class SkillProofPlugin:
             problems.append(decision.get("reason", "blocked"))
         if receipt.get("compliance") == "failed" and receipt.get("compliance_reasons"):
             problems.extend(receipt.get("compliance_reasons"))
+        hub_evidence = receipt.get("evidence") if isinstance(receipt.get("evidence"), Mapping) else {}
+        hub_record = hub_evidence.get("hub") if isinstance(hub_evidence.get("hub"), Mapping) else {}
+        if hub_record.get("bundle") == "modified":
+            problems.append("hub_bundle_modified")
         if problems:
             detail += " | " + ", ".join(dict.fromkeys(problems)) + "; see /skill-proof explain"
         return f"{response_text}{marker} {detail}]"
@@ -357,13 +372,15 @@ class SkillProofPlugin:
             with self._health_lock:
                 activity = {name: dict(info) for name, info in self._hook_activity.items()}
             report = {
-                'version': '0.4.2', 'mode': self.engine.mode,
+                'version': CORE_VERSION, 'mode': self.engine.mode,
                 'turn_status': 'observed' if receipt else 'No turn observed',
                 'receipt_origin': 'current_process' if self.engine.latest_turn_id else 'persisted' if receipt else 'none',
                 'hooks': activity,
                 'catalog': receipt.get('catalog', {}),
                 'performance': receipt.get('performance', {}),
                 'errors': receipt.get('errors', []),
+                'hub': self.engine.hub_status(),
+                'root_suggestions': self.engine.root_suggestions(),
                 'note': 'Hook counts mean invocation, not success. Timing is plugin pre-LLM work, not model latency.',
             }
             return json.dumps(report, ensure_ascii=False, indent=2)

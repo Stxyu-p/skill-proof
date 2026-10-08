@@ -23,6 +23,9 @@ from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
+__version__ = "0.5.0"
+
+
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _EXCLUDED_DIRS = {
     ".archive",
@@ -74,6 +77,7 @@ class SkillRecord:
     root_path: pathlib.Path
     source_path: pathlib.Path
     invariants: SkillInvariants = SkillInvariants()
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -113,6 +117,27 @@ def _parse_scalar(raw: str, field: str) -> str:
     if value[0] in "[{|>" or value.startswith("&") or value.startswith("*"):
         raise _FrontmatterError("invalid_frontmatter", f"unsupported {field} scalar")
     return value.strip()
+
+
+def _parse_list_value(
+    lines: list[str], index: int, closing: int, value: str
+) -> tuple[tuple[str, ...], int]:
+    """Parse an inline list or a YAML block list ("tags:" then "  - ui" lines)."""
+    if value.strip():
+        return _parse_inline_tags(value), index + 1
+    cursor = index + 1
+    collected: list[str] = []
+    while cursor < closing:
+        subline = lines[cursor]
+        if subline.strip() and not subline[0].isspace():
+            break
+        stripped = subline.strip()
+        if stripped.startswith("-"):
+            collected.append(stripped[1:].strip())
+        cursor += 1
+    if not collected:
+        return (), cursor
+    return _parse_inline_tags("[" + ", ".join(collected) + "]"), cursor
 
 
 def _parse_inline_tags(raw: str) -> tuple[str, ...]:
@@ -156,6 +181,7 @@ def _parse_skill(
 
     fields: dict[str, str] = {}
     tags: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
     invariants_data: dict[str, tuple[str, ...]] = {}
     skip_until = 0
     for index, line in enumerate(lines[1:closing], start=1):
@@ -184,24 +210,12 @@ def _parse_skill(
                 fields[stripped_key] = ' '.join(' '.join(parts).split())
             else:
                 fields[stripped_key] = _parse_scalar(value, stripped_key)
-        elif stripped_key == "tags":
-            if value.strip():
-                tags = _parse_inline_tags(value)
+        elif stripped_key in {"tags", "aliases"}:
+            parsed_list, skip_until = _parse_list_value(lines, index, closing, value)
+            if stripped_key == "tags":
+                tags = parsed_list
             else:
-                # YAML block list form ("tags:" then "  - ui" lines).
-                cursor = index + 1
-                collected: list[str] = []
-                while cursor < closing:
-                    subline = lines[cursor]
-                    if subline.strip() and not subline[0].isspace():
-                        break
-                    stripped_sub = subline.strip()
-                    if stripped_sub.startswith("-"):
-                        collected.append(stripped_sub[1:].strip())
-                    cursor += 1
-                skip_until = cursor
-                if collected:
-                    tags = _parse_inline_tags("[" + ", ".join(collected) + "]")
+                aliases = parsed_list
         elif is_top_level and stripped_key == "invariants":
             cursor = index + 1
             inv_lines = []
@@ -249,6 +263,7 @@ def _parse_skill(
         root_path=root_path,
         source_path=source_path,
         invariants=inv_obj,
+        aliases=aliases,
     )
 
 
@@ -329,6 +344,143 @@ def _apply_cross_root_precedence(
             )
         )
     return survivors
+
+
+_HUB_LOCK_MAX_BYTES = 8 * 1024 * 1024
+_HUB_BUNDLE_FILE_MAX_BYTES = 4 * 1024 * 1024
+_HUB_BUNDLE_TOTAL_MAX_BYTES = 16 * 1024 * 1024
+
+
+def _bundle_sha256(folder: pathlib.Path, files: Sequence[str]) -> Optional[str]:
+    """Hub-compatible bundle hash: sha256 over sorted ``name\\0content`` pairs.
+
+    Mirrors the Hermes hub's skills-guard bundle hash (verified against live
+    lock entries) so local bytes can be compared with recorded provenance.
+    """
+    digest = hashlib.sha256()
+    total = 0
+    for name in sorted(str(item) for item in files):
+        clean = name.replace("\\", "/")
+        parts = pathlib.PurePosixPath(clean).parts
+        if not clean or clean.startswith("/") or ".." in parts:
+            return None
+        candidate = folder.joinpath(*parts)
+        try:
+            if candidate.is_symlink() or not candidate.is_file():
+                return None
+            size = candidate.stat().st_size
+            if size > _HUB_BUNDLE_FILE_MAX_BYTES:
+                return None
+            raw = candidate.read_bytes()
+        except OSError:
+            return None
+        total += len(raw)
+        if total > _HUB_BUNDLE_TOTAL_MAX_BYTES:
+            return None
+        digest.update(clean.encode("utf-8") + b"\0" + raw)
+    return digest.hexdigest()
+
+
+def detect_agent_roots(
+    home: Optional[os.PathLike[str] | str] = None,
+    cwd: Optional[os.PathLike[str] | str] = None,
+    hermes_home: Optional[os.PathLike[str] | str] = None,
+) -> dict[str, pathlib.Path]:
+    """Existing skill roots across common agent ecosystems (id -> path).
+
+    The shared ``SKILL.md`` layout is used by many hosts (Codex, Claude Code,
+    Gemini/Antigravity CLI, Cursor, OpenCode, Cline, ...), and the ``skills``
+    CLI keeps its canonical store in ``~/.agents/skills``.  Only directories
+    that exist are returned; caller order is the matching precedence order.
+    """
+    base_home = pathlib.Path(home).expanduser() if home else pathlib.Path.home()
+    base_cwd = pathlib.Path(cwd).expanduser() if cwd else pathlib.Path.cwd()
+    candidates: list[tuple[str, pathlib.Path]] = [
+        ("project-agents", base_cwd / ".agents" / "skills"),
+        ("project-claude", base_cwd / ".claude" / "skills"),
+        ("agents", base_home / ".agents" / "skills"),
+    ]
+    if hermes_home is not None:  # explicit override; empty string disables detection
+        if str(hermes_home).strip():
+            candidates.append(("hermes", pathlib.Path(hermes_home).expanduser() / "skills"))
+    else:
+        configured_home = os.environ.get("HERMES_HOME", "").strip()
+        if configured_home:
+            candidates.append(("hermes", pathlib.Path(configured_home).expanduser() / "skills"))
+        else:
+            local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+            if os.name == "nt" and local_app_data:
+                candidates.append(("hermes", pathlib.Path(local_app_data) / "hermes" / "skills"))
+            candidates.append(("hermes-home", base_home / ".hermes" / "skills"))
+    candidates.extend(
+        [
+            ("claude", base_home / ".claude" / "skills"),
+            ("gemini", base_home / ".gemini" / "skills"),
+            ("antigravity", base_home / ".gemini" / "antigravity" / "skills"),
+            ("antigravity-cli", base_home / ".gemini" / "antigravity-cli" / "skills"),
+            ("opencode", base_home / ".config" / "opencode" / "skills"),
+            ("copilot", base_home / ".copilot" / "skills"),
+            ("cursor", base_home / ".cursor" / "skills"),
+            ("windsurf", base_home / ".codeium" / "windsurf" / "skills"),
+            ("kilo", base_home / ".kilo" / "skills"),
+        ]
+    )
+    detected: dict[str, pathlib.Path] = {}
+    for root_id, path in candidates:
+        try:
+            if path.is_dir():
+                detected[root_id] = path
+        except OSError:
+            continue
+    return detected
+
+
+def suggest_roots(
+    roots: Mapping[str, os.PathLike[str] | str], *, limit: int = 3
+) -> list[dict[str, Any]]:
+    """Recommend canonical root directories behind reparse-point facades.
+
+    Read-only walk over the configured roots: junction/symlink directories that
+    directly own a SKILL.md are resolved and their target parents grouped.
+    """
+    configured: set[str] = set()
+    counts: Counter[str] = Counter()
+    for _root_id, raw_root in sorted(roots.items(), key=lambda item: str(item[0])):
+        root = pathlib.Path(raw_root).expanduser()
+        try:
+            resolved_root = root.resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        configured.add(str(resolved_root))
+        for current, dirs, files in os.walk(resolved_root, topdown=True, followlinks=False):
+            current_path = pathlib.Path(current)
+            keep: list[str] = []
+            for dirname in sorted(dirs):
+                child = current_path / dirname
+                if dirname in _EXCLUDED_DIRS or dirname.startswith(".") or dirname.startswith("_"):
+                    continue
+                if child.is_symlink():
+                    continue
+                if _is_reparse_point(child):
+                    try:
+                        target = child.resolve(strict=True)
+                    except (OSError, RuntimeError):
+                        continue
+                    if (target / "SKILL.md").is_file():
+                        counts[str(target.parent)] += 1
+                    continue
+                keep.append(dirname)
+            dirs[:] = keep
+            if "SKILL.md" in files:
+                dirs[:] = []
+    suggestions: list[dict[str, Any]] = []
+    for parent, count in counts.most_common():
+        if parent in configured:
+            continue
+        suggestions.append({"path": parent, "skills": count})
+        if len(suggestions) >= max(1, int(limit)):
+            break
+    return suggestions
 
 
 def scan_catalog(
@@ -451,6 +603,7 @@ def scan_catalog(
             "name": skill.normalized_name,
             "description": skill.description,
             "tags": list(skill.tags),
+            "aliases": list(skill.aliases),
             "root": skill.root_id,
             "path": skill.relative_path,
             "sha256": skill.source_sha256,
@@ -600,17 +753,40 @@ def _skill_is_negated(name: str, query: str) -> bool:
     return bool(loose.search(normalized_query)) or bool(structured.search(normalized_query))
 
 
+# Scripts that do not separate words with spaces: raw substring matching is the
+# only workable rule for them, and it is language-agnostic (no dictionary).
+_SPACELESS_RANGES = (
+    (0x0E00, 0x0E7F),  # Thai
+    (0x0E80, 0x0EFF),  # Lao
+    (0x1000, 0x109F),  # Myanmar
+    (0x1780, 0x17FF),  # Khmer
+    (0x3040, 0x30FF),  # Hiragana + Katakana
+    (0x3400, 0x4DBF),  # CJK Extension A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0xAC00, 0xD7AF),  # Hangul syllables
+    (0x1100, 0x11FF),  # Hangul Jamo
+)
+
+
+def _contains_spaceless_script(value: str) -> bool:
+    for character in value:
+        code = ord(character)
+        if any(start <= code <= end for start, end in _SPACELESS_RANGES):
+            return True
+    return False
+
+
 def _phrase_present(shorter: str, longer: str) -> bool:
     """True when *shorter* occurs in *longer* as a complete token span.
 
-    Spaceless Thai keeps raw substring matching (no word boundaries to split
-    on); anything else must match on token boundaries so "ui" never fires
-    inside "build" and "build" never fires inside "rebuild".
+    Spaceless scripts (Thai, CJK, Hangul, ...) keep raw substring matching:
+    there are no word boundaries to split on. Anything else must match on
+    token boundaries so "ui" never fires inside "build".
     """
     if not shorter:
         return False
     if " " not in shorter and " " not in longer:
-        if re.search(r"[\u0e00-\u0e7f]", shorter + longer):
+        if _contains_spaceless_script(shorter + longer):
             return shorter in longer
         return bool(re.search(rf"(?<!\w){re.escape(shorter)}(?!\w)", longer))
     return bool(re.search(rf"(?<!\w){re.escape(shorter)}(?!\w)", longer))
@@ -633,7 +809,12 @@ class Selection:
     required: bool
 
 
-def _rank(catalog: Catalog, query: str) -> list[RankedCandidate]:
+def _rank(
+    catalog: Catalog,
+    query: str,
+    synonyms: Optional[Mapping[str, Sequence[str]]] = None,
+) -> list[RankedCandidate]:
+    synonyms = synonyms or {}
     query_tokens = set(_tokens(query))
     normalized_query = normalize_identifier(query)
     name_counts = Counter(skill.normalized_name for skill in catalog.skills)
@@ -657,6 +838,7 @@ def _rank(catalog: Catalog, query: str) -> list[RankedCandidate]:
         name_tokens = set(_tokens(skill.name.replace("-", " ").replace("_", " ")))
         tag_tokens = set(_tokens(" ".join(skill.tags)))
         description_tokens = set(_tokens(skill.description))
+        alias_terms = tuple(dict.fromkeys(tuple(skill.aliases) + tuple(synonyms.get(skill.normalized_name, ()))))
         reasons: list[str] = []
         score = 0.0
 
@@ -670,6 +852,16 @@ def _rank(catalog: Catalog, query: str) -> list[RankedCandidate]:
         ):
             score += 0.76
             reasons.append("description_phrase")
+
+        for alias in alias_terms:
+            normalized_alias = normalize_identifier(alias)
+            if normalized_alias and (
+                _phrase_present(normalized_alias, normalized_query)
+                or _phrase_present(normalized_query, normalized_alias)
+            ):
+                score += 0.74
+                reasons.append("alias_phrase")
+                break
 
         if query_tokens:
             query_weight = sum(
@@ -686,12 +878,16 @@ def _rank(catalog: Catalog, query: str) -> list[RankedCandidate]:
                 name_coverage = coverage(name_tokens)
                 tag_coverage = coverage(tag_tokens)
                 description_coverage = coverage(description_tokens)
+                alias_coverage = coverage(set(_tokens(" ".join(alias_terms)))) if alias_terms else 0.0
                 if name_coverage:
                     score += 0.58 * name_coverage
                     reasons.append("name_terms")
                 if tag_coverage:
                     score += 0.22 * tag_coverage
                     reasons.append("tag_terms")
+                if alias_coverage:
+                    score += 0.22 * alias_coverage
+                    reasons.append("alias_terms")
                 if description_coverage:
                     score += 0.34 * description_coverage
                     reasons.append("description_terms")
@@ -710,6 +906,7 @@ def select_skill(
     min_score: float = 0.28,
     min_margin: float = 0.05,
     limit: int = 3,
+    synonyms: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> Selection:
     """Choose one skill conservatively or return a reason for not choosing."""
     if not 0 <= float(min_score) <= 1:
@@ -742,10 +939,10 @@ def select_skill(
     if unique_explicit and not requested:
         # Every explicit name was vetoed: lexical ranking (which also skips
         # vetoed skills) decides; an explicit-only veto must not select.
-        ranked_vetoed = _rank(catalog, query)
+        ranked_vetoed = _rank(catalog, query, synonyms)
         return Selection("no_match", "negated_skill", None, tuple(ranked_vetoed[:limit]), False, False)
 
-    ranked = _rank(catalog, query)
+    ranked = _rank(catalog, query, synonyms)
     if not ranked or ranked[0].score < float(min_score):
         if any(_skill_is_negated(skill.name, query) for skill in catalog.skills):
             return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False)
@@ -798,6 +995,7 @@ class _TurnState:
     local_skill_count: int = 0
     host_name_count: Optional[int] = None
     host_unindexed: tuple[str, ...] = ()
+    hub: dict = field(default_factory=dict)
     performance: dict = field(default_factory=dict)
     source_path_match: str = "unknown"
     compliance: str = "unassessed"
@@ -824,6 +1022,8 @@ class SkillProofEngine:
         observed_tool_limit: int = 16,
         retained_turn_limit: int = 100,
         invariants: Optional[Mapping[str, Mapping[str, Any]]] = None,
+        hub_lock_path: Optional[str | os.PathLike[str]] = None,
+        synonyms: Optional[Mapping[str, Any]] = None,
     ) -> None:
         normalized_mode = normalize_identifier(mode)
         normalized_mode = self._MODE_ALIASES.get(normalized_mode, normalized_mode)
@@ -865,6 +1065,23 @@ class SkillProofEngine:
                         forbidden_tools=forb,
                         ordered_tools=order,
                     )
+        self.hub_lock_path: Optional[pathlib.Path] = (
+            pathlib.Path(hub_lock_path).expanduser() if hub_lock_path else None
+        )
+        self._hub_cache: Optional[dict[str, Mapping[str, Any]]] = None
+        self._hub_cache_mtime: Optional[int] = None
+        self.synonyms: dict[str, tuple[str, ...]] = {}
+        if isinstance(synonyms, Mapping):
+            for sname, terms in synonyms.items():
+                if isinstance(terms, str):
+                    terms = (terms,)
+                if not isinstance(terms, (list, tuple)):
+                    continue
+                normalized_terms = tuple(
+                    dict.fromkeys(str(term).strip() for term in terms if str(term).strip())
+                )[:32]
+                if normalized_terms:
+                    self.synonyms[normalize_identifier(sname)] = normalized_terms
         self._catalog_cache: dict = {}
         self._turns: dict[str, _TurnState] = {}
         self._latest_by_task: dict[tuple[str, str], str] = {}
@@ -918,6 +1135,12 @@ class SkillProofEngine:
                 f'Skill Proof selected "{name}". Before operational tools, call skill_view with '
                 f'name="{name}". A Hermes loaded event proves loading only; it does not prove '
                 "skill compliance or task verification."
+            )
+        if selection.status == "ambiguous" and selection.candidates:
+            names = ", ".join(item.skill.name for item in selection.candidates)
+            return (
+                f"Skill Proof: multiple skills matched ({names}). Ask which skill to load; "
+                "do not claim one was selected."
             )
         if selection.status == "blocked" and selection.explicit:
             if selection.reason == "listed_but_unindexed":
@@ -976,6 +1199,7 @@ class SkillProofEngine:
             min_score=self.min_score,
             min_margin=self.min_margin,
             limit=self.max_candidates,
+            synonyms=self.synonyms,
         )
         if availability_error:
             selection = Selection("blocked", "hermes_catalog_unavailable", None, (), bool(explicit_names), True)
@@ -1099,6 +1323,7 @@ class SkillProofEngine:
             state.source_error = error
             if error and error not in state.errors:
                 state.errors.append(error)
+            state.hub = self._hub_provenance(selected)
             return True
 
     def _remember_tool(self, state: _TurnState, tool_name: str) -> None:
@@ -1317,6 +1542,7 @@ class SkillProofEngine:
                 "source_bytes": state.source_bytes,
                 "source_error": state.source_error,
                 "source_path_match": state.source_path_match,
+                "hub": dict(state.hub),
                 "tool_result_sha256_pre_transform": state.tool_result_sha256_pre_transform,
                 "tool_result_bytes_pre_transform": state.tool_result_bytes_pre_transform,
             },
@@ -1370,6 +1596,70 @@ class SkillProofEngine:
         """Force a content reread next turn; existing turn evidence stays unchanged."""
         with self._lock:
             self._catalog_cache.clear()
+
+    def _hub_entries(self) -> Mapping[str, Mapping[str, Any]]:
+        """Read-only hub lock entries keyed by normalized skill name (mtime-cached)."""
+        if self.hub_lock_path is None:
+            return {}
+        try:
+            info = self.hub_lock_path.stat()
+        except OSError:
+            return {}
+        if info.st_size > _HUB_LOCK_MAX_BYTES:
+            return {}
+        if self._hub_cache is not None and self._hub_cache_mtime == info.st_mtime_ns:
+            return self._hub_cache
+        entries: dict[str, Mapping[str, Any]] = {}
+        try:
+            payload = json.loads(self.hub_lock_path.read_text(encoding="utf-8"))
+            installed = payload.get("installed") if isinstance(payload, Mapping) else None
+            if isinstance(installed, Mapping):
+                for name, entry in installed.items():
+                    if isinstance(entry, Mapping):
+                        entries[normalize_identifier(str(name))] = entry
+        except (OSError, ValueError):
+            entries = {}
+        self._hub_cache = entries
+        self._hub_cache_mtime = info.st_mtime_ns
+        return entries
+
+    def _hub_provenance(self, selected: SkillRecord) -> dict[str, Any]:
+        """Cross-check a loaded skill against the hub lock; never trust it blindly."""
+        entry = self._hub_entries().get(selected.normalized_name)
+        if entry is None:
+            return {}
+        scan = entry.get("scan_provenance")
+        scan = scan if isinstance(scan, Mapping) else {}
+        metadata = entry.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        recorded = str(scan.get("bundle_hash") or entry.get("content_hash") or "")
+        recorded_hex = recorded.split(":", 1)[-1] if recorded else ""
+        files = entry.get("files") if isinstance(entry.get("files"), (list, tuple)) else ()
+        local_hash = (
+            _bundle_sha256(selected.source_path.parent, [str(name) for name in files]) if files else None
+        )
+        if local_hash is not None and recorded_hex:
+            bundle = "match" if local_hash == recorded_hex else "modified"
+        else:
+            bundle = "unknown"
+        return {
+            "available": True,
+            "trust_level": str(entry.get("trust_level") or ""),
+            "scan_verdict": str(entry.get("scan_verdict") or ""),
+            "source": str(entry.get("source") or ""),
+            "source_revision": str(metadata.get("source_revision") or ""),
+            "bundle": bundle,
+        }
+
+    def hub_status(self) -> dict[str, Any]:
+        if self.hub_lock_path is None:
+            return {"enabled": False}
+        entries = self._hub_entries()
+        return {"enabled": True, "path": str(self.hub_lock_path), "entries": len(entries)}
+
+    def root_suggestions(self, limit: int = 3) -> list[dict[str, Any]]:
+        with self._lock:
+            return suggest_roots(self._roots, limit=limit)
 
     def summary(
         self,

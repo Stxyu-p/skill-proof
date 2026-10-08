@@ -1,5 +1,5 @@
 name: skill-proof
-version: 0.4.2
+version: 0.5.0
 description: Local skill discovery, tool gating, truthful load receipts, and invariant compliance verification
 kind: standalone
 manifest_version: 2
@@ -53,3 +53,15 @@ config_schema:
     type: dict
     default: {}
     description: Skill name to invariant rules (required_tools, forbidden_tools, ordered_tools)
+  hub_provenance:
+    type: bool
+    default: true
+    description: Cross-check loaded skills against the local hub lock (read-only)
+  hub_lock_path:
+    type: str
+    default: ""
+    description: Override path to skills/.hub/lock.json; empty auto-detects the profile home
+  synonyms:
+    type: dict
+    default: {}
+    description: Skill name to extra matching terms (any language), merged with frontmatter aliases
