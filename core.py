@@ -821,13 +821,23 @@ _STOPWORDS = {
     "ช่วย", "ด้วย", "ทำ", "นี้", "สกิล", "ใช้", "ให้", "ใน", "ของ", "หน่อย",
     # Chinese (Standard conversational fillers & common particles)
     "请", "帮", "我", "进行", "和", "与", "或", "在", "的", "了", "是", "把", "用", "使用", "一个",
-    "请帮我", "帮我", "请使用", "帮我做",
+    "请帮我", "帮我", "请使用", "帮我做", "技能",
     # Hindi
     "का", "के", "की", "है", "में", "से", "को", "पर", "और", "तो", "भी", "कर", "करें", "हो", "लिए", "कृपया",
     # Korean
     "의", "가", "이", "은", "들", "는", "좀", "잘", "과", "도", "를", "으로", "에", "와", "하다", "해주세요",
+    "스킬", "사용",
     # Japanese
     "の", "に", "は", "を", "た", "が", "で", "て", "と", "し", "ある", "いる", "も", "する", "から",
+    "スキル", "使って", "使いたい", "お願いします",
+    # German
+    "der", "die", "das", "und", "für", "in", "mit", "von", "zu", "eine", "einen", "ein", "bitte", "verwenden", "nutzen",
+    # French
+    "le", "la", "les", "de", "pour", "dans", "avec", "un", "une", "des", "sur", "utiliser", "compétence",
+    # Spanish
+    "el", "la", "de", "para", "por", "en", "con", "un", "una", "los", "las", "usar", "usando", "habilidad",
+    # Vietnamese
+    "của", "cho", "trong", "với", "một", "dùng", "sử dụng", "kỹ năng", "giúp",
 }
 
 
@@ -895,10 +905,48 @@ _NEGATION_WORDS = (
     "नहीं",
     "बिना",
     # Japanese
+    "使わないでください",
+    "使わないで",
     "使わない",
+    "使わず",
+    "不要",
+    "除外",
     # Korean
     "하지마",
     "사용하지마",
+    "쓰지마",
+    "금지",
+    # Vietnamese
+    "đừng",
+    "không",
+    "tránh",
+    "chớ",
+    # German
+    "nicht",
+    "ohne",
+    "kein",
+    "keine",
+    # French
+    "sans",
+    "sauf",
+    "jamais",
+    # Spanish
+    "sin",
+    "excepto",
+    "nunca",
+    "jamás",
+)
+_SOV_NEGATION_WORDS = (
+    "使わないでください",
+    "使わないで",
+    "使わない",
+    "使わず",
+    "不要",
+    "除外",
+    "하지마",
+    "사용하지마",
+    "쓰지마",
+    "금지",
 )
 _ENGLISH_NEGATION_WORDS = (
     "do\\s+not",
@@ -909,11 +957,27 @@ _ENGLISH_NEGATION_WORDS = (
     "except",
     "not",
     "no",
+    # German
+    "nicht",
+    "ohne",
+    "kein",
+    "keine",
+    # French
+    "ne\\s+pas",
+    "sans",
+    "sauf",
+    "jamais",
+    # Spanish
+    "sin",
+    "excepto",
+    "nunca",
+    "jamás",
+    # Vietnamese
+    "đừng",
+    "không",
 )
 
-# Closed vocabulary for English veto clauses ("don't use the skill X").  Only
-# these words may sit between a negation and the skill name, so a request like
-# "do not forget to use X" is never misread as a veto.
+# Closed vocabulary for veto clauses ("don't use the skill X").
 _NEGATION_FILLERS = (
     "ever", "really", "actually", "just", "again", "simply", "even",
     "want", "wants", "wanted", "need", "needs", "needed", "to",
@@ -922,11 +986,21 @@ _NEGATION_FILLERS = (
     "call", "run", "running",
     "the", "a", "an", "any", "that", "this", "those", "these", "my", "its",
     "skill", "skills", "สกิล",
+    # German
+    "bitte", "verwenden", "nutzen", "laden", "den", "dem", "die", "das", "ein", "eine",
+    # French
+    "utiliser", "charger", "le", "la", "les", "ce", "cette", "de", "d'",
+    # Spanish
+    "usar", "utilizar", "cargar", "el", "la", "los", "las", "este", "esta", "de",
+    # Vietnamese
+    "dùng", "sử dụng", "kỹ", "năng", "cho",
+    # Japanese / Korean particles & fillers
+    "は", "を", "が", "で", "の", "ください",
 )
 
 
 @lru_cache(maxsize=1024)
-def _negation_patterns(normalized_name: str) -> "tuple[re.Pattern[str], re.Pattern[str]]":
+def _negation_patterns(normalized_name: str) -> "tuple[re.Pattern[str], re.Pattern[str], re.Pattern[str]]":
     """Compiled veto patterns per skill name (compiling per call cost ~1 ms x N skills
     and overflowed the re module cache on large catalogs)."""
     tail = r"[`\"']?\$?" + re.escape(normalized_name) + r"(?![a-z0-9_-])"
@@ -942,7 +1016,17 @@ def _negation_patterns(normalized_name: str) -> "tuple[re.Pattern[str], re.Patte
         r"(?:\s+(?:" + "|".join(_NEGATION_FILLERS) + r"))*"
         r"\s*" + tail
     )
-    return loose, structured
+    # SOV post-negation (Japanese & Korean): skill followed by optional particle/fillers and negation
+    post_negation = re.compile(
+        tail
+        + r"(?:[はをがでの는을를에]?\s*(?:"
+        + "|".join(_NEGATION_FILLERS)
+        + r"\s*)*)"
+        + r"(?:"
+        + "|".join(_SOV_NEGATION_WORDS)
+        + r")"
+    )
+    return loose, structured, post_negation
 
 
 _NEGATION_SUBSTRINGS: tuple[str, ...] = (
@@ -950,8 +1034,16 @@ _NEGATION_SUBSTRINGS: tuple[str, ...] = (
     "ไม่", "อย่า", "ห้าม", "ยกเว้น",
     "不", "别", "禁止", "除了",
     "मत", "नहीं", "बिना",
-    "하지마", "사용하지마", "금지",
-    "使わない", "不要",
+    "하지마", "사용하지마", "금지", "쓰지마",
+    "使わない", "不要", "除外", "使わず",
+    # German
+    "nicht", "ohne", "kein", "keine",
+    # French
+    "sans", "sauf", "jamais", "pas",
+    # Spanish
+    "sin", "excepto", "nunca", "jamás",
+    # Vietnamese
+    "đừng", "không", "tránh", "chớ",
 )
 
 
@@ -965,10 +1057,9 @@ def _query_might_contain_negation(query: str) -> bool:
 def _skill_is_negated(name: str, query: str) -> bool:
     """True when the query vetoes *name* ("don't use X", "ไม่เอา X").
 
-    Two shapes are accepted: a loose window for Thai vetoes (spaceless text
-    needs back-tracking inside one non-space run) and a filler-vocabulary
-    clause for English vetoes ("do not use the skill X") that still refuses
-    non-veto phrasings such as "do not forget to use X".
+    Three shapes are accepted: a loose window for Thai vetoes, a structured
+    filler-vocabulary clause for prefix vetoes, and an SOV post-negation pattern
+    for Japanese/Korean syntax ("skillは使わないで").
     """
     if not _query_might_contain_negation(query):
         return False
@@ -976,8 +1067,8 @@ def _skill_is_negated(name: str, query: str) -> bool:
     if not normalized_name:
         return False
     normalized_query = normalize_identifier(query)
-    loose, structured = _negation_patterns(normalized_name)
-    return bool(loose.search(normalized_query)) or bool(structured.search(normalized_query))
+    loose, structured, post_negation = _negation_patterns(normalized_name)
+    return bool(loose.search(normalized_query)) or bool(structured.search(normalized_query)) or bool(post_negation.search(normalized_query))
 
 
 # Scripts that do not separate words with spaces: raw substring matching is the
@@ -1078,6 +1169,20 @@ _DIALOGUE_RELEASE_PHRASES = (
     "หยุดใช้",
     "เลิกโฟกัส",
     "เลิกทำ",
+    # German
+    "aufhören mit",
+    "nicht mehr verwenden",
+    # French
+    "arrêter d'utiliser",
+    # Spanish
+    "dejar de usar",
+    # Japanese
+    "使うのをやめて",
+    "使用中止",
+    # Korean
+    "그만 써",
+    # Vietnamese
+    "ngừng dùng",
 )
 _DIALOGUE_FOCUS_PHRASES = (
     "keep using",
@@ -1092,6 +1197,19 @@ _DIALOGUE_FOCUS_PHRASES = (
     "ใช้ตัวนี้ต่อ",
     "ทำต่อด้วย",
     "ใช้ต่อไป",
+    # German
+    "weiterhin verwenden",
+    "weitermachen mit",
+    # French
+    "continuer avec",
+    # Spanish
+    "seguir usando",
+    # Japanese
+    "使い続けて",
+    # Korean
+    "계속 써",
+    # Vietnamese
+    "tiếp tục dùng",
 )
 _DIALOGUE_REPEAT_PHRASES = (
     "same skill",
@@ -1110,6 +1228,25 @@ _DIALOGUE_REPEAT_PHRASES = (
     "แบบเดิม",
     "อย่างเมื่อกี้",
     "เมื่อกี้",
+    # German
+    "gleicher skill",
+    "wie vorher",
+    # French
+    "même compétence",
+    "comme avant",
+    # Spanish
+    "misma habilidad",
+    "igual que antes",
+    # Japanese
+    "同じスキル",
+    "さっきの",
+    "さっきと同じ",
+    # Korean
+    "같은 스킬",
+    "방금 전",
+    # Vietnamese
+    "kỹ năng cũ",
+    "như trước",
 )
 _DIALOGUE_PREVIOUS_PHRASES = (
     "previous skill",
@@ -1120,6 +1257,22 @@ _DIALOGUE_PREVIOUS_PHRASES = (
     "อันที่แล้ว",
     "ตัวที่แล้ว",
     "อันก่อน",
+    # German
+    "vorheriger skill",
+    "vorherige",
+    # French
+    "compétence précédente",
+    "précédent",
+    # Spanish
+    "habilidad anterior",
+    "anterior",
+    # Japanese
+    "前のスキル",
+    "前回の",
+    # Korean
+    "이전 스킬",
+    # Vietnamese
+    "kỹ năng trước",
 )
 _DIALOGUE_FAMILIES = tuple(
     # Phrases are normalized the same way queries are: NFKC rewrites Thai SARA AM
