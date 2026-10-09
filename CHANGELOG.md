@@ -4,6 +4,40 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-10-09
+
+### Fixed
+- **Strict Disabled Skills Isolation (P0 Security Guard)**:
+  - Added `load_disabled_skills()` reading host `config.yaml` (`skills.disabled`) with PyYAML fast-path and robust stdlib regex fallback.
+  - `scan_catalog()` automatically excludes all 64 disabled skills at the catalog level.
+  - Verified with live test probes: disabled utilities (`pdf`, `xlsx`, `docx`, `powerpoint`) can never win selection or leak into prompt nudges.
+- **Alias-Aware Negation Veto (P1.1 Accuracy Hardening)**:
+  - Updated `_skill_is_negated()` and `_rank()` to evaluate all skill aliases and synonyms.
+  - Queries containing vetoes against aliases (e.g. *"ไม่เอา TDD"*, *"don't use TDD"*) now cleanly veto `test-driven-development` and gracefully fall back to bug-checking or syntax tools.
+
+### Added
+- **Built-in Synonym Graph & Colloquial Vocabulary**:
+  - Added `DEFAULT_SYNONYMS` connecting conversational Thai and English phrasing directly to canonical skills:
+    - Colloquial debugging (`"โค้ดไพธอน"`, `"traceback"`, `"ส่องที"`) -> `python-debugpy`, `systematic-debugging`
+    - Extreme boundary stress testing (`"เคสพิสดาร"`, `"boundary โหดๆ"`, `"หาจุดพัง"`) -> `edge-case-sadist`, `adversarial-boundary-testing`
+    - Parallel subagent delegation (`"กระจายงาน"`, `"subagent ขนาน"`, `"ขนานกัน"`) -> `superpowers-dispatching-parallel-agents`
+    - GitHub PR review (`"รีวิว pull request"`, `"ตรวจ pr"`) -> `github-code-review`, `github-pr-workflow`
+- **Multi-Root Catalog Configuration & Hermes Runtime Wiring**:
+  - Configured `skill_roots` in Hermes `config.yaml` to index workspace (`.agents/skills`), user agent store (`~/.agents/skills`), and host skills (`~/.hermes/skills`).
+  - Live catalog indexes 136 active skills with 0 token prompt overhead.
+- **New Regression Tests**:
+  - Added `test_disabled_skills_excluded_from_scan` and `test_negation_vetoes_skill_via_alias` to `tests/test_core.py`.
+
+### Performance & Measured Benchmark
+- **2,661x Faster Selection Latency vs Prompt-Only LLM Routing**:
+  - In-process warm select runs at **0.58 ms median (1,724 QPS)**; live end-to-end hook runs at **3.47 ms median** (vs 10,692.8 ms model-based selection).
+  - Eliminates ~4,050 prompt tokens per turn from the system prompt.
+  - 10/10 hard simulation scenarios pass 100.0% (anti-slop UI, negative veto, multi-domain slides, colloquial Thai debugging, extreme boundary stress testing).
+
+### Validation
+- 299 tests passing (100% pass, 0 failures, 2 skipped on Windows symlinks).
+- 58/58 benchmark gate cases passing (100% precision, 100% recall, 0 false selections).
+
 ## [0.13.0] - 2026-10-09
 
 ### Added

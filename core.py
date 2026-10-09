@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
