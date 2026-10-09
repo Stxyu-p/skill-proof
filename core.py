@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
@@ -776,17 +776,55 @@ def extract_explicit_skill_names(query: str, *, known_names=None) -> tuple[str, 
 
 
 _TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_SEA_SPACELESS_RANGES = (
+    (0x0E00, 0x0E7F),  # Thai
+    (0x0E80, 0x0EFF),  # Lao
+    (0x1000, 0x109F),  # Myanmar
+    (0x1780, 0x17FF),  # Khmer
+)
+
+
+def _is_sea_spaceless_character(character: str) -> bool:
+    code = ord(character)
+    return any(start <= code <= end for start, end in _SEA_SPACELESS_RANGES)
+
+
 _STOPWORDS = {
+    # English
     "a", "an", "and", "for", "in", "of", "on", "please", "the", "this", "to", "use", "using", "with",
-    "skill", "skills", "ช่วย", "ด้วย", "ทำ", "นี้", "สกิล", "ใช้", "ให้",
+    "skill", "skills",
+    # Thai
+    "ช่วย", "ด้วย", "ทำ", "นี้", "สกิล", "ใช้", "ให้", "ใน", "ของ", "หน่อย",
+    # Chinese (Standard conversational fillers & common particles)
+    "请", "帮", "我", "进行", "和", "与", "或", "在", "的", "了", "是", "把", "用", "使用", "一个",
+    "请帮我", "帮我", "请使用", "帮我做",
+    # Hindi
+    "का", "के", "की", "है", "में", "से", "को", "पर", "और", "तो", "भी", "कर", "करें", "हो", "लिए", "कृपया",
+    # Korean
+    "의", "가", "이", "은", "들", "는", "좀", "잘", "과", "도", "를", "으로", "에", "와", "하다", "해주세요",
+    # Japanese
+    "の", "に", "は", "を", "た", "が", "で", "て", "と", "し", "ある", "いる", "も", "する", "から",
 }
 
 
 def _tokens(value: str) -> tuple[str, ...]:
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    raw_tokens: list[str] = []
+    current: list[str] = []
+    for ch in normalized:
+        cat = unicodedata.category(ch)
+        if cat[0] in ("L", "M", "N"):
+            current.append(ch)
+        else:
+            if current:
+                raw_tokens.append("".join(current))
+                current = []
+    if current:
+        raw_tokens.append("".join(current))
+
     return tuple(
-        token for token in _TOKEN_RE.findall(normalized)
-        if len(token) > 1 and token not in _STOPWORDS and not any(_is_spaceless_character(c) for c in token)
+        token for token in raw_tokens
+        if len(token) > 1 and token not in _STOPWORDS and not any(_is_sea_spaceless_character(c) for c in token)
     )
 
 
@@ -813,6 +851,24 @@ _NEGATION_WORDS = (
     "ห้าม",
     "อย่า",
     "ไม่",
+    # Chinese
+    "不要用",
+    "不要",
+    "别用",
+    "别",
+    "不用",
+    "禁止使用",
+    "禁止",
+    "除了",
+    # Hindi
+    "मत",
+    "नहीं",
+    "बिना",
+    # Japanese
+    "使わない",
+    # Korean
+    "하지마",
+    "사용하지마",
 )
 _ENGLISH_NEGATION_WORDS = (
     "do\\s+not",
@@ -844,7 +900,12 @@ def _negation_patterns(normalized_name: str) -> "tuple[re.Pattern[str], re.Patte
     """Compiled veto patterns per skill name (compiling per call cost ~1 ms x N skills
     and overflowed the re module cache on large catalogs)."""
     tail = r"[`\"']?\$?" + re.escape(normalized_name) + r"(?![a-z0-9_-])"
-    loose = re.compile(r"(?<!\w)(?:" + "|".join(_NEGATION_WORDS) + r")(?:\s*\S+){0,2}\s*" + tail)
+    loose = re.compile(
+        r"(?:(?<!\w)|(?<=[\s\u0e00-\u0e7f\u4e00-\u9fff]))(?:"
+        + "|".join(_NEGATION_WORDS)
+        + r")(?:\s*\S+){0,2}\s*"
+        + tail
+    )
     negations = "|".join(_NEGATION_WORDS + _ENGLISH_NEGATION_WORDS)
     structured = re.compile(
         r"(?<!\w)(?:" + negations + r")"

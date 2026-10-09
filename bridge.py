@@ -34,7 +34,7 @@ import core
 MARKER_START = "<!-- skill-proof:bridge:start -->"
 MARKER_END = "<!-- skill-proof:bridge:end -->"
 
-HOSTS = ("claude-code", "codex", "cursor")
+HOSTS = ("claude-code", "codex", "gemini", "cursor", "cline", "windsurf", "copilot", "auto")
 
 AGENTS_SECTION = """## Skill Proof
 
@@ -50,6 +50,50 @@ python {cli} overlap   # near-duplicate skills worth pruning
 from this repository without configuration. Treat its `selected` field as the
 skill to load; if it returns `status: no_match` or `ambiguous`, ask instead of
 guessing.
+"""
+
+GEMINI_SECTION = """## Skill Proof
+
+Skill Proof selects one skill per request with deterministic lexical ranking
+(no model call, no network). Ask it before loading a skill by hand:
+
+```bash
+python {cli} select --query "<what you want to do>" --json
+python {cli} overlap   # near-duplicate skills worth pruning
+```
+
+{cli} auto-detects the skill roots of common agent ecosystems (Gemini, Antigravity,
+Hermes, Codex), so it works from this workspace without configuration.
+"""
+
+CLINE_SECTION = """## Skill Proof
+
+Skill Proof selects one skill per request with deterministic lexical ranking.
+Ask it before loading a skill by hand:
+
+```bash
+python {cli} select --query "<what you want to do>" --json
+```
+"""
+
+WINDSURF_SECTION = """## Skill Proof
+
+Skill Proof selects one skill per request with deterministic lexical ranking.
+Ask it before loading a skill by hand:
+
+```bash
+python {cli} select --query "<what you want to do>" --json
+```
+"""
+
+COPILOT_SECTION = """## Skill Proof
+
+Skill Proof selects one skill per request with deterministic lexical ranking.
+Ask it before loading a skill by hand:
+
+```bash
+python {cli} select --query "<what you want to do>" --json
+```
 """
 
 CURSOR_RULE = """---
@@ -158,8 +202,38 @@ def _existing_section(text: str) -> tuple[str, str]:
     return body, "present"
 
 
+def detect_host_environments(target: pathlib.Path) -> list[str]:
+    """Inspect target folder and system environment to detect active agent hosts."""
+    detected = []
+    if (target / ".cursor").is_dir() or (target / ".cursor" / "rules").is_dir():
+        detected.append("cursor")
+    if (target / ".claude").is_dir() or (target / "settings.json").is_file():
+        detected.append("claude-code")
+    if (target / "GEMINI.md").is_file() or (target / ".gemini").is_dir():
+        detected.append("gemini")
+    if (target / ".clinerules").is_file():
+        detected.append("cline")
+    if (target / ".windsurfrules").is_file():
+        detected.append("windsurf")
+    if (target / ".github" / "copilot-instructions.md").is_file() or (target / ".github").is_dir():
+        detected.append("copilot")
+    if (target / "AGENTS.md").is_file() or (target / ".codex").is_dir():
+        detected.append("codex")
+    if not detected:
+        # Default to universal codex/agents standard
+        detected.append("codex")
+    return detected
+
+
 def init_host(host: str, target: pathlib.Path, *, dry_run: bool = False, force: bool = False) -> list[str]:
     """Write the optional files for *host*. Returns human-readable actions."""
+    if host == "auto":
+        detected = detect_host_environments(target)
+        actions = []
+        for h in detected:
+            actions.extend(init_host(h, target, dry_run=dry_run, force=force))
+        return actions
+
     if host == "claude-code":
         hook_path = target / "skill-proof-hook.py"
         source = _here() / "bridge.py"
@@ -188,10 +262,24 @@ def init_host(host: str, target: pathlib.Path, *, dry_run: bool = False, force: 
         actions.append(CLAUDE_HOOK_SNIPPET.format(hook=hook_path).rstrip())
         return actions
 
-    if host == "codex":
-        path = target / "AGENTS.md"
+    if host in ("codex", "gemini", "cline", "windsurf", "copilot"):
+        filename_map = {
+            "codex": target / "AGENTS.md",
+            "gemini": target / "GEMINI.md",
+            "cline": target / ".clinerules",
+            "windsurf": target / ".windsurfrules",
+            "copilot": target / ".github" / "copilot-instructions.md",
+        }
+        section_map = {
+            "codex": AGENTS_SECTION,
+            "gemini": GEMINI_SECTION,
+            "cline": CLINE_SECTION,
+            "windsurf": WINDSURF_SECTION,
+            "copilot": COPILOT_SECTION,
+        }
+        path = filename_map[host]
         existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-        body, action = _replace_section(existing, AGENTS_SECTION.format(cli=f"python {_here() / 'cli.py'}"))
+        body, action = _replace_section(existing, section_map[host].format(cli=f"python {_here() / 'cli.py'}"))
         if existing == body:
             actions = [f"{path}: already up to date"]
         else:
@@ -229,8 +317,15 @@ def remove_host(host: str, target: pathlib.Path) -> list[str]:
         actions.append("remove the PreToolUse entry that mentions skill-proof-hook.py from settings.json")
         return actions
 
-    if host == "codex":
-        path = target / "AGENTS.md"
+    if host in ("codex", "gemini", "cline", "windsurf", "copilot"):
+        filename_map = {
+            "codex": target / "AGENTS.md",
+            "gemini": target / "GEMINI.md",
+            "cline": target / ".clinerules",
+            "windsurf": target / ".windsurfrules",
+            "copilot": target / ".github" / "copilot-instructions.md",
+        }
+        path = filename_map[host]
         if not path.is_file():
             return [f"{path}: not present"]
         text = path.read_text(encoding="utf-8")
@@ -252,19 +347,37 @@ def remove_host(host: str, target: pathlib.Path) -> list[str]:
 def status(target: pathlib.Path) -> dict[str, Any]:
     policy = _policy_path(target)
     codex_path = target / "AGENTS.md"
+    gemini_path = target / "GEMINI.md"
+    cline_path = target / ".clinerules"
+    windsurf_path = target / ".windsurfrules"
+    copilot_path = target / ".github" / "copilot-instructions.md"
     cursor_path = target / ".cursor" / "rules" / "skill-proof.mdc"
     hook_path = target / "skill-proof-hook.py"
-    codex_state = "absent"
-    if codex_path.is_file():
-        _, codex_state = _existing_section(codex_path.read_text(encoding="utf-8"))
+
+    def _sec(p: pathlib.Path) -> tuple[str, bool]:
+        if not p.is_file():
+            return "absent", False
+        _, state = _existing_section(p.read_text(encoding="utf-8"))
+        return state, True
+
+    codex_state, codex_present = _sec(codex_path)
+    gemini_state, gemini_present = _sec(gemini_path)
+    cline_state, cline_present = _sec(cline_path)
+    windsurf_state, windsurf_present = _sec(windsurf_path)
+    copilot_state, copilot_present = _sec(copilot_path)
+
     return {
         "version": core.__version__,
         "target": str(target),
         "policy": {"path": str(policy), "present": policy.is_file()},
         "hosts": {
             "claude-code": {"hook_file": str(hook_path), "present": hook_path.is_file()},
-            "codex": {"file": str(codex_path), "section": codex_state},
+            "codex": {"file": str(codex_path), "section": codex_state, "present": codex_present},
+            "gemini": {"file": str(gemini_path), "section": gemini_state, "present": gemini_present},
             "cursor": {"file": str(cursor_path), "present": cursor_path.is_file()},
+            "cline": {"file": str(cline_path), "section": cline_state, "present": cline_present},
+            "windsurf": {"file": str(windsurf_path), "section": windsurf_state, "present": windsurf_present},
+            "copilot": {"file": str(copilot_path), "section": copilot_state, "present": copilot_present},
         },
         "note": "Every bridge file is optional and removable with `python bridge.py remove --host ...`",
     }
@@ -306,6 +419,12 @@ def main(argv=None) -> int:
     subparsers.add_parser("status", help="what is installed").add_argument(
         "--target", default="."
     )
+    sub_install = subparsers.add_parser("install", help="one-line auto-detection and installation")
+    sub_install.add_argument("--host", default="auto", choices=HOSTS, help="target agent host (default: auto)")
+    sub_install.add_argument("--target", default=".", help="project directory (default: cwd)")
+    sub_install.add_argument("--dry-run", action="store_true", help="print, write nothing")
+    sub_install.add_argument("--force", action="store_true", help="overwrite an existing file")
+    subparsers.add_parser("ai-setup", help="print deterministic instructions for AI coding agents")
     hook_parser = subparsers.add_parser("hook", help="runtime entrypoint (stdin JSON -> stdout JSON)")
     hook_parser.add_argument("--event", default="pre-tool-use")
     args = parser.parse_args(argv)
@@ -322,15 +441,30 @@ def main(argv=None) -> int:
             print(json.dumps(response, ensure_ascii=False))
         return 0
 
-    target = pathlib.Path(args.target).expanduser()
+    if args.command == "ai-setup":
+        cli_path = _here() / "cli.py"
+        print("=== Skill Proof AI Agent Setup Instructions ===")
+        print(f"1. Check skill roots: python {cli_path} roots")
+        print(f"2. Select skill for task: python {cli_path} select --query \"<user request>\" --json")
+        print(f"3. Auto-install workspace bridge: python {_here() / 'bridge.py'} install")
+        return 0
+
+    target = pathlib.Path(getattr(args, "target", ".")).expanduser()
     if args.command == "status":
         print(json.dumps(status(target), indent=2, ensure_ascii=False))
         return 0
-    if args.command == "init":
+    if args.command in ("init", "install"):
         for line in init_host(
             args.host, target, dry_run=args.dry_run, force=args.force
         ):
             print(line)
+        return 0
+    if args.command == "ai-setup":
+        cli_path = _here() / "cli.py"
+        print("=== Skill Proof AI Agent Setup Instructions ===")
+        print(f"1. Check skill roots: python {cli_path} roots")
+        print(f"2. Select skill for task: python {cli_path} select --query \"<user request>\" --json")
+        print(f"3. Auto-install workspace bridge: python {_here() / 'bridge.py'} install")
         return 0
     for line in remove_host(args.host, target):
         print(line)

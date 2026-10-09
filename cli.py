@@ -264,7 +264,37 @@ def main(argv=None) -> int:
     )
     overlap_parser.add_argument("--min-similarity", type=float, default=0.4)
     overlap_parser.add_argument("--limit", type=int, default=20)
+    bridge_parser = subparsers.add_parser("bridge", parents=[common], help="connect or inspect host agent workspaces")
+    bridge_parser.add_argument("bridge_action", nargs="?", default="status", choices=("status", "init", "install", "remove", "ai-setup"))
+    bridge_parser.add_argument("--host", default="auto")
+    bridge_parser.add_argument("--target", default=".")
+    bridge_parser.add_argument("--dry-run", action="store_true")
+    bridge_parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.command == "bridge":
+        import bridge
+        target_path = pathlib.Path(args.target).expanduser()
+        if args.bridge_action == "status":
+            st = bridge.status(target_path)
+            print(json.dumps(st, indent=2, ensure_ascii=False))
+            return 0
+        if args.bridge_action in ("init", "install"):
+            for line in bridge.init_host(args.host, target_path, dry_run=args.dry_run, force=args.force):
+                print(line)
+            return 0
+        if args.bridge_action == "remove":
+            for line in bridge.remove_host(args.host, target_path):
+                print(line)
+            return 0
+        if args.bridge_action == "ai-setup":
+            cli_path = pathlib.Path(__file__).resolve()
+            bridge_path = cli_path.parent / "bridge.py"
+            print("=== Skill Proof AI Agent Setup Instructions ===")
+            print(f"1. Check skill roots: python {cli_path} roots")
+            print(f"2. Select skill for task: python {cli_path} select --query \"<user request>\" --json")
+            print(f"3. Auto-install workspace bridge: python {bridge_path} install")
+            return 0
 
     roots = _collect_roots(args.root, profile=args.profile)
     if args.command == "roots":

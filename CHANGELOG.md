@@ -4,6 +4,26 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-10-09
+
+### Added
+- **Global Use Wave 1 — Universal Multilingual Tokenization & Script Support**:
+  - `_tokens()` now groups Unicode Letter (`\p{L}`), Mark (`\p{M}`), and Number (`\p{N}`) characters into coherent tokens rather than shredding words on combining marks. Matras, virama, and diacritics in Indic scripts (Devanagari/Hindi, Bengali, Tamil, etc.), Thai, and accented text now retain their full word integrity.
+  - Conversational stopword vocabulary expanded to cover Chinese, Hindi, Korean, Japanese, Thai, and European common fillers.
+  - Multilingual negation recognition added for Chinese (`不要用`, `别用`, `不用`, `禁止`), Hindi (`मत`, `नहीं`, `बिना`), Japanese (`使わない`), Korean (`하지마`), and Thai (`ไม่ต้อง`, `ห้าม`, `อย่า`).
+- **Expanded Host Bridges & Smart Auto-Detection (`bridge.py` & `cli.py bridge`)**:
+  - Added support for Google Gemini / Antigravity (`GEMINI.md`), Cline (`.clinerules`), Windsurf (`.windsurfrules`), and GitHub Copilot (`.github/copilot-instructions.md`).
+  - Added `detect_host_environments()` for smart automatic detection of the host workspace.
+  - Added one-command auto-installation (`python bridge.py install` / `python cli.py bridge install`) defaulting to `--host auto`.
+  - Added `python bridge.py ai-setup` / `python cli.py bridge ai-setup` for deterministic AI agent bootstrapping.
+- **Folder State & Unreadable File Resilience**:
+  - Target project directories for bridges are automatically created with parent directories.
+  - Invalid UTF-8 or corrupt binary skill files in the catalog emit clean diagnostics (`invalid_utf8`) without crashing the scan or selection engine.
+
+### Validation
+- 288 tests passing (2 skipped on Windows symlinks).
+- 58/58 gated routing benchmark cases (100% recall, 100% precision, 0 false selections).
+
 ## [0.11.0] - 2026-10-09
 
 ### Added
