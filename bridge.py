@@ -66,7 +66,7 @@ python {cli} overlap   # near-duplicate skills worth pruning
 Hermes, Codex), so it works from this workspace without configuration.
 """
 
-CLINE_SECTION = """## Skill Proof
+COMPACT_SECTION = """## Skill Proof
 
 Skill Proof selects one skill per request with deterministic lexical ranking.
 Ask it before loading a skill by hand:
@@ -76,25 +76,32 @@ python {cli} select --query "<what you want to do>" --json
 ```
 """
 
-WINDSURF_SECTION = """## Skill Proof
+CLINE_SECTION = COMPACT_SECTION
+WINDSURF_SECTION = COMPACT_SECTION
+COPILOT_SECTION = COMPACT_SECTION
 
-Skill Proof selects one skill per request with deterministic lexical ranking.
-Ask it before loading a skill by hand:
+HOST_FILE_REL: dict[str, str] = {
+    "codex": "AGENTS.md",
+    "gemini": "GEMINI.md",
+    "cline": ".clinerules",
+    "windsurf": ".windsurfrules",
+    "copilot": ".github/copilot-instructions.md",
+    "cursor": ".cursor/rules/skill-proof.mdc",
+    "claude-code": "skill-proof-hook.py",
+}
 
-```bash
-python {cli} select --query "<what you want to do>" --json
-```
-"""
+HOST_SECTIONS: dict[str, str] = {
+    "codex": AGENTS_SECTION,
+    "gemini": GEMINI_SECTION,
+    "cline": CLINE_SECTION,
+    "windsurf": WINDSURF_SECTION,
+    "copilot": COPILOT_SECTION,
+}
 
-COPILOT_SECTION = """## Skill Proof
 
-Skill Proof selects one skill per request with deterministic lexical ranking.
-Ask it before loading a skill by hand:
+def host_target_path(host: str, target: pathlib.Path) -> pathlib.Path:
+    return target / pathlib.Path(HOST_FILE_REL[host])
 
-```bash
-python {cli} select --query "<what you want to do>" --json
-```
-"""
 
 CURSOR_RULE = """---
 description: Skill Proof — deterministic skill selection for this workspace
@@ -262,24 +269,10 @@ def init_host(host: str, target: pathlib.Path, *, dry_run: bool = False, force: 
         actions.append(CLAUDE_HOOK_SNIPPET.format(hook=hook_path).rstrip())
         return actions
 
-    if host in ("codex", "gemini", "cline", "windsurf", "copilot"):
-        filename_map = {
-            "codex": target / "AGENTS.md",
-            "gemini": target / "GEMINI.md",
-            "cline": target / ".clinerules",
-            "windsurf": target / ".windsurfrules",
-            "copilot": target / ".github" / "copilot-instructions.md",
-        }
-        section_map = {
-            "codex": AGENTS_SECTION,
-            "gemini": GEMINI_SECTION,
-            "cline": CLINE_SECTION,
-            "windsurf": WINDSURF_SECTION,
-            "copilot": COPILOT_SECTION,
-        }
-        path = filename_map[host]
+    if host in HOST_SECTIONS:
+        path = host_target_path(host, target)
         existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-        body, action = _replace_section(existing, section_map[host].format(cli=f"python {_here() / 'cli.py'}"))
+        body, action = _replace_section(existing, HOST_SECTIONS[host].format(cli=f"python {_here() / 'cli.py'}"))
         if existing == body:
             actions = [f"{path}: already up to date"]
         else:
@@ -291,7 +284,7 @@ def init_host(host: str, target: pathlib.Path, *, dry_run: bool = False, force: 
         return actions
 
     # cursor
-    path = target / ".cursor" / "rules" / "skill-proof.mdc"
+    path = host_target_path("cursor", target)
     body = CURSOR_RULE.format(cli=f"python {_here() / 'cli.py'}")
     if path.is_file() and not force:
         actions = [f"{path}: already exists (use --force to rewrite)"]
@@ -317,15 +310,8 @@ def remove_host(host: str, target: pathlib.Path) -> list[str]:
         actions.append("remove the PreToolUse entry that mentions skill-proof-hook.py from settings.json")
         return actions
 
-    if host in ("codex", "gemini", "cline", "windsurf", "copilot"):
-        filename_map = {
-            "codex": target / "AGENTS.md",
-            "gemini": target / "GEMINI.md",
-            "cline": target / ".clinerules",
-            "windsurf": target / ".windsurfrules",
-            "copilot": target / ".github" / "copilot-instructions.md",
-        }
-        path = filename_map[host]
+    if host in HOST_SECTIONS:
+        path = host_target_path(host, target)
         if not path.is_file():
             return [f"{path}: not present"]
         text = path.read_text(encoding="utf-8")
@@ -335,7 +321,7 @@ def remove_host(host: str, target: pathlib.Path) -> list[str]:
         actions.append(f"{path}: {action}")
         return actions
 
-    path = target / ".cursor" / "rules" / "skill-proof.mdc"
+    path = host_target_path("cursor", target)
     if path.is_file():
         path.unlink()
         actions.append(f"deleted {path}")
@@ -346,13 +332,8 @@ def remove_host(host: str, target: pathlib.Path) -> list[str]:
 
 def status(target: pathlib.Path) -> dict[str, Any]:
     policy = _policy_path(target)
-    codex_path = target / "AGENTS.md"
-    gemini_path = target / "GEMINI.md"
-    cline_path = target / ".clinerules"
-    windsurf_path = target / ".windsurfrules"
-    copilot_path = target / ".github" / "copilot-instructions.md"
-    cursor_path = target / ".cursor" / "rules" / "skill-proof.mdc"
-    hook_path = target / "skill-proof-hook.py"
+    cursor_path = host_target_path("cursor", target)
+    hook_path = host_target_path("claude-code", target)
 
     def _sec(p: pathlib.Path) -> tuple[str, bool]:
         if not p.is_file():
@@ -360,25 +341,20 @@ def status(target: pathlib.Path) -> dict[str, Any]:
         _, state = _existing_section(p.read_text(encoding="utf-8"))
         return state, True
 
-    codex_state, codex_present = _sec(codex_path)
-    gemini_state, gemini_present = _sec(gemini_path)
-    cline_state, cline_present = _sec(cline_path)
-    windsurf_state, windsurf_present = _sec(windsurf_path)
-    copilot_state, copilot_present = _sec(copilot_path)
+    hosts_status: dict[str, Any] = {
+        "claude-code": {"hook_file": str(hook_path), "present": hook_path.is_file()},
+        "cursor": {"file": str(cursor_path), "present": cursor_path.is_file()},
+    }
+    for host in ("codex", "gemini", "cline", "windsurf", "copilot"):
+        p = host_target_path(host, target)
+        state, present = _sec(p)
+        hosts_status[host] = {"file": str(p), "section": state, "present": present}
 
     return {
         "version": core.__version__,
         "target": str(target),
         "policy": {"path": str(policy), "present": policy.is_file()},
-        "hosts": {
-            "claude-code": {"hook_file": str(hook_path), "present": hook_path.is_file()},
-            "codex": {"file": str(codex_path), "section": codex_state, "present": codex_present},
-            "gemini": {"file": str(gemini_path), "section": gemini_state, "present": gemini_present},
-            "cursor": {"file": str(cursor_path), "present": cursor_path.is_file()},
-            "cline": {"file": str(cline_path), "section": cline_state, "present": cline_present},
-            "windsurf": {"file": str(windsurf_path), "section": windsurf_state, "present": windsurf_present},
-            "copilot": {"file": str(copilot_path), "section": copilot_state, "present": copilot_present},
-        },
+        "hosts": hosts_status,
         "note": "Every bridge file is optional and removable with `python bridge.py remove --host ...`",
     }
 

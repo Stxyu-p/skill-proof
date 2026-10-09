@@ -19,9 +19,9 @@ from functools import wraps
 from typing import Any, Mapping, Optional, Sequence
 
 try:  # Hermes loads directory plugins as packages; direct unit tests do not.
-    from .core import SkillProofEngine, __version__ as CORE_VERSION, normalize_identifier
+    from .core import SkillProofEngine, __version__ as CORE_VERSION, normalize_identifier, default_hermes_home
 except ImportError:  # pragma: no cover - exercised by direct adapter tests
-    from core import SkillProofEngine, __version__ as CORE_VERSION, normalize_identifier
+    from core import SkillProofEngine, __version__ as CORE_VERSION, normalize_identifier, default_hermes_home
 
 
 logger = logging.getLogger(__name__)
@@ -44,14 +44,19 @@ mean the model followed the skill, and it does not verify the task result.
 """
 
 
-def _positive_int(value: Any, default: int, maximum: int) -> int:
+def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
+    """Integer setting whose default includes the low bound (focus_turns may be 0)."""
     if isinstance(value, bool):
         return default
     try:
         parsed = int(value)
     except (TypeError, ValueError):
         return default
-    return parsed if 1 <= parsed <= maximum else default
+    return parsed if low <= parsed <= high else default
+
+
+def _positive_int(value: Any, default: int, maximum: int) -> int:
+    return _bounded_int(value, default, 1, maximum)
 
 
 def _float_setting(value: Any, default: float) -> float:
@@ -68,25 +73,8 @@ def _bool_setting(value: Any, default: bool) -> bool:
     return value if isinstance(value, bool) else default
 
 
-def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
-    """Integer setting whose default includes the low bound (focus_turns may be 0)."""
-    if isinstance(value, bool):
-        return default
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if low <= parsed <= high else default
-
-
 def _default_profile_home() -> pathlib.Path:
-    configured = os.environ.get("HERMES_HOME", "").strip()
-    if configured:
-        return pathlib.Path(configured).expanduser()
-    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-    if os.name == "nt" and local_app_data:
-        return pathlib.Path(local_app_data) / "hermes"
-    return pathlib.Path.home() / ".hermes"
+    return default_hermes_home()
 
 
 def _resolve_roots(configured: Any) -> dict[str, pathlib.Path]:

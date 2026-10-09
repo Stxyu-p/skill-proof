@@ -54,7 +54,18 @@ def _scan_payload(roots):
     }
 
 
-def _select_payload(roots, query, min_score, min_margin, limit):
+def _candidate_dict(item):
+    return {
+        "name": item.skill.name,
+        "score": item.score,
+        "reasons": list(item.reasons),
+        "root_id": item.skill.root_id,
+        "relative_path": item.skill.relative_path,
+        "companions": list(item.companions),
+    }
+
+
+def _resolve_selection(roots, query, min_score, min_margin, limit):
     catalog = core.scan_catalog(roots)
     explicit = core.extract_explicit_skill_names(
         query, known_names=(skill.name for skill in catalog.skills)
@@ -67,17 +78,12 @@ def _select_payload(roots, query, min_score, min_margin, limit):
         min_margin=min_margin,
         limit=limit,
     )
-    selected = selection.selected
+    return catalog, explicit, selection
 
-    def _candidate(item):
-        return {
-            "name": item.skill.name,
-            "score": item.score,
-            "reasons": list(item.reasons),
-            "root_id": item.skill.root_id,
-            "relative_path": item.skill.relative_path,
-            "companions": list(item.companions),
-        }
+
+def _select_payload(roots, query, min_score, min_margin, limit):
+    catalog, explicit, selection = _resolve_selection(roots, query, min_score, min_margin, limit)
+    selected = selection.selected
 
     return {
         "version": core.__version__,
@@ -90,36 +96,15 @@ def _select_payload(roots, query, min_score, min_margin, limit):
             "explicit": selection.explicit,
             "suggested_agent": selection.suggested_agent,
         },
-        "selected": None if selected is None else _candidate(selected),
-        "candidates": [_candidate(item) for item in selection.candidates],
+        "selected": None if selected is None else _candidate_dict(selected),
+        "candidates": [_candidate_dict(item) for item in selection.candidates],
     }
 
 
 def _eval_payload(roots, query, min_score=0.28, min_margin=0.05, limit=5, profile=None):
-    catalog = core.scan_catalog(roots)
-    explicit = core.extract_explicit_skill_names(
-        query, known_names=(skill.name for skill in catalog.skills)
-    )
-    selection = core.select_skill(
-        catalog,
-        query,
-        explicit_names=explicit,
-        min_score=min_score,
-        min_margin=min_margin,
-        limit=limit,
-    )
+    catalog, explicit, selection = _resolve_selection(roots, query, min_score, min_margin, limit)
     selected = selection.selected
     tokens = core._tokens(query)
-
-    def _candidate(item):
-        return {
-            "name": item.skill.name,
-            "score": item.score,
-            "reasons": list(item.reasons),
-            "root_id": item.skill.root_id,
-            "relative_path": item.skill.relative_path,
-            "companions": list(item.companions),
-        }
 
     return {
         "version": core.__version__,
@@ -138,7 +123,7 @@ def _eval_payload(roots, query, min_score=0.28, min_margin=0.05, limit=5, profil
             "companions": list(selected.companions) if selected else [],
             "suggested_agent": selection.suggested_agent,
         },
-        "candidates": [_candidate(item) for item in selection.candidates],
+        "candidates": [_candidate_dict(item) for item in selection.candidates],
     }
 
 

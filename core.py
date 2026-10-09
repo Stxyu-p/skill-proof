@@ -46,6 +46,11 @@ def normalize_identifier(value: str) -> str:
     return unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
 
 
+def normalize_identifiers(names: Iterable[str]) -> frozenset[str]:
+    """Return a frozenset of non-empty normalized identifiers from an iterable."""
+    return frozenset(norm for name in names if (norm := normalize_identifier(name)))
+
+
 @dataclass(frozen=True)
 class Diagnostic:
     code: str
@@ -388,6 +393,18 @@ def _bundle_sha256(folder: pathlib.Path, files: Sequence[str]) -> Optional[str]:
     return digest.hexdigest()
 
 
+def default_hermes_home(base_home: Optional[pathlib.Path] = None) -> pathlib.Path:
+    """Canonical path to the Hermes data directory."""
+    configured = os.environ.get("HERMES_HOME", "").strip()
+    if configured:
+        return pathlib.Path(configured).expanduser()
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    if os.name == "nt" and local_app_data:
+        return pathlib.Path(local_app_data) / "hermes"
+    home = base_home if base_home is not None else pathlib.Path.home()
+    return home / ".hermes"
+
+
 def detect_agent_roots(
     home: Optional[os.PathLike[str] | str] = None,
     cwd: Optional[os.PathLike[str] | str] = None,
@@ -460,6 +477,10 @@ def detect_agent_roots(
     return detected
 
 
+def _is_ignored_dirname(dirname: str) -> bool:
+    return dirname in _EXCLUDED_DIRS or dirname.startswith((".", "_"))
+
+
 def suggest_roots(
     roots: Mapping[str, os.PathLike[str] | str], *, limit: int = 3
 ) -> list[dict[str, Any]]:
@@ -482,7 +503,7 @@ def suggest_roots(
             keep: list[str] = []
             for dirname in sorted(dirs):
                 child = current_path / dirname
-                if dirname in _EXCLUDED_DIRS or dirname.startswith(".") or dirname.startswith("_"):
+                if _is_ignored_dirname(dirname):
                     continue
                 if child.is_symlink():
                     continue
@@ -547,7 +568,7 @@ def scan_catalog(
             for dirname in sorted(dirs):
                 child = current_path / dirname
                 relative = child.relative_to(resolved_root).as_posix()
-                if dirname in _EXCLUDED_DIRS or dirname.startswith(".") or dirname.startswith("_"):
+                if _is_ignored_dirname(dirname):
                     continue
                 if child.is_symlink():
                     diagnostics.append(Diagnostic("unsafe_symlink", root_id, relative))
@@ -736,7 +757,7 @@ def _overlap_recommendation(first: SkillRecord, second: SkillRecord, similarity:
 def extract_explicit_skill_names(query: str, *, known_names=None) -> tuple[str, ...]:
     """Extract only unambiguous, explicit skill syntax from a user query."""
     text = unicodedata.normalize("NFKC", str(query or ""))
-    known = None if known_names is None else {normalize_identifier(name) for name in known_names}
+    known = None if known_names is None else normalize_identifiers(known_names)
     identifier = r"([A-Za-z0-9][A-Za-z0-9._:-]{0,127})"
     patterns = (
         re.compile(r"\$" + identifier),
@@ -976,11 +997,8 @@ _SPACELESS_RANGES = (
 
 def _is_spaceless_character(character: str) -> bool:
     code = ord(character)
-    return (
-        (0x0E00 <= code <= 0x0EFF)
-        or (0x1000 <= code <= 0x109F)
-        or (0x1780 <= code <= 0x17FF)
-        or (0x3040 <= code <= 0x30FF)
+    return _is_sea_spaceless_character(character) or (
+        (0x3040 <= code <= 0x30FF)
         or (0x3400 <= code <= 0x4DBF)
         or (0x4E00 <= code <= 0x9FFF)
         or (0xAC00 <= code <= 0xD7AF)
@@ -1126,7 +1144,7 @@ def _named_skill_in_query(query: str, known_names: Sequence[str]) -> str:
     skill now") must not drive focus or release.
     """
     known = tuple(str(name) for name in known_names if name)
-    known_ids = {normalize_identifier(name) for name in known}
+    known_ids = normalize_identifiers(known)
     for candidate in extract_explicit_skill_names(query, known_names=known_ids):
         if normalize_identifier(candidate) in known_ids:
             return str(candidate)
@@ -1315,7 +1333,7 @@ def _rank(
     preferred_bonus: float = 0.0,
 ) -> list[RankedCandidate]:
     synonyms = synonyms or {}
-    excluded = {normalize_identifier(name) for name in exclude if normalize_identifier(name)}
+    excluded = normalize_identifiers(exclude)
     preferred_normalized = normalize_identifier(preferred) if preferred else ""
     bonus = max(0.0, float(preferred_bonus))
     query_tokens = set(_tokens(query))
@@ -1811,7 +1829,7 @@ class SkillProofEngine:
                 threshold_met=True,
             )
             return base
-        if wanted in {normalize_identifier(name) for name in state.vetoed}:
+        if wanted in normalize_identifiers(state.vetoed):
             base.update(
                 verdict="vetoed",
                 name=None,
@@ -2090,7 +2108,7 @@ class SkillProofEngine:
         host_unindexed: tuple[str, ...] = ()
         selection_started = time.perf_counter()
         if available_names is not None:
-            names = {normalize_identifier(name) for name in available_names}
+            names = normalize_identifiers(available_names)
             local_indexed = {skill.normalized_name for skill in catalog.skills}
             host_unindexed = tuple(
                 sorted(str(name) for name in available_names if normalize_identifier(name) not in local_indexed)
@@ -2512,7 +2530,7 @@ class SkillProofEngine:
             if "skill_not_loaded" not in state.compliance_reasons:
                 state.compliance_reasons.append("skill_not_loaded")
             return
-        observed = {normalize_identifier(t) for t in state.observed_tools}
+        observed = normalize_identifiers(state.observed_tools)
         missing = [t for t in inv.required_tools if t not in observed]
         if missing:
             state.compliance = "failed"
