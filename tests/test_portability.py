@@ -39,6 +39,17 @@ class RootDetectionTests(unittest.TestCase):
             self.assertNotIn("gemini", detected)
             self.assertNotIn("opencode", detected)
 
+    def test_detects_codex_and_gemini_config_roots(self):
+        with tempfile.TemporaryDirectory(prefix="skill_proof_detect_extra_") as tmp:
+            home = pathlib.Path(tmp) / "home"
+            (home / ".codex" / "skills").mkdir(parents=True)
+            (home / ".gemini" / "config" / "skills").mkdir(parents=True)
+            detected = core.detect_agent_roots(home=home, hermes_home="")
+            self.assertIn("codex", detected)
+            self.assertIn("gemini-config", detected)
+            self.assertEqual(detected["codex"], home / ".codex" / "skills")
+            self.assertEqual(detected["gemini-config"], home / ".gemini" / "config" / "skills")
+
 
 class CliTests(unittest.TestCase):
     def setUp(self):

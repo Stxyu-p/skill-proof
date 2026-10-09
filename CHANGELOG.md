@@ -4,6 +4,17 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-10-09
+
+### Fixed
+- **Mixed Spaceless-Spaced Query Routing**: `_tokens` excludes tokens containing spaceless characters (Thai, Lao, Myanmar, Khmer, CJK, Hangul) so that fragmented splits caused by combining characters/tone marks do not inflate the IDF `query_weight` denominator for Latin/spaced keywords. Mixed queries such as `"ช่วยทำ tdd ในโปรเจกต์นี้ให้หน่อย"` now route cleanly to the intended skill (`python-tdd` / `test-driven-development`).
+- **Multi-Agent Root Detection**: `detect_agent_roots` now detects `~/.codex/skills` (OpenAI Codex format) and `~/.gemini/config/skills`, and excludes symlinked directory candidates (`not path.is_symlink()`) so roots like `antigravity` are no longer rejected with `unsafe_root`.
+- **Host Bridge (`bridge.py`)**: Fixed syntax error in Cursor rule generation; added `tests/test_bridge.py` test suite covering Claude Code (`PreToolUse` hook), Codex (`AGENTS.md`), and Cursor (`.cursor/rules`).
+- **Audit Isolation & Budget Fallback**: Hardened audit file isolation across test fixtures, context budget fallback for oversize turns, and spaced skill name parsing (`Skill Factory`).
+
+### Validation
+- 273 tests passing (2 skipped), 58/58 gated routing cases (100% recall, 100% precision, 0 false selections), doctor OK as standalone with 7 hooks. 0 invalid frontmatter across 146 skills from 5 roots.
+
 ## [0.10.0] - 2026-10-08
 
 ### Added

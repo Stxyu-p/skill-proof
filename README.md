@@ -1,18 +1,18 @@
 <div align="center">
 
-# 🛡️ Skill Proof <sub>v0.10.0</sub>
+# 🛡️ Skill Proof <sub>v0.10.1</sub>
 
 **Local skill routing for Hermes agents: deterministic selection, tool gating, truthful receipts**
 
 *Python 3.11, stdlib only, offline, zero external calls, 7 hooks*
 
-[![Release: v0.10.0](https://img.shields.io/badge/Release-v0.10.0-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
+[![Release: v0.10.1](https://img.shields.io/badge/Release-v0.10.1-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
 [![Changelog](https://img.shields.io/badge/Changelog-View_Notes-blueviolet?style=for-the-badge)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 [![Hermes: Native Plugin](https://img.shields.io/badge/Hermes-Native_Plugin-7B61FF?style=for-the-badge)](https://github.com/NousResearch/hermes-agent)
 
-![Tests: 261 OK](https://img.shields.io/badge/Tests-261_OK-brightgreen?style=flat-square)
-![Routing: 48 of 48 gated](https://img.shields.io/badge/Routing-48_of_48_gated-brightgreen?style=flat-square)
+![Tests: 273 OK](https://img.shields.io/badge/Tests-273_OK-brightgreen?style=flat-square)
+![Routing: 58 of 58 gated](https://img.shields.io/badge/Routing-58_of_58_gated-brightgreen?style=flat-square)
 ![Hooks: 7](https://img.shields.io/badge/Hooks-7-blue?style=flat-square)
 ![Dependencies: Zero](https://img.shields.io/badge/Dependencies-Zero-success?style=flat-square)
 ![Python: 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square)
@@ -292,9 +292,10 @@ All version release notes and historical changes are documented in [CHANGELOG.md
 | :--- | :--- |
 | `core.py` | Ranking, negation guard, phrase matching, gating, receipts, invariants |
 | `__init__.py` | Hook wiring, commands, 7 hook registrations |
-| `plugin.yaml` | Manifest, version 0.10.0, config schema |
-| `tests/` | Discovery, ranking, gating, evidence, and isolation suites, 14 files |
-| `routing_benchmark.py`, `routing_cases.json` | Labeled routing corpus with tiers, gate, and threshold sweep, 48 of 48 gated passing |
+| `plugin.yaml` | Manifest, version 0.10.1, config schema |
+| `bridge.py` | Optional removable host bridges for Claude Code, Codex, and Cursor |
+| `tests/` | Discovery, ranking, gating, evidence, bridge, and isolation suites, 15 files |
+| `routing_benchmark.py`, `routing_cases.json` | Labeled routing corpus with tiers, gate, and threshold sweep, 58 of 58 gated passing |
 | `benchmark.py` | Synthetic core performance probe |
 | `host_smoke.py` | Optional live listing and filter check against the host source |
 | `VALIDATION.md` | Synthetic benchmark notes and scope limits |
@@ -307,14 +308,14 @@ Run from this directory:
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m py_compile __init__.py core.py
+python -m py_compile __init__.py core.py bridge.py
 hermes plugins doctor . --ci
 python benchmark.py
 python routing_benchmark.py --gate
 python routing_benchmark.py --sweep
 ```
 
-**Verification Status:** **261 tests passing (2 skipped), 48 of 48 gated routing cases (0 false selections), doctor OK as standalone with 7 hooks.**
+**Verification Status:** **273 tests passing (2 skipped), 58 of 58 gated routing cases (0 false selections), doctor OK as standalone with 7 hooks.**
 
 ---
 
@@ -325,7 +326,7 @@ Copyright (c) 2026 P Choke & SORA.
 
 <div align="center">
 
-**Skill Proof** <sub>v0.10.0</sub> · Built for deterministic routing
+**Skill Proof** <sub>v0.10.1</sub> · Built for deterministic routing
 
 *Local-first, Auditable, Gated, Governed*
 

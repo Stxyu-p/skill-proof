@@ -269,6 +269,13 @@
       "note": "bilingual Thai prompt requesting Python unit test with TDD alias"
     },
     {
+      "query": "ช่วยทำ tdd ในโปรเจกต์นี้ให้หน่อย",
+      "expected": "python-tdd",
+      "category": "thai",
+      "tier": "core",
+      "note": "spaceless Thai query with single technical term tdd"
+    },
+    {
       "query": "ช่วยออกแบบ landing-page สำหรับเว็บใหม่ให้สวยๆ หน่อย",
       "expected": "frontend-design",
       "category": "thai",

@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
@@ -415,7 +415,9 @@ def detect_agent_roots(
     candidates.extend(
         [
             ("claude", base_home / ".claude" / "skills"),
+            ("codex", base_home / ".codex" / "skills"),
             ("gemini", base_home / ".gemini" / "skills"),
+            ("gemini-config", base_home / ".gemini" / "config" / "skills"),
             ("antigravity", base_home / ".gemini" / "antigravity" / "skills"),
             ("antigravity-cli", base_home / ".gemini" / "antigravity-cli" / "skills"),
             ("opencode", base_home / ".config" / "opencode" / "skills"),
@@ -428,7 +430,7 @@ def detect_agent_roots(
     detected: dict[str, pathlib.Path] = {}
     for root_id, path in candidates:
         try:
-            if path.is_dir():
+            if path.is_dir() and not path.is_symlink():
                 detected[root_id] = path
         except OSError:
             continue
@@ -763,7 +765,7 @@ def _tokens(value: str) -> tuple[str, ...]:
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
     return tuple(
         token for token in _TOKEN_RE.findall(normalized)
-        if len(token) > 1 and token not in _STOPWORDS
+        if len(token) > 1 and token not in _STOPWORDS and not any(_is_spaceless_character(c) for c in token)
     )
 
 

@@ -283,6 +283,19 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(result.status, "no_match")
         self.assertEqual(result.reason, "negated_skill")
 
+    def test_mixed_spaceless_query_selects_spaced_skill(self):
+        catalog, tmp = self.catalog([
+            ("python-tdd", "Test Python changes with test-driven development tdd"),
+            ("frontend-design", "Design a polished landing page and frontend"),
+        ])
+        try:
+            result = select_skill(catalog, "ช่วยทำ tdd ในโปรเจกต์นี้ให้หน่อย")
+        finally:
+            tmp.cleanup()
+
+        self.assertEqual(result.status, "selected")
+        self.assertEqual(result.selected.skill.name, "python-tdd")
+
     def test_negated_explicit_name_falls_back_to_lexical(self):
         catalog, tmp = self.catalog([
             ("python-tdd", "Test Python changes"),
