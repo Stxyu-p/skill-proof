@@ -4,6 +4,19 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.3] - 2026-10-09
+
+### Optimized
+- **Allocation-Free Token Coverage in `_rank`**:
+  - `_calc_coverage` now sums matched token weights directly across `query_tokens` without intermediate set intersection allocations, reducing garbage collection pressure.
+  - Cached `_contains_spaceless_script` with `@lru_cache(maxsize=4096)` and simplified `_phrase_present` to eliminate redundant string concatenation allocations (`shorter + longer`).
+- **Normalized Query Reuse Across Candidate Loops**:
+  - `_identifier_in_query` and `_skill_is_negated` now accept precomputed `norm_query`, removing repetitive `normalize_identifier(query)` calls for every skill in the catalog.
+
+### Resilient
+- **Atomic Audit Log Rotation**:
+  - `_rotate_audit` now writes to a temporary file before atomically replacing `audit.jsonl` via `Path.replace()`, preventing truncated or corrupted log files during sudden terminations.
+
 ## [0.14.2] - 2026-10-09
 
 ### Optimized

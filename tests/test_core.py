@@ -731,6 +731,23 @@ class EngineTests(unittest.TestCase):
         self.assertIn("compliance=unassessed", summary)
         self.assertIn("verification=unverified", summary)
 
+    def test_contains_spaceless_script_and_identifier_helpers(self):
+        from core import _contains_spaceless_script, _identifier_in_query, _skill_is_negated, normalize_identifier
+        self.assertTrue(_contains_spaceless_script("ทดสอบระบบ"))
+        self.assertFalse(_contains_spaceless_script("pure english query"))
+        self.assertFalse(_contains_spaceless_script(""))
+        self.assertFalse(_contains_spaceless_script(None))
+
+        q = "please use python-tdd for testing"
+        norm_q = normalize_identifier(q)
+        self.assertTrue(_identifier_in_query("python-tdd", q, norm_q))
+        self.assertFalse(_identifier_in_query("systematic-debugging", q, norm_q))
+
+        neg_q = "อย่าใช้ python-tdd นะ"
+        norm_neg = normalize_identifier(neg_q)
+        self.assertTrue(_skill_is_negated("python-tdd", neg_q, (), norm_neg))
+        self.assertFalse(_skill_is_negated("systematic-debugging", neg_q, (), norm_neg))
+
 
 if __name__ == "__main__":
     unittest.main()

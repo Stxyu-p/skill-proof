@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 
-__version__ = "0.14.2"
+__version__ = "0.14.3"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
@@ -925,9 +925,11 @@ def _identifier_pattern(normalized_identifier: str) -> "re.Pattern[str]":
     return re.compile(rf"(?<![\w-]){re.escape(normalized_identifier)}(?![\w-])")
 
 
-def _identifier_in_query(identifier: str, query: str) -> bool:
+def _identifier_in_query(
+    identifier: str, query: str, norm_query: Optional[str] = None
+) -> bool:
     norm_id = normalize_identifier(identifier)
-    norm_q = normalize_identifier(query)
+    norm_q = norm_query if norm_query is not None else normalize_identifier(query)
     if not norm_id or norm_id not in norm_q:
         return False
     return bool(_identifier_pattern(norm_id).search(norm_q))
@@ -1110,7 +1112,12 @@ def _query_might_contain_negation(query: str) -> bool:
     return any(stem in folded for stem in _NEGATION_SUBSTRINGS)
 
 
-def _skill_is_negated(name: str, query: str, aliases: Sequence[str] = ()) -> bool:
+def _skill_is_negated(
+    name: str,
+    query: str,
+    aliases: Sequence[str] = (),
+    norm_query: Optional[str] = None,
+) -> bool:
     """True when the query vetoes *name* or any of its *aliases* ("don't use X", "ไม่เอา X").
 
     Three shapes are accepted: a loose window for Thai vetoes, a structured
@@ -1119,7 +1126,7 @@ def _skill_is_negated(name: str, query: str, aliases: Sequence[str] = ()) -> boo
     """
     if not _query_might_contain_negation(query):
         return False
-    normalized_query = normalize_identifier(query)
+    normalized_query = norm_query if norm_query is not None else normalize_identifier(query)
     candidates = (name,) + tuple(aliases)
     for cand in candidates:
         norm = normalize_identifier(cand)
@@ -1157,6 +1164,8 @@ def _is_spaceless_character(character: str) -> bool:
     )
 
 
+# ponytail: lru_cache on _contains_spaceless_script cuts repeated character category loops
+@lru_cache(maxsize=4096)
 def _contains_spaceless_script(value: str) -> bool:
     return any(_is_spaceless_character(character) for character in str(value or ""))
 
@@ -1210,7 +1219,7 @@ def _phrase_present(shorter: str, longer: str) -> bool:
     """
     if not shorter or shorter not in longer:
         return False
-    if " " not in shorter and " " not in longer and _contains_spaceless_script(shorter + longer):
+    if " " not in shorter and " " not in longer and _contains_spaceless_script(longer):
         return True
     return bool(_phrase_boundary_pattern(shorter).search(longer))
 
@@ -1609,10 +1618,8 @@ def _rank(
     ranked: list[RankedCandidate] = []
 
     def _calc_coverage(field_tokens: frozenset[str] | set[str]) -> float:
-        matched = query_tokens & field_tokens
-        if not matched:
-            return 0.0
-        return sum(token_weights[token] for token in matched) / query_weight
+        matched_weight = sum(token_weights[token] for token in query_tokens if token in field_tokens)
+        return (matched_weight / query_weight) if matched_weight else 0.0
 
     for skill in catalog.skills:
         if skill.normalized_name in duplicate_names or skill.normalized_name in excluded:
@@ -1631,7 +1638,7 @@ def _rank(
             else:
                 alias_terms = tuple(dict.fromkeys(tuple(skill.aliases) + extra))
                 alias_tokens = frozenset(_tokens(" ".join(alias_terms)))
-        if has_negation and _skill_is_negated(skill.name, query, alias_terms):
+        if has_negation and _skill_is_negated(skill.name, query, alias_terms, normalized_query):
             continue
         reasons: list[str] = []
         score = 0.0
@@ -1645,7 +1652,7 @@ def _rank(
                 score += _NGRAM_WEIGHT * dice
                 reasons.append("spaceless_script_overlap")
 
-        if _identifier_in_query(skill.name, query):
+        if _identifier_in_query(skill.name, query, normalized_query):
             score += 0.92
             reasons.append("exact_name_in_query")
 

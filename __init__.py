@@ -515,7 +515,9 @@ class SkillProofPlugin:
         if len(lines) <= self.audit_limit:
             return
         kept = [line for line in lines[-self.audit_limit:] if line.strip()]
-        self.audit_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        tmp_path = self.audit_path.with_name(self.audit_path.name + ".tmp")
+        tmp_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        tmp_path.replace(self.audit_path)
 
     def _overlap_report(self, min_similarity: float, limit: int):
         """Near-duplicates plus which side the host actually loads (audit hits)."""
