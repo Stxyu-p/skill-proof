@@ -407,6 +407,34 @@ class SelectionTests(unittest.TestCase):
         finally:
             tmp.cleanup()
 
+    def test_select_skill_and_negation_handle_none_query_safely(self):
+        catalog, tmp = self.catalog([("sample-skill", "Sample description")])
+        try:
+            # None query should abstain cleanly without raising AttributeError
+            res_none = select_skill(catalog, None)
+            self.assertEqual(res_none.status, "no_match")
+            # Empty query should also abstain cleanly
+            res_empty = select_skill(catalog, "")
+            self.assertEqual(res_empty.status, "no_match")
+            # Negation probe on None query should return False
+            from core import _skill_is_negated, _query_might_contain_negation
+            self.assertFalse(_query_might_contain_negation(None))
+            self.assertFalse(_skill_is_negated("sample-skill", None))
+        finally:
+            tmp.cleanup()
+
+    def test_type_hints_and_suggest_roots_resilience(self):
+        import typing
+        from core import normalize_identifiers, scan_catalog, suggest_roots
+        # Must not raise NameError: name 'Iterable' is not defined
+        hints_norm = typing.get_type_hints(normalize_identifiers)
+        self.assertIn("names", hints_norm)
+        hints_scan = typing.get_type_hints(scan_catalog)
+        self.assertIn("roots", hints_scan)
+        # suggest_roots must safely handle None and empty mapping
+        self.assertEqual(suggest_roots(None), [])
+        self.assertEqual(suggest_roots({}), [])
+
 
 class EngineTests(unittest.TestCase):
     def setUp(self):

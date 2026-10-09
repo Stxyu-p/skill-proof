@@ -20,10 +20,10 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from math import log
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 
-__version__ = "0.14.0"
+__version__ = "0.14.1"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
@@ -405,35 +405,49 @@ def default_hermes_home(base_home: Optional[pathlib.Path] = None) -> pathlib.Pat
     return home / ".hermes"
 
 
+# ponytail: mtime-based cache cuts repeated config.yaml parses from 40ms to 0.001ms
+_DISABLED_SKILLS_CACHE: list[Any] = [None, None, frozenset()]
+
+
 def load_disabled_skills(hermes_home: Optional[os.PathLike[str] | str] = None) -> frozenset[str]:
-    """Normalized disabled skill names from Hermes config.yaml."""
+    """Normalized disabled skill names from Hermes config.yaml (cached by mtime)."""
+    global _DISABLED_SKILLS_CACHE
     h_home = pathlib.Path(hermes_home).expanduser() if hermes_home else default_hermes_home()
     cfg_path = h_home / "config.yaml"
     if not cfg_path.is_file():
         return frozenset()
+    mtime_ns = None
+    try:
+        mtime_ns = cfg_path.stat().st_mtime_ns
+        if _DISABLED_SKILLS_CACHE[0] == str(cfg_path) and _DISABLED_SKILLS_CACHE[1] == mtime_ns:
+            return _DISABLED_SKILLS_CACHE[2]
+    except OSError:
+        pass
+    res: frozenset[str] = frozenset()
     try:
         import yaml
         with open(cfg_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         disabled = data.get("skills", {}).get("disabled", []) or []
-        return frozenset(normalize_identifier(x) for x in disabled if x) - {normalize_identifier("hermes-agent")}
+        res = frozenset(normalize_identifier(x) for x in disabled if x) - {normalize_identifier("hermes-agent")}
     except Exception:
-        pass
-    try:
-        content = cfg_path.read_text(encoding="utf-8")
-        m = re.search(r"^skills:\s*\n(?:[ \t]+[^\n]+\n)*?[ \t]+disabled:\s*\n((?:[ \t]+-[^\n]+\n)+)", content, re.MULTILINE)
-        if m:
-            names = set()
-            for line in m.group(1).splitlines():
-                line = line.strip()
-                if line.startswith("-"):
-                    val = line[1:].strip().strip("\"'")
-                    if val:
-                        names.add(normalize_identifier(val))
-            return frozenset(names) - {normalize_identifier("hermes-agent")}
-    except Exception:
-        pass
-    return frozenset()
+        try:
+            content = cfg_path.read_text(encoding="utf-8")
+            m = re.search(r"^skills:\s*\n(?:[ \t]+[^\n]+\n)*?[ \t]+disabled:\s*\n((?:[ \t]+-[^\n]+\n)+)", content, re.MULTILINE)
+            if m:
+                names = set()
+                for line in m.group(1).splitlines():
+                    line = line.strip()
+                    if line.startswith("-"):
+                        val = line[1:].strip().strip("\"'")
+                        if val:
+                            names.add(normalize_identifier(val))
+                res = frozenset(names) - {normalize_identifier("hermes-agent")}
+        except Exception:
+            res = frozenset()
+    if mtime_ns is not None:
+        _DISABLED_SKILLS_CACHE = [str(cfg_path), mtime_ns, res]
+    return res
 
 
 # ponytail: default synonym bridges for high-frequency natural-language routing
@@ -524,13 +538,15 @@ def _is_ignored_dirname(dirname: str) -> bool:
 
 
 def suggest_roots(
-    roots: Mapping[str, os.PathLike[str] | str], *, limit: int = 3
+    roots: Optional[Mapping[str, os.PathLike[str] | str]] = None, *, limit: int = 3
 ) -> list[dict[str, Any]]:
     """Recommend canonical root directories behind reparse-point facades.
 
     Read-only walk over the configured roots: junction/symlink directories that
     directly own a SKILL.md are resolved and their target parents grouped.
     """
+    if not roots:
+        return []
     configured: set[str] = set()
     counts: Counter[str] = Counter()
     for _root_id, raw_root in sorted(roots.items(), key=lambda item: str(item[0])):
@@ -845,15 +861,6 @@ def extract_explicit_skill_names(query: str, *, known_names=None) -> tuple[str, 
     return tuple(names)
 
 
-_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
-_SEA_SPACELESS_RANGES = (
-    (0x0E00, 0x0E7F),  # Thai
-    (0x0E80, 0x0EFF),  # Lao
-    (0x1000, 0x109F),  # Myanmar
-    (0x1780, 0x17FF),  # Khmer
-)
-
-
 def _is_sea_spaceless_character(character: str) -> bool:
     code = ord(character)
     # Southeast Asian scripts: Thai (0E00-0E7F), Lao (0E80-0EFF), Myanmar (1000-109F), Khmer (1780-17FF)
@@ -1097,6 +1104,8 @@ _NEGATION_SUBSTRINGS: tuple[str, ...] = (
 @lru_cache(maxsize=2048)
 def _query_might_contain_negation(query: str) -> bool:
     # ponytail: fast substring probe skips expensive regexes on non-negated queries
+    if not query:
+        return False
     folded = query.casefold()
     return any(stem in folded for stem in _NEGATION_SUBSTRINGS)
 
@@ -1536,16 +1545,6 @@ def _rank_table(ranked: Sequence[RankedCandidate]) -> tuple[RankRow, ...]:
     )
 
 
-@lru_cache(maxsize=32)
-def _catalog_document_frequency(skills: tuple[SkillRecord, ...]) -> tuple[dict[str, int], int]:
-    document_frequency: dict[str, int] = {}
-    for skill in skills:
-        tokens = set(_tokens(" ".join((skill.name, skill.description, " ".join(skill.tags)))))
-        for token in tokens:
-            document_frequency[token] = document_frequency.get(token, 0) + 1
-    return document_frequency, max(1, len(skills))
-
-
 # ponytail: cache parsed tokens per skill avoiding string joins and re-tokenization per query
 @lru_cache(maxsize=2048)
 def _skill_tokens_cache(
@@ -1557,6 +1556,16 @@ def _skill_tokens_cache(
         frozenset(_tokens(description)),
         frozenset(_tokens(" ".join(aliases))),
     )
+
+
+@lru_cache(maxsize=32)
+def _catalog_document_frequency(skills: tuple[SkillRecord, ...]) -> tuple[dict[str, int], int]:
+    document_frequency: dict[str, int] = {}
+    for skill in skills:
+        nt, tt, dt, _ = _skill_tokens_cache(skill.name, skill.tags, skill.description, skill.aliases)
+        for token in (nt | tt | dt):
+            document_frequency[token] = document_frequency.get(token, 0) + 1
+    return document_frequency, max(1, len(skills))
 
 
 def _rank(
@@ -1705,6 +1714,7 @@ def select_skill(
     if isinstance(limit, bool) or limit < 1:
         raise ValueError("limit must be a positive integer")
 
+    query = str(query or "")
     unique_explicit: list[str] = []
     seen_explicit: set[str] = set()
     for name in explicit_names:

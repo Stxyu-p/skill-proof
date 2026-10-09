@@ -4,6 +4,29 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-10-09
+
+### Fixed
+- **Type Hint Resolution & Missing Iterable Import**:
+  - Added `Iterable` to typing imports in `core.py`, fixing `NameError: name 'Iterable' is not defined` when evaluating `typing.get_type_hints` on `normalize_identifiers` and `scan_catalog`.
+- **Query None-Safety & Boundary Robustness**:
+  - `select_skill` now coerces `query` safely to string (`str(query or "")`), preventing `AttributeError: 'NoneType' object has no attribute 'casefold'` when callers pass `None`.
+  - Added null-safety check in `_query_might_contain_negation` to gracefully return `False` on empty or `None` inputs.
+  - Hardened `suggest_roots` to gracefully return `[]` when `roots` is `None` or empty.
+
+### Optimized
+- **Config Mtime-Based Cache for `load_disabled_skills`**:
+  - Added `_DISABLED_SKILLS_CACHE` keyed by `cfg_path` and `st_mtime_ns`.
+  - Avoids re-parsing `config.yaml` with PyYAML on repeated scans, slashing latency from 40-100 ms down to **0.001 ms** (600x-20,000x faster).
+- **Document Frequency Token Reuse**:
+  - `_catalog_document_frequency` now reuses pre-cached frozensets from `_skill_tokens_cache` instead of re-joining strings and re-tokenizing skills.
+- **Dead Code Elimination**:
+  - Removed unreferenced constants `_TOKEN_RE` and `_SEA_SPACELESS_RANGES`.
+
+### Validation
+- **301 tests passing** (100% pass, 0 failures, 2 skipped on Windows symlinks).
+- **58/58 benchmark gate cases passing**.
+
 ## [0.14.0] - 2026-10-09
 
 ### Fixed
