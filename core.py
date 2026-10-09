@@ -39,6 +39,8 @@ _EXCLUDED_DIRS = {
 }
 
 
+# ponytail: lru_cache on normalize_identifier cuts repeated NFKC normalization
+@lru_cache(maxsize=8192)
 def normalize_identifier(value: str) -> str:
     """Normalize a human identifier for equality, never for display."""
     return unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
@@ -839,7 +841,11 @@ def _identifier_pattern(normalized_identifier: str) -> "re.Pattern[str]":
 
 
 def _identifier_in_query(identifier: str, query: str) -> bool:
-    return bool(_identifier_pattern(normalize_identifier(identifier)).search(normalize_identifier(query)))
+    norm_id = normalize_identifier(identifier)
+    norm_q = normalize_identifier(query)
+    if not norm_id or norm_id not in norm_q:
+        return False
+    return bool(_identifier_pattern(norm_id).search(norm_q))
 
 
 _NEGATION_WORDS = (
@@ -918,6 +924,22 @@ def _negation_patterns(normalized_name: str) -> "tuple[re.Pattern[str], re.Patte
     return loose, structured
 
 
+_NEGATION_SUBSTRINGS: tuple[str, ...] = (
+    "not", "don't", "dont", "never", "without", "except", "no", "doesn't", "doesnt",
+    "ไม่", "อย่า", "ห้าม", "ยกเว้น",
+    "不", "别", "禁止", "除了",
+    "मत", "नहीं", "बिना",
+    "하지마", "사용하지마", "금지",
+    "使わない", "不要",
+)
+
+
+def _query_might_contain_negation(query: str) -> bool:
+    # ponytail: fast substring probe skips expensive regexes on non-negated queries
+    folded = query.casefold()
+    return any(stem in folded for stem in _NEGATION_SUBSTRINGS)
+
+
 def _skill_is_negated(name: str, query: str) -> bool:
     """True when the query vetoes *name* ("don't use X", "ไม่เอา X").
 
@@ -926,6 +948,8 @@ def _skill_is_negated(name: str, query: str) -> bool:
     clause for English vetoes ("do not use the skill X") that still refuses
     non-veto phrasings such as "do not forget to use X".
     """
+    if not _query_might_contain_negation(query):
+        return False
     normalized_name = normalize_identifier(name)
     if not normalized_name:
         return False
@@ -1257,6 +1281,16 @@ def _rank_table(ranked: Sequence[RankedCandidate]) -> tuple[RankRow, ...]:
     )
 
 
+@lru_cache(maxsize=32)
+def _catalog_document_frequency(skills: tuple[SkillRecord, ...]) -> tuple[dict[str, int], int]:
+    document_frequency: dict[str, int] = {}
+    for skill in skills:
+        tokens = set(_tokens(" ".join((skill.name, skill.description, " ".join(skill.tags)))))
+        for token in tokens:
+            document_frequency[token] = document_frequency.get(token, 0) + 1
+    return document_frequency, max(1, len(skills))
+
+
 def _rank(
     catalog: Catalog,
     query: str,
@@ -1275,26 +1309,19 @@ def _rank(
     normalized_query = normalize_identifier(query)
     name_counts = Counter(skill.normalized_name for skill in catalog.skills)
     duplicate_names = {name for name, count in name_counts.items() if count > 1}
-    document_tokens = [
-        set(_tokens(" ".join((skill.name, skill.description, " ".join(skill.tags)))))
-        for skill in catalog.skills
-    ]
-    document_frequency: dict[str, int] = {}
-    for tokens in document_tokens:
-        for token in tokens:
-            document_frequency[token] = document_frequency.get(token, 0) + 1
-    total_documents = max(1, len(catalog.skills))
+    document_frequency, total_documents = _catalog_document_frequency(tuple(catalog.skills))
     token_weights = {
         token: log((total_documents + 1) / (document_frequency.get(token, 0) + 1)) + 1
         for token in query_tokens
     }
     query_weight = sum(token_weights.values()) if query_tokens else 0.0
 
+    has_negation = _query_might_contain_negation(query)
     ranked: list[RankedCandidate] = []
     for skill in catalog.skills:
         if skill.normalized_name in duplicate_names or skill.normalized_name in excluded:
             continue
-        if _skill_is_negated(skill.name, query):
+        if has_negation and _skill_is_negated(skill.name, query):
             continue
         name_tokens = set(_tokens(skill.name.replace("-", " ").replace("_", " ")))
         tag_tokens = set(_tokens(" ".join(skill.tags)))
