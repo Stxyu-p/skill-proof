@@ -45,6 +45,12 @@ class FleetRoutingTests(unittest.TestCase):
         self.assertEqual(core.suggest_fleet_agent("design a landing page with clean tokens", "ui-ux-pro-max"), "milim")
         self.assertEqual(core.suggest_fleet_agent("style this modal with Tailwind", "frontend-design"), "milim")
 
+        # Thai Fleet Agent Mapping
+        self.assertEqual(core.suggest_fleet_agent("ช่วยรีวิวโค้ดชุดนี้ให้หน่อย"), "altima")
+        self.assertEqual(core.suggest_fleet_agent("เขียนโค้ดและแก้บั๊กตรงนี้"), "sora")
+        self.assertEqual(core.suggest_fleet_agent("ค้นคว้าหาข้อมูลและหลักฐาน"), "nua")
+        self.assertEqual(core.suggest_fleet_agent("ช่วยออกแบบหน้าเว็บให้สวยหรู"), "milim")
+
         # Default / orchestrator -> mika
         self.assertEqual(core.suggest_fleet_agent("plan the next steps for this project", None), "mika")
 

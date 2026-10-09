@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
@@ -431,26 +431,18 @@ def detect_agent_roots(
             if str(hermes_home).strip():
                 profile_candidates.append(pathlib.Path(hermes_home).expanduser() / "profiles" / profile / "skills")
         else:
-            configured_home = os.environ.get("HERMES_HOME", "").strip()
-            if configured_home:
-                profile_candidates.append(pathlib.Path(configured_home).expanduser() / "profiles" / profile / "skills")
-            local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-            if os.name == "nt" and local_app_data:
-                profile_candidates.append(pathlib.Path(local_app_data) / "hermes" / "profiles" / profile / "skills")
-            profile_candidates.append(base_home / ".hermes" / "profiles" / profile / "skills")
+            profile_candidates.append(default_hermes_home(base_home) / "profiles" / profile / "skills")
+            if default_hermes_home(base_home) != base_home / ".hermes":
+                profile_candidates.append(base_home / ".hermes" / "profiles" / profile / "skills")
         for p_cand in profile_candidates:
             candidates.insert(0, (f"profile-{profile}", p_cand))
     if hermes_home is not None:  # explicit override; empty string disables detection
         if str(hermes_home).strip():
             candidates.append(("hermes", pathlib.Path(hermes_home).expanduser() / "skills"))
     else:
-        configured_home = os.environ.get("HERMES_HOME", "").strip()
-        if configured_home:
-            candidates.append(("hermes", pathlib.Path(configured_home).expanduser() / "skills"))
-        else:
-            local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-            if os.name == "nt" and local_app_data:
-                candidates.append(("hermes", pathlib.Path(local_app_data) / "hermes" / "skills"))
+        h_home = default_hermes_home(base_home)
+        candidates.append(("hermes", h_home / "skills"))
+        if h_home != base_home / ".hermes":
             candidates.append(("hermes-home", base_home / ".hermes" / "skills"))
     candidates.extend(
         [
@@ -712,7 +704,8 @@ def overlap_report(
             shared = sorted(a & b)
             if not shared:
                 continue
-            similarity = len(shared) / len(a | b)
+            union_len = len(a) + len(b) - len(shared)
+            similarity = len(shared) / union_len if union_len else 0.0
             if similarity < threshold:
                 continue
             first, second = catalog.skills[left], catalog.skills[right]
@@ -1067,6 +1060,9 @@ def _skill_is_negated(name: str, query: str) -> bool:
     if not normalized_name:
         return False
     normalized_query = normalize_identifier(query)
+    # ponytail: fast-path substring check; tail cannot match if skill name is absent
+    if normalized_name not in normalized_query:
+        return False
     loose, structured, post_negation = _negation_patterns(normalized_name)
     return bool(loose.search(normalized_query)) or bool(structured.search(normalized_query)) or bool(post_negation.search(normalized_query))
 
@@ -1423,10 +1419,10 @@ class Selection:
 
 
 _FLEET_AGENT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("altima", ("review", "audit", "rubric", "verdict", "pr-review", "code-review", "altima")),
-    ("sora", ("code", "coding", "software", "bug", "tdd", "debug", "test", "fix", "endpoint", "backend", "deploy", "build", "sora", "refactor")),
-    ("nua", ("evidence", "research", "verify", "benchmark", "fact", "source", "nua", "investigate", "cite")),
-    ("milim", ("design", "ui", "ux", "landing", "frontend", "tailwind", "token", "component", "css", "styling", "milim", "mockup")),
+    ("altima", ("review", "audit", "rubric", "verdict", "pr-review", "code-review", "altima", "รีวิว", "ตรวจโค้ด", "ตรวจงาน")),
+    ("sora", ("code", "coding", "software", "bug", "tdd", "debug", "test", "fix", "endpoint", "backend", "deploy", "build", "sora", "refactor", "โค้ด", "แก้บั๊ก", "เขียนโค้ด", "เทสต์", "บิลด์")),
+    ("nua", ("evidence", "research", "verify", "benchmark", "fact", "source", "nua", "investigate", "cite", "ค้นคว้า", "หาข้อมูล", "วิจัย", "หลักฐาน")),
+    ("milim", ("design", "ui", "ux", "landing", "frontend", "tailwind", "token", "component", "css", "styling", "milim", "mockup", "ออกแบบ", "ดีไซน์", "หน้าเว็บ", "ยูไอ")),
 )
 
 
@@ -1467,12 +1463,13 @@ def _catalog_document_frequency(skills: tuple[SkillRecord, ...]) -> tuple[dict[s
 # ponytail: cache parsed tokens per skill avoiding string joins and re-tokenization per query
 @lru_cache(maxsize=2048)
 def _skill_tokens_cache(
-    name: str, tags: tuple[str, ...], description: str
-) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    name: str, tags: tuple[str, ...], description: str, aliases: tuple[str, ...] = ()
+) -> tuple[frozenset[str], frozenset[str], frozenset[str], frozenset[str]]:
     return (
         frozenset(_tokens(name.replace("-", " ").replace("_", " "))),
         frozenset(_tokens(" ".join(tags))),
         frozenset(_tokens(description)),
+        frozenset(_tokens(" ".join(aliases))),
     )
 
 
@@ -1503,13 +1500,27 @@ def _rank(
 
     has_negation = _query_might_contain_negation(query)
     ranked: list[RankedCandidate] = []
+
+    def _calc_coverage(field_tokens: frozenset[str] | set[str]) -> float:
+        matched = query_tokens & field_tokens
+        if not matched:
+            return 0.0
+        return sum(token_weights[token] for token in matched) / query_weight
+
     for skill in catalog.skills:
         if skill.normalized_name in duplicate_names or skill.normalized_name in excluded:
             continue
         if has_negation and _skill_is_negated(skill.name, query):
             continue
-        name_tokens, tag_tokens, description_tokens = _skill_tokens_cache(skill.name, skill.tags, skill.description)
-        alias_terms = skill.aliases if not synonyms else tuple(dict.fromkeys(tuple(skill.aliases) + tuple(synonyms.get(skill.normalized_name, ()))))
+        name_tokens, tag_tokens, description_tokens, cached_alias_tokens = _skill_tokens_cache(
+            skill.name, skill.tags, skill.description, skill.aliases
+        )
+        if not synonyms:
+            alias_terms = skill.aliases
+            alias_tokens = cached_alias_tokens
+        else:
+            alias_terms = tuple(dict.fromkeys(tuple(skill.aliases) + tuple(synonyms.get(skill.normalized_name, ()))))
+            alias_tokens = frozenset(_tokens(" ".join(alias_terms)))
         reasons: list[str] = []
         score = 0.0
 
@@ -1546,16 +1557,10 @@ def _rank(
                 break
 
         if query_tokens and query_weight:
-            def coverage(field_tokens: set[str]) -> float:
-                matched = query_tokens & field_tokens
-                if not matched:
-                    return 0.0
-                return sum(token_weights[token] for token in matched) / query_weight
-
-            name_coverage = coverage(name_tokens)
-            tag_coverage = coverage(tag_tokens)
-            description_coverage = coverage(description_tokens)
-            alias_coverage = coverage(set(_tokens(" ".join(alias_terms)))) if alias_terms else 0.0
+            name_coverage = _calc_coverage(name_tokens)
+            tag_coverage = _calc_coverage(tag_tokens)
+            description_coverage = _calc_coverage(description_tokens)
+            alias_coverage = _calc_coverage(alias_tokens) if alias_terms else 0.0
             if name_coverage:
                 score += 0.58 * name_coverage
                 reasons.append("name_terms")
@@ -1734,6 +1739,31 @@ class _SessionMemory:
     stack: list[str] = field(default_factory=list)
     focus: Optional[str] = None
     focus_remaining: int = 0
+
+
+def _compact_context(selection: Selection, mode: str, availability_error: bool) -> str:
+    if availability_error:
+        return "Skill list unavailable; availability is unknown."
+    if selection.status == "selected" and selection.selected is not None:
+        name = selection.selected.skill.name
+        mapping = {
+            "dialogue_reference": f'Previously used: "{name}"; load via skill_view.',
+            "dialogue_reference_previous": f'Previously used: "{name}"; load via skill_view.',
+            "focus_requested": f'Focus: "{name}"; use skill_view first.',
+            "focus_fallback": f'Focus candidate: "{name}"; load via skill_view if relevant.',
+        }
+        if mode == "observe":
+            return f'Candidate: "{name}"; use skill_view if needed.'
+        return mapping.get(selection.reason, f'Use skill_view for "{name}" first.')
+    static_reasons = {
+        "ambiguous": "Skill match ambiguous; ask which to load.",
+        "no_previous_selection": "No prior skill; ask which one to load.",
+        "dialogue_reference_unavailable": "Previously used skill unavailable; do not claim loaded.",
+        "dialogue_reference_unknown": "Unknown skill; ask the user which one.",
+    }
+    if selection.status == "blocked" and selection.explicit:
+        return "Requested skill unavailable; do not claim it loaded."
+    return static_reasons.get(selection.status) or static_reasons.get(selection.reason, "")
 
 
 class SkillProofEngine:
@@ -2368,37 +2398,8 @@ class SkillProofEngine:
         if availability_error:
             context = "Skill Proof cannot read Hermes skills_list. Skill availability is unknown; report this limitation."
         if len(context.encode("utf-8")) > self.context_budget_bytes:
-            if availability_error:
-                compact_context = "Skill list unavailable; availability is unknown."
-            elif selection.status == "selected" and selection.selected is not None:
-                name = selection.selected.skill.name
-                if self.mode == "observe":
-                    compact_context = f'Candidate: "{name}"; use skill_view if needed.'
-                elif selection.reason in ("dialogue_reference", "dialogue_reference_previous"):
-                    compact_context = f'Previously used: "{name}"; load via skill_view.'
-                elif selection.reason == "focus_requested":
-                    compact_context = f'Focus: "{name}"; use skill_view first.'
-                elif selection.reason == "focus_fallback":
-                    compact_context = f'Focus candidate: "{name}"; load via skill_view if relevant.'
-                else:
-                    compact_context = f'Use skill_view for "{name}" first.'
-            elif selection.status == "ambiguous":
-                compact_context = "Skill match ambiguous; ask which to load."
-            elif selection.status == "blocked" and selection.explicit:
-                compact_context = "Requested skill unavailable; do not claim it loaded."
-            elif selection.reason == "no_previous_selection":
-                compact_context = "No prior skill; ask which one to load."
-            elif selection.reason == "dialogue_reference_unavailable":
-                compact_context = "Previously used skill unavailable; do not claim loaded."
-            elif selection.reason == "dialogue_reference_unknown":
-                compact_context = "Unknown skill; ask the user which one."
-            else:
-                compact_context = ""
-            context = (
-                compact_context
-                if len(compact_context.encode("utf-8")) <= self.context_budget_bytes
-                else ""
-            )
+            compact = _compact_context(selection, self.mode, availability_error)
+            context = compact if len(compact.encode("utf-8")) <= self.context_budget_bytes else ""
             errors.append("context_budget_exceeded")
         state = _TurnState(
             turn_id=clean_turn_id,

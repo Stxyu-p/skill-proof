@@ -1,18 +1,19 @@
 <div align="center">
 
-# 🛡️ Skill Proof <sub>v0.12.0</sub>
+# 🛡️ Skill Proof <sub>v0.13.0</sub>
 
 **Local skill routing for Hermes agents: deterministic selection, tool gating, truthful receipts**
 
 *Python 3.11, stdlib only, offline, zero external calls, 7 hooks*
 
-[![Release: v0.12.0](https://img.shields.io/badge/Release-v0.12.0-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
+[![Release: v0.13.0](https://img.shields.io/badge/Release-v0.13.0-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
 [![Changelog](https://img.shields.io/badge/Changelog-View_Notes-blueviolet?style=for-the-badge)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 [![Hermes: Native Plugin](https://img.shields.io/badge/Hermes-Native_Plugin-7B61FF?style=for-the-badge)](https://github.com/NousResearch/hermes-agent)
 
-![Tests: 288 OK](https://img.shields.io/badge/Tests-288_OK-brightgreen?style=flat-square)
+![Tests: 295 OK](https://img.shields.io/badge/Tests-295_OK-brightgreen?style=flat-square)
 ![Routing: 58 of 58 gated](https://img.shields.io/badge/Routing-58_of_58_gated-brightgreen?style=flat-square)
+![Speed: 0.66ms / 1500+ QPS](https://img.shields.io/badge/Speed-0.66ms_%2F_1500+_QPS-brightgreen?style=flat-square)
 ![Hooks: 7](https://img.shields.io/badge/Hooks-7-blue?style=flat-square)
 ![Dependencies: Zero](https://img.shields.io/badge/Dependencies-Zero-success?style=flat-square)
 ![Python: 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square)

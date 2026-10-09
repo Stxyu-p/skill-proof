@@ -1,5 +1,5 @@
 name: skill-proof
-version: 0.12.0
+version: 0.13.0
 description: Local skill discovery, tool gating, truthful load receipts, and invariant compliance verification
 kind: standalone
 manifest_version: 2

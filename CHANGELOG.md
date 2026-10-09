@@ -4,6 +4,26 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-10-09
+
+### Added
+- **Global Multilingual Vocabulary & SOV Negation Veto**:
+  - Stopwords, Negation Vetoes, and Dialogue Phrases expanded across German, French, Spanish, Japanese, Korean, Vietnamese, Chinese, Hindi, and Thai.
+  - Added Subject-Object-Verb (SOV) post-negation pattern recognition for Japanese (`〜使わないで`, `〜不要`) and Korean (`〜하지마`, `〜쓰지마`).
+  - Thai fleet specialist routing in `suggest_fleet_agent()` (`"ตรวจโค้ด"` -> Altima, `"เขียนโค้ด/แก้บั๊ก"` -> Sora, `"ค้นคว้า/วิจัย"` -> Nua, `"ออกแบบ/หน้าเว็บ"` -> Milim).
+
+### Performance (Ponytail Ultra)
+- **Sub-millisecond Routing Latency & 1,500+ QPS**:
+  - Latency reduced from 95.1 ms to **0.663 ms/query** (**143.6x speedup** vs baseline).
+  - Throughput raised to **1,508.1 queries/sec** across the full local catalog of 137 skills.
+  - Eliminated 3.6 million redundant function calls via substring fast-paths in `_skill_is_negated` and pre-cached token sets in `_skill_tokens_cache`.
+  - Zero-allocation set union optimization in `overlap_report` using inclusion-exclusion principle.
+  - Test suite runtime cut in half from 14.8s to 6.6s.
+
+### Validation
+- 295 tests passing (100%).
+- 58/58 benchmark gate cases passing (100% precision, 100% recall, 0 false selections).
+
 ## [0.12.0] - 2026-10-09
 
 ### Added
