@@ -109,6 +109,7 @@ class SkillProofPlugin:
         self.ctx = ctx
         self.roots = _resolve_roots(ctx.get_config("skill_roots", []))
         mode = str(ctx.get_config("mode", "nudge") or "nudge")
+        self._skills_cache: tuple[float, set[str]] = (0.0, set())
         invariants = ctx.get_config("invariants", {})
         synonyms = ctx.get_config("synonyms", {})
         hub_lock_path: Optional[pathlib.Path] = None
@@ -175,18 +176,24 @@ class SkillProofPlugin:
         started = time.perf_counter()
         try:
             availability_error = False
-            names = set()
-            try:
-                listing = json.loads(self.ctx.dispatch_tool("skills_list", {}))
-                if not isinstance(listing, dict) or listing.get("success") is not True or not isinstance(listing.get("skills"), list):
-                    raise ValueError("Invalid Hermes skill listing")
-                for item in listing["skills"]:
-                    if not isinstance(item, dict) or not isinstance(item.get("name"), str):
-                        raise ValueError("Invalid Hermes skill name")
-                    names.add(item["name"])
-            except Exception:
-                availability_error = True
-            listing_ms = (time.perf_counter() - started) * 1000
+            now = time.monotonic()
+            if now - self._skills_cache[0] < 30.0 and self._skills_cache[1]:
+                names = self._skills_cache[1]
+                listing_ms = 0.0
+            else:
+                names = set()
+                try:
+                    listing = json.loads(self.ctx.dispatch_tool("skills_list", {}))
+                    if not isinstance(listing, dict) or listing.get("success") is not True or not isinstance(listing.get("skills"), list):
+                        raise ValueError("Invalid Hermes skill listing")
+                    for item in listing["skills"]:
+                        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                            raise ValueError("Invalid Hermes skill name")
+                        names.add(item["name"])
+                    self._skills_cache = (now, names)
+                except Exception:
+                    availability_error = True
+                listing_ms = (time.perf_counter() - started) * 1000
             turn = self.engine.begin_turn(
                 turn_id=effective_turn_id,
                 session_id=str(session_id or ""),
@@ -257,6 +264,7 @@ class SkillProofPlugin:
     ) -> None:
         if normalize_identifier(action) != "loaded":
             return
+        self._skills_cache = (0.0, set())
         try:
             self.engine.observe_skill_loaded(
                 session_id=str(session_id or ""),

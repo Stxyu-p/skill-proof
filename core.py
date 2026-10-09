@@ -1878,6 +1878,9 @@ def _compact_context(selection: Selection, mode: str, availability_error: bool) 
         if mode == "observe":
             return f'Candidate: "{name}"; use skill_view if needed.'
         return mapping.get(selection.reason, f'Use skill_view for "{name}" first.')
+    if selection.status == "ambiguous" and selection.candidates:
+        c_names = ", ".join(f'"{c.skill.name}"' for c in selection.candidates[:3])
+        return f"Relevant skills: {c_names}; use skill_view to load."
     static_reasons = {
         "ambiguous": "Skill match ambiguous; ask which to load.",
         "no_previous_selection": "No prior skill; ask which one to load.",
