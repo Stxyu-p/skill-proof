@@ -54,6 +54,50 @@ class FleetRoutingTests(unittest.TestCase):
         # Default / orchestrator -> mika
         self.assertEqual(core.suggest_fleet_agent("plan the next steps for this project", None), "mika")
 
+    def test_suggest_fleet_agent_dynamic_role_and_ownership(self):
+        # 1. Root ownership overrides keywords: Altima becomes illustrator
+        skill_altima_art = core.SkillRecord(
+            name="banner-illustrator",
+            normalized_name="banner-illustrator",
+            description="Draw creative artwork",
+            root_id="profile-altima",
+            root_path=pathlib.Path("/tmp/altima/skills"),
+            relative_path=pathlib.Path("banner/SKILL.md"),
+            source_path=pathlib.Path("/tmp/altima/skills/banner/SKILL.md"),
+            tags=("art", "drawing"),
+            skill_id="art-1",
+            source_sha256="abc",
+            source_bytes=100,
+        )
+        self.assertEqual(core.suggest_fleet_agent("draw illustration", skill_altima_art), "altima")
+
+        # 2. Milim becomes reviewer
+        skill_milim_review = core.SkillRecord(
+            name="deep-code-review",
+            normalized_name="deep-code-review",
+            description="Audit code quality and security",
+            root_id="profile-milim",
+            root_path=pathlib.Path("/tmp/milim/skills"),
+            relative_path=pathlib.Path("review/SKILL.md"),
+            source_path=pathlib.Path("/tmp/milim/skills/review/SKILL.md"),
+            tags=("audit", "review"),
+            skill_id="rev-1",
+            source_sha256="def",
+            source_bytes=100,
+        )
+        self.assertEqual(core.suggest_fleet_agent("review this PR", skill_milim_review), "milim")
+
+        # 3. Third-party custom manifest (Codex/Agy/custom team)
+        custom_manifest = {
+            "artist-bot": ("draw", "paint", "art"),
+            "auditor-bot": ("review", "audit", "check"),
+        }
+        self.assertEqual(core.suggest_fleet_agent("paint a banner", manifest=custom_manifest), "artist-bot")
+        self.assertEqual(core.suggest_fleet_agent("check this diff", manifest=custom_manifest), "auditor-bot")
+
+        # 4. Host without agents (standalone / no ghost agents)
+        self.assertIsNone(core.suggest_fleet_agent("do something", manifest={}, default_agent=None))
+
     def test_detect_agent_roots_with_profile(self):
         with tempfile.TemporaryDirectory(prefix="skill_proof_profile_") as tmp:
             tmp_path = pathlib.Path(tmp)

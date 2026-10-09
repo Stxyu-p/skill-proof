@@ -1426,18 +1426,49 @@ _FLEET_AGENT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def suggest_fleet_agent(query: str, selected_skill: Optional[str] = None) -> str:
-    """Recommend a fleet specialist agent based on query intent and skill domain."""
+@lru_cache(maxsize=4)
+def _load_fleet_manifest() -> Optional[tuple[tuple[str, tuple[str, ...]], ...]]:
+    for name in ("fleet.json", "agents.json"):
+        p = pathlib.Path(name)
+        if p.is_file():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, Mapping):
+                    return tuple((str(k), tuple(str(x) for x in v)) for k, v in data.items() if isinstance(v, (list, tuple)))
+            except Exception:
+                pass
+    return None
+
+
+def suggest_fleet_agent(
+    query: str,
+    selected_skill: Optional[SkillRecord | str] = None,
+    manifest: Optional[Mapping[str, Sequence[str]]] = None,
+    default_agent: Optional[str] = "mika",
+) -> Optional[str]:
+    """Recommend an agent based on profile root ownership, custom manifest, or query intent."""
+    # 1. Profile root ownership takes precedence: the agent holding the skill owns execution
+    if isinstance(selected_skill, SkillRecord) and selected_skill.root_id.startswith("profile-"):
+        return selected_skill.root_id.removeprefix("profile-")
+
+    # 2. Configured manifest, local fleet.json/agents.json, or fallback defaults
+    if manifest is not None:
+        patterns: Sequence[tuple[str, Sequence[str]]] = tuple(manifest.items())
+    else:
+        loaded = _load_fleet_manifest()
+        patterns = loaded if loaded is not None else _FLEET_AGENT_PATTERNS
+
     tokens = set(_tokens(query))
     query_lower = str(query).lower()
-    skill_lower = str(selected_skill or "").lower()
-    if selected_skill:
+    skill_name = selected_skill.name if isinstance(selected_skill, SkillRecord) else str(selected_skill or "")
+    skill_lower = skill_name.lower()
+    if skill_lower:
         tokens.update(_tokens(skill_lower.replace("-", " ").replace("_", " ")))
-    for agent, keywords in _FLEET_AGENT_PATTERNS:
+    for agent, keywords in patterns:
         for kw in keywords:
-            if kw in tokens or kw in query_lower or (selected_skill and kw in skill_lower):
+            if kw in tokens or kw in query_lower or (skill_lower and kw in skill_lower):
                 return agent
-    return "mika"
+    return default_agent
 
 
 _RANK_TABLE_LIMIT = 20
@@ -1639,7 +1670,7 @@ def select_skill(
             return Selection("blocked", "ambiguous_explicit_skill", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None))
         companions = _resolve_companions(matches[0], catalog)
         candidate = RankedCandidate(matches[0], 1.0, ("explicit_name",), companions=companions)
-        return Selection("selected", "explicit_skill", candidate, (candidate,), True, True, suggested_agent=suggest_fleet_agent(query, matches[0].name))
+        return Selection("selected", "explicit_skill", candidate, (candidate,), True, True, suggested_agent=suggest_fleet_agent(query, matches[0]))
     if unique_explicit and not requested:
         # Every explicit name was vetoed: lexical ranking (which also skips
         # vetoed skills) decides; an explicit-only veto must not select.
@@ -1671,7 +1702,7 @@ def select_skill(
     companions = _resolve_companions(top.skill, catalog)
     top_with_companions = replace(top, companions=companions)
     candidates = (top_with_companions,) + tuple(ranked[1:limit])
-    return Selection("selected", "lexical_match", top_with_companions, candidates, False, False, table, suggested_agent=suggest_fleet_agent(query, top.skill.name))
+    return Selection("selected", "lexical_match", top_with_companions, candidates, False, False, table, suggested_agent=suggest_fleet_agent(query, top.skill))
 
 
 @dataclass(frozen=True)
