@@ -125,6 +125,7 @@ class SkillProofPlugin:
             synonyms=synonyms if isinstance(synonyms, Mapping) else None,
             session_memory=_bool_setting(ctx.get_config("session_memory", True), True),
             focus_turns=_bounded_int(ctx.get_config("focus_turns", 5), 5, 0, 50),
+            disabled=ctx.get_config("disabled", None),
         )
         self.visible_receipt = _bool_setting(ctx.get_config("visible_receipt", True), True)
         self.receipt_style = ctx.get_config("receipt_style", "compact")

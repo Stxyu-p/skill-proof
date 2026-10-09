@@ -168,6 +168,14 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(catalog.skills, ())
         self.assertIn("unsafe_root", {item.code for item in catalog.diagnostics})
 
+    def test_disabled_skills_excluded_from_scan(self):
+        self.write_skill("active", "active-skill", "Active workflow")
+        self.write_skill("disabled", "disabled-skill", "Disabled workflow")
+        all_skills = scan_catalog({"local": self.root}, disabled=())
+        self.assertEqual(len(all_skills.skills), 2)
+        filtered = scan_catalog({"local": self.root}, disabled=["disabled-skill"])
+        self.assertEqual([s.name for s in filtered.skills], ["active-skill"])
+
 
 class SelectionTests(unittest.TestCase):
     def catalog(self, rows: list[tuple[str, str]]) -> tuple[Catalog, tempfile.TemporaryDirectory]:
@@ -365,6 +373,24 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(extract_explicit_skill_names("Use $python-tdd now"), ("python-tdd",))
         self.assertEqual(extract_explicit_skill_names("use skill frontend-design"), ("frontend-design",))
         self.assertEqual(extract_explicit_skill_names("ใช้สกิล python-tdd"), ("python-tdd",))
+
+    def test_default_synonyms_bridge_natural_language_queries(self):
+        catalog, tmp = self.catalog([
+            ("ui-ux-pro-max", "UI/UX design intelligence"),
+            ("github-pr-workflow", "GitHub PR lifecycle"),
+        ])
+        try:
+            # Query uses "dashboard" which is in DEFAULT_SYNONYMS for ui-ux-pro-max
+            res = select_skill(catalog, "ช่วยทำ dashboard สวยๆ")
+            self.assertEqual(res.status, "selected")
+            self.assertEqual(res.selected.skill.name, "ui-ux-pro-max")
+
+            # Query uses "pull request" which is in DEFAULT_SYNONYMS for github-pr-workflow
+            res_pr = select_skill(catalog, "please review my pull request")
+            self.assertEqual(res_pr.status, "selected")
+            self.assertEqual(res_pr.selected.skill.name, "github-pr-workflow")
+        finally:
+            tmp.cleanup()
 
 
 class EngineTests(unittest.TestCase):

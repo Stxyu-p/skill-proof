@@ -405,6 +405,51 @@ def default_hermes_home(base_home: Optional[pathlib.Path] = None) -> pathlib.Pat
     return home / ".hermes"
 
 
+def load_disabled_skills(hermes_home: Optional[os.PathLike[str] | str] = None) -> frozenset[str]:
+    """Normalized disabled skill names from Hermes config.yaml."""
+    h_home = pathlib.Path(hermes_home).expanduser() if hermes_home else default_hermes_home()
+    cfg_path = h_home / "config.yaml"
+    if not cfg_path.is_file():
+        return frozenset()
+    try:
+        import yaml
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        disabled = data.get("skills", {}).get("disabled", []) or []
+        return frozenset(normalize_identifier(x) for x in disabled if x) - {normalize_identifier("hermes-agent")}
+    except Exception:
+        pass
+    try:
+        content = cfg_path.read_text(encoding="utf-8")
+        m = re.search(r"^skills:\s*\n(?:[ \t]+[^\n]+\n)*?[ \t]+disabled:\s*\n((?:[ \t]+-[^\n]+\n)+)", content, re.MULTILINE)
+        if m:
+            names = set()
+            for line in m.group(1).splitlines():
+                line = line.strip()
+                if line.startswith("-"):
+                    val = line[1:].strip().strip("\"'")
+                    if val:
+                        names.add(normalize_identifier(val))
+            return frozenset(names) - {normalize_identifier("hermes-agent")}
+    except Exception:
+        pass
+    return frozenset()
+
+
+# ponytail: default synonym bridges for high-frequency natural-language routing
+DEFAULT_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "ui-ux-pro-max": ("dashboard", "หน้าเว็บ", "ออกแบบเว็บ", "frontend", "ui", "ux", "interface", "web design"),
+    "github-pr-workflow": ("pull request", "pr", "review pr", "pull", "merge"),
+    "hermes-context-budget": ("compress", "context", "token", "budget", "บีบอัด", "ย่อบทสนทนา"),
+    "slides": ("presentation", "pitch", "สไลด์", "deck"),
+    "test-driven-development": ("tdd", "เขียนเทสต์", "red-green-refactor", "unit test"),
+    "python-debugpy": ("แก้บั๊ก python", "debug python", "pdb", "debugpy"),
+    "impeccable": ("ใส่สี", "spacing", "polish ui", "design polish"),
+    "banner-design": ("แบนเนอร์", "promotion banner", "social media banner"),
+    "imagegen": ("สร้าง logo", "โลโก้", "generate logo"),
+}
+
+
 def detect_agent_roots(
     home: Optional[os.PathLike[str] | str] = None,
     cwd: Optional[os.PathLike[str] | str] = None,
@@ -527,6 +572,7 @@ def scan_catalog(
     max_skill_bytes: int = 256 * 1024,
     cache: Optional[dict] = None,
     metrics: Optional[dict] = None,
+    disabled: Optional[Iterable[str]] = None,
 ) -> Catalog:
     """Discover safe `SKILL.md` files with deterministic ordering."""
     if isinstance(max_skill_bytes, bool) or max_skill_bytes < 1:
@@ -536,6 +582,7 @@ def scan_catalog(
     live_cache_keys = set()
     if metrics is not None:
         metrics.update(cache_hits=0, cache_misses=0)
+    disabled_set = load_disabled_skills() if disabled is None else normalize_identifiers(disabled)
 
     for raw_root_id, raw_root in sorted(roots.items(), key=lambda item: str(item[0])):
         root_id = str(raw_root_id).strip()
@@ -627,6 +674,8 @@ def scan_catalog(
         for key in set(cache) - live_cache_keys:
             del cache[key]
     found = _apply_cross_root_precedence(found, roots, diagnostics)
+    if disabled_set:
+        found = [skill for skill in found if skill.normalized_name not in disabled_set]
     found.sort(key=lambda skill: (skill.normalized_name, skill.root_id, skill.relative_path))
     name_counts: dict[str, int] = {}
     for skill in found:
@@ -1657,6 +1706,8 @@ def select_skill(
         if normalized and normalized not in seen_explicit:
             seen_explicit.add(normalized)
             unique_explicit.append(str(name))
+    effective_synonyms = DEFAULT_SYNONYMS if synonyms is None else synonyms
+
     # A vetoed explicit name ("don't use $X") is not a request: drop it and
     # fall through to lexical ranking instead of selecting it.
     requested = [name for name in unique_explicit if not _skill_is_negated(name, query)]
@@ -1675,7 +1726,7 @@ def select_skill(
         # Every explicit name was vetoed: lexical ranking (which also skips
         # vetoed skills) decides; an explicit-only veto must not select.
         ranked_vetoed = _rank(
-            catalog, query, synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
+            catalog, query, effective_synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
         )
         return Selection(
             "no_match",
@@ -1689,7 +1740,7 @@ def select_skill(
         )
 
     ranked = _rank(
-        catalog, query, synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
+        catalog, query, effective_synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
     )
     table = _rank_table(ranked)
     if not ranked or ranked[0].score < float(min_score):
@@ -1828,6 +1879,7 @@ class SkillProofEngine:
         synonyms: Optional[Mapping[str, Any]] = None,
         session_memory: bool = True,
         focus_turns: int = 5,
+        disabled: Optional[Iterable[str]] = None,
     ) -> None:
         normalized_mode = normalize_identifier(mode)
         normalized_mode = self._MODE_ALIASES.get(normalized_mode, normalized_mode)
@@ -1874,7 +1926,7 @@ class SkillProofEngine:
         )
         self._hub_cache: Optional[dict[str, Mapping[str, Any]]] = None
         self._hub_cache_mtime: Optional[int] = None
-        self.synonyms: dict[str, tuple[str, ...]] = {}
+        self.synonyms: dict[str, tuple[str, ...]] = dict(DEFAULT_SYNONYMS)
         if isinstance(synonyms, Mapping):
             for sname, terms in synonyms.items():
                 if isinstance(terms, str):
@@ -1886,6 +1938,9 @@ class SkillProofEngine:
                 )[:32]
                 if normalized_terms:
                     self.synonyms[normalize_identifier(sname)] = normalized_terms
+        self.disabled: Optional[frozenset[str]] = (
+            normalize_identifiers(disabled) if disabled is not None else None
+        )
         if not isinstance(session_memory, bool):
             raise ValueError("session_memory must be a boolean")
         if isinstance(focus_turns, bool) or not isinstance(focus_turns, int) or not 0 <= focus_turns <= 50:
@@ -2315,7 +2370,13 @@ class SkillProofEngine:
         query_text = str(query or "")
         metrics = {}
         with self._lock:
-            catalog = scan_catalog(self._roots, max_skill_bytes=self.max_skill_bytes, cache=self._catalog_cache, metrics=metrics)
+            catalog = scan_catalog(
+                self._roots,
+                max_skill_bytes=self.max_skill_bytes,
+                cache=self._catalog_cache,
+                metrics=metrics,
+                disabled=self.disabled,
+            )
         metrics['scan_ms'] = round((time.perf_counter() - core_started) * 1000, 3)
         local_count = len(catalog.skills)
         indexed_names = frozenset(skill.normalized_name for skill in catalog.skills)
@@ -2832,7 +2893,10 @@ class SkillProofEngine:
         """Near-duplicate skills across the configured roots (read-only)."""
         with self._lock:
             catalog = scan_catalog(
-                self._roots, max_skill_bytes=self.max_skill_bytes, cache=self._catalog_cache
+                self._roots,
+                max_skill_bytes=self.max_skill_bytes,
+                cache=self._catalog_cache,
+                disabled=self.disabled,
             )
         return overlap_report(catalog, min_similarity=min_similarity, limit=limit)
 
