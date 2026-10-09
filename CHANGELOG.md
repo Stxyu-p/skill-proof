@@ -4,6 +4,16 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-10-09
+
+### Added
+- **Fleet Profile Awareness & Subagent Routing**: `detect_agent_roots` and `cli.py` accept `--profile <name>` (e.g. `altima`, `sora`, `nua`, `milim`), prioritizing that Hermes profile's dedicated skills directory (`~/.hermes/profiles/<name>/skills`). `suggest_fleet_agent()` infers the appropriate specialist agent (`altima` for review/audit, `sora` for code/debugging/build, `nua` for research/evidence, `milim` for UI/design, `mika` for orchestration) and attaches `suggested_agent` to `SelectedSkill` and JSON payloads.
+- **Companion Skill Chaining**: `SkillRecord` parses `related_skills` / `related` from frontmatter; `select_skill` attaches validated companion skills (`companions`) present in the catalog to the selection without violating the single-primary-skill invariant.
+- **Interactive Query Diagnostics (`cli.py eval`)**: Added `python cli.py eval "<query>"` command showing query token breakdown, CJK/Thai character n-grams count, decision reason, suggested fleet agent, companion skills, and top-N candidate scoring breakdown.
+
+### Validation
+- 279 tests passing (2 skipped on Windows), 58/58 gated routing cases (100% recall, 100% precision, 0 false selections).
+
 ## [0.10.1] - 2026-10-09
 
 ### Fixed

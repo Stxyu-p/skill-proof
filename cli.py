@@ -23,13 +23,13 @@ from collections import Counter
 import core
 
 
-def _collect_roots(paths):
+def _collect_roots(paths, profile=None):
     if paths:
         return {
             f"root-{index}": pathlib.Path(value).expanduser()
             for index, value in enumerate(paths, start=1)
         }
-    return core.detect_agent_roots()
+    return core.detect_agent_roots(profile=profile)
 
 
 def _root_map(roots):
@@ -76,6 +76,7 @@ def _select_payload(roots, query, min_score, min_margin, limit):
             "reasons": list(item.reasons),
             "root_id": item.skill.root_id,
             "relative_path": item.skill.relative_path,
+            "companions": list(item.companions),
         }
 
     return {
@@ -87,8 +88,56 @@ def _select_payload(roots, query, min_score, min_margin, limit):
             "status": selection.status,
             "reason": selection.reason,
             "explicit": selection.explicit,
+            "suggested_agent": selection.suggested_agent,
         },
         "selected": None if selected is None else _candidate(selected),
+        "candidates": [_candidate(item) for item in selection.candidates],
+    }
+
+
+def _eval_payload(roots, query, min_score=0.28, min_margin=0.05, limit=5, profile=None):
+    catalog = core.scan_catalog(roots)
+    explicit = core.extract_explicit_skill_names(
+        query, known_names=(skill.name for skill in catalog.skills)
+    )
+    selection = core.select_skill(
+        catalog,
+        query,
+        explicit_names=explicit,
+        min_score=min_score,
+        min_margin=min_margin,
+        limit=limit,
+    )
+    selected = selection.selected
+    tokens = core._tokens(query)
+
+    def _candidate(item):
+        return {
+            "name": item.skill.name,
+            "score": item.score,
+            "reasons": list(item.reasons),
+            "root_id": item.skill.root_id,
+            "relative_path": item.skill.relative_path,
+            "companions": list(item.companions),
+        }
+
+    return {
+        "version": core.__version__,
+        "roots": _root_map(roots),
+        "query": query,
+        "query_breakdown": {
+            "tokens": list(tokens),
+            "ngrams_count": len(core._char_ngrams(query)),
+            "explicit_detected": list(explicit),
+        },
+        "decision": {
+            "status": selection.status,
+            "reason": selection.reason,
+            "selected_skill": selected.skill.name if selected else None,
+            "score": selected.score if selected else None,
+            "companions": list(selected.companions) if selected else [],
+            "suggested_agent": selection.suggested_agent,
+        },
         "candidates": [_candidate(item) for item in selection.candidates],
     }
 
@@ -141,17 +190,42 @@ def _format_scan(payload):
 
 def _format_select(payload):
     decision = payload["decision"]
-    lines = [f"decision: {decision['status']} ({decision['reason']})"]
+    lines = [
+        f"decision: {decision['status']} ({decision['reason']})",
+        f"suggested fleet agent: {decision.get('suggested_agent', 'mika')}",
+    ]
     selected = payload["selected"]
     if selected is not None:
+        comp_str = f" companions={','.join(selected['companions'])}" if selected.get("companions") else ""
         lines.append(
             f"selected: {selected['name']} score={selected['score']} "
-            f"reasons={','.join(selected['reasons'])}"
+            f"reasons={','.join(selected['reasons'])}{comp_str}"
         )
     for candidate in payload["candidates"]:
         lines.append(
             f"candidate: {candidate['name']} score={candidate['score']} "
             f"reasons={','.join(candidate['reasons'])}"
+        )
+    return "\n".join(lines)
+
+
+def _format_eval(payload):
+    decision = payload["decision"]
+    breakdown = payload["query_breakdown"]
+    lines = [
+        f"Skill Proof {payload['version']} Diagnostics for: {payload['query']!r}",
+        f"tokens: {', '.join(breakdown['tokens']) or 'none'} (ngrams={breakdown['ngrams_count']}, explicit={breakdown['explicit_detected'] or 'none'})",
+        f"decision: {decision['status']} ({decision['reason']})",
+        f"suggested fleet agent: {decision['suggested_agent']}",
+    ]
+    if decision["selected_skill"]:
+        lines.append(f"selected: {decision['selected_skill']} (score={decision['score']})")
+        if decision["companions"]:
+            lines.append(f"companions: {', '.join(decision['companions'])}")
+    lines.append("candidates:")
+    for idx, cand in enumerate(payload["candidates"], start=1):
+        lines.append(
+            f"  #{idx} {cand['name']} score={cand['score']} reasons={','.join(cand['reasons'])} root={cand['root_id']}"
         )
     return "\n".join(lines)
 
@@ -167,6 +241,10 @@ def main(argv=None) -> int:
         "--root", action="append", default=[], metavar="DIR",
         help="skill root directory (repeatable; defaults to detected agent roots)",
     )
+    common.add_argument(
+        "--profile", default=None, metavar="NAME",
+        help="Hermes agent profile name to prioritize (e.g. altima, sora, nua, milim)",
+    )
     common.add_argument("--json", action="store_true", help="machine-readable output")
     subparsers.add_parser("roots", parents=[common], help="list detected skill roots")
     subparsers.add_parser("scan", parents=[common], help="scan roots and report catalog state")
@@ -175,6 +253,12 @@ def main(argv=None) -> int:
     select_parser.add_argument("--min-score", type=float, default=0.28)
     select_parser.add_argument("--min-margin", type=float, default=0.05)
     select_parser.add_argument("--limit", type=int, default=3)
+    eval_parser = subparsers.add_parser("eval", parents=[common], help="interactive query diagnostics and ranking matrix")
+    eval_parser.add_argument("pos_query", nargs="?", default="", metavar="QUERY", help="user query to diagnose")
+    eval_parser.add_argument("--query", dest="flag_query", help="user query to diagnose")
+    eval_parser.add_argument("--min-score", type=float, default=0.28)
+    eval_parser.add_argument("--min-margin", type=float, default=0.05)
+    eval_parser.add_argument("--limit", type=int, default=5)
     overlap_parser = subparsers.add_parser(
         "overlap", parents=[common], help="near-duplicate skills worth pruning"
     )
@@ -182,7 +266,7 @@ def main(argv=None) -> int:
     overlap_parser.add_argument("--limit", type=int, default=20)
     args = parser.parse_args(argv)
 
-    roots = _collect_roots(args.root)
+    roots = _collect_roots(args.root, profile=args.profile)
     if args.command == "roots":
         payload = {"version": core.__version__, "roots": _root_map(roots)}
         if args.json:
@@ -210,6 +294,20 @@ def main(argv=None) -> int:
             json.dumps(payload, indent=2, ensure_ascii=False)
             if args.json
             else _format_overlap(payload)
+        )
+        return 0
+    if args.command == "eval":
+        target_query = args.flag_query or args.pos_query
+        if not target_query:
+            print("error: query is required for eval", file=sys.stderr)
+            return 2
+        payload = _eval_payload(
+            roots, target_query, min_score=args.min_score, min_margin=args.min_margin, limit=args.limit, profile=args.profile
+        )
+        print(
+            json.dumps(payload, indent=2, ensure_ascii=False)
+            if args.json
+            else _format_eval(payload)
         )
         return 0
     payload = _select_payload(roots, args.query, args.min_score, args.min_margin, args.limit)

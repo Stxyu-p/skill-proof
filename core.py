@@ -17,13 +17,13 @@ import threading
 import time
 import unicodedata
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from math import log
 from typing import Any, Mapping, Optional, Sequence
 
 
-__version__ = "0.10.1"
+__version__ = "0.11.0"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
@@ -78,6 +78,7 @@ class SkillRecord:
     source_path: pathlib.Path
     invariants: SkillInvariants = SkillInvariants()
     aliases: tuple[str, ...] = ()
+    related_skills: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -182,6 +183,7 @@ def _parse_skill(
     fields: dict[str, str] = {}
     tags: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
+    related_skills: tuple[str, ...] = ()
     invariants_data: dict[str, tuple[str, ...]] = {}
     skip_until = 0
     for index, line in enumerate(lines[1:closing], start=1):
@@ -210,12 +212,14 @@ def _parse_skill(
                 fields[stripped_key] = ' '.join(' '.join(parts).split())
             else:
                 fields[stripped_key] = _parse_scalar(value, stripped_key)
-        elif stripped_key in {"tags", "aliases"}:
+        elif stripped_key in {"tags", "aliases", "related_skills", "related"}:
             parsed_list, skip_until = _parse_list_value(lines, index, closing, value)
             if stripped_key == "tags":
                 tags = parsed_list
-            else:
+            elif stripped_key == "aliases":
                 aliases = parsed_list
+            else:
+                related_skills = parsed_list
         elif is_top_level and stripped_key == "invariants":
             cursor = index + 1
             inv_lines = []
@@ -264,6 +268,7 @@ def _parse_skill(
         source_path=source_path,
         invariants=inv_obj,
         aliases=aliases,
+        related_skills=related_skills,
     )
 
 
@@ -385,6 +390,7 @@ def detect_agent_roots(
     home: Optional[os.PathLike[str] | str] = None,
     cwd: Optional[os.PathLike[str] | str] = None,
     hermes_home: Optional[os.PathLike[str] | str] = None,
+    profile: Optional[str] = None,
 ) -> dict[str, pathlib.Path]:
     """Existing skill roots across common agent ecosystems (id -> path).
 
@@ -400,6 +406,21 @@ def detect_agent_roots(
         ("project-claude", base_cwd / ".claude" / "skills"),
         ("agents", base_home / ".agents" / "skills"),
     ]
+    if profile:
+        profile_candidates: list[pathlib.Path] = []
+        if hermes_home is not None:
+            if str(hermes_home).strip():
+                profile_candidates.append(pathlib.Path(hermes_home).expanduser() / "profiles" / profile / "skills")
+        else:
+            configured_home = os.environ.get("HERMES_HOME", "").strip()
+            if configured_home:
+                profile_candidates.append(pathlib.Path(configured_home).expanduser() / "profiles" / profile / "skills")
+            local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+            if os.name == "nt" and local_app_data:
+                profile_candidates.append(pathlib.Path(local_app_data) / "hermes" / "profiles" / profile / "skills")
+            profile_candidates.append(base_home / ".hermes" / "profiles" / profile / "skills")
+        for p_cand in profile_candidates:
+            candidates.insert(0, (f"profile-{profile}", p_cand))
     if hermes_home is not None:  # explicit override; empty string disables detection
         if str(hermes_home).strip():
             candidates.append(("hermes", pathlib.Path(hermes_home).expanduser() / "skills"))
@@ -1102,6 +1123,7 @@ class RankedCandidate:
     skill: SkillRecord
     score: float
     reasons: tuple[str, ...]
+    companions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1124,6 +1146,29 @@ class Selection:
     # Every skill that scored above zero this turn (bounded), so an "why not X"
     # question can be answered exactly without ever storing the prompt.
     rank_table: tuple[RankRow, ...] = ()
+    suggested_agent: str = "mika"
+
+
+_FLEET_AGENT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("altima", ("review", "audit", "rubric", "verdict", "pr-review", "code-review", "altima")),
+    ("sora", ("code", "coding", "software", "bug", "tdd", "debug", "test", "fix", "endpoint", "backend", "deploy", "build", "sora", "refactor")),
+    ("nua", ("evidence", "research", "verify", "benchmark", "fact", "source", "nua", "investigate", "cite")),
+    ("milim", ("design", "ui", "ux", "landing", "frontend", "tailwind", "token", "component", "css", "styling", "milim", "mockup")),
+)
+
+
+def suggest_fleet_agent(query: str, selected_skill: Optional[str] = None) -> str:
+    """Recommend a fleet specialist agent based on query intent and skill domain."""
+    tokens = set(_tokens(query))
+    query_lower = str(query).lower()
+    skill_lower = str(selected_skill or "").lower()
+    if selected_skill:
+        tokens.update(_tokens(skill_lower.replace("-", " ").replace("_", " ")))
+    for agent, keywords in _FLEET_AGENT_PATTERNS:
+        for kw in keywords:
+            if kw in tokens or kw in query_lower or (selected_skill and kw in skill_lower):
+                return agent
+    return "mika"
 
 
 _RANK_TABLE_LIMIT = 20
@@ -1250,6 +1295,18 @@ def _rank(
     return ranked
 
 
+def _resolve_companions(skill: SkillRecord, catalog: Catalog) -> tuple[str, ...]:
+    if not skill.related_skills:
+        return ()
+    known_names = {s.normalized_name for s in catalog.skills}
+    valid = []
+    for rel in skill.related_skills:
+        norm = normalize_identifier(rel)
+        if norm in known_names and norm != skill.normalized_name:
+            valid.append(rel)
+    return tuple(valid)
+
+
 def select_skill(
     catalog: Catalog,
     query: str,
@@ -1282,15 +1339,16 @@ def select_skill(
     # fall through to lexical ranking instead of selecting it.
     requested = [name for name in unique_explicit if not _skill_is_negated(name, query)]
     if len(requested) > 1:
-        return Selection("blocked", "multiple_explicit_skills", None, (), True, True)
+        return Selection("blocked", "multiple_explicit_skills", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None))
     if requested:
         matches = catalog.by_name(requested[0])
         if not matches:
-            return Selection("blocked", "unknown_explicit_skill", None, (), True, True)
+            return Selection("blocked", "unknown_explicit_skill", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None))
         if len(matches) > 1:
-            return Selection("blocked", "ambiguous_explicit_skill", None, (), True, True)
-        candidate = RankedCandidate(matches[0], 1.0, ("explicit_name",))
-        return Selection("selected", "explicit_skill", candidate, (candidate,), True, True)
+            return Selection("blocked", "ambiguous_explicit_skill", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None))
+        companions = _resolve_companions(matches[0], catalog)
+        candidate = RankedCandidate(matches[0], 1.0, ("explicit_name",), companions=companions)
+        return Selection("selected", "explicit_skill", candidate, (candidate,), True, True, suggested_agent=suggest_fleet_agent(query, matches[0].name))
     if unique_explicit and not requested:
         # Every explicit name was vetoed: lexical ranking (which also skips
         # vetoed skills) decides; an explicit-only veto must not select.
@@ -1305,6 +1363,7 @@ def select_skill(
             False,
             False,
             _rank_table(ranked_vetoed),
+            suggested_agent=suggest_fleet_agent(query, None),
         )
 
     ranked = _rank(
@@ -1313,11 +1372,15 @@ def select_skill(
     table = _rank_table(ranked)
     if not ranked or ranked[0].score < float(min_score):
         if any(_skill_is_negated(skill.name, query) for skill in catalog.skills):
-            return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False, table)
-        return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table)
+            return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
+        return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
     if len(ranked) > 1 and ranked[0].score - ranked[1].score < float(min_margin):
-        return Selection("ambiguous", "insufficient_margin", None, tuple(ranked[:limit]), False, False, table)
-    return Selection("selected", "lexical_match", ranked[0], tuple(ranked[:limit]), False, False, table)
+        return Selection("ambiguous", "insufficient_margin", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
+    top = ranked[0]
+    companions = _resolve_companions(top.skill, catalog)
+    top_with_companions = replace(top, companions=companions)
+    candidates = (top_with_companions,) + tuple(ranked[1:limit])
+    return Selection("selected", "lexical_match", top_with_companions, candidates, False, False, table, suggested_agent=suggest_fleet_agent(query, top.skill.name))
 
 
 @dataclass(frozen=True)
