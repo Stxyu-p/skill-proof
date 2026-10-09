@@ -934,6 +934,7 @@ _NEGATION_SUBSTRINGS: tuple[str, ...] = (
 )
 
 
+@lru_cache(maxsize=2048)
 def _query_might_contain_negation(query: str) -> bool:
     # ponytail: fast substring probe skips expensive regexes on non-negated queries
     folded = query.casefold()
@@ -996,6 +997,7 @@ _NGRAM_MINIMUM_DICE = 0.25
 _NGRAM_WEIGHT = 0.55
 
 
+# ponytail: lru_cache on _char_ngrams cuts repeated n-gram generation on catalogs and queries
 @lru_cache(maxsize=4096)
 def _char_ngrams(value: str, size: int = _NGRAM_SIZE) -> "frozenset[str]":
     """Character n-grams of the spaceless-script part of *value*.
@@ -1291,6 +1293,18 @@ def _catalog_document_frequency(skills: tuple[SkillRecord, ...]) -> tuple[dict[s
     return document_frequency, max(1, len(skills))
 
 
+# ponytail: cache parsed tokens per skill avoiding string joins and re-tokenization per query
+@lru_cache(maxsize=2048)
+def _skill_tokens_cache(
+    name: str, tags: tuple[str, ...], description: str
+) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    return (
+        frozenset(_tokens(name.replace("-", " ").replace("_", " "))),
+        frozenset(_tokens(" ".join(tags))),
+        frozenset(_tokens(description)),
+    )
+
+
 def _rank(
     catalog: Catalog,
     query: str,
@@ -1323,10 +1337,8 @@ def _rank(
             continue
         if has_negation and _skill_is_negated(skill.name, query):
             continue
-        name_tokens = set(_tokens(skill.name.replace("-", " ").replace("_", " ")))
-        tag_tokens = set(_tokens(" ".join(skill.tags)))
-        description_tokens = set(_tokens(skill.description))
-        alias_terms = tuple(dict.fromkeys(tuple(skill.aliases) + tuple(synonyms.get(skill.normalized_name, ()))))
+        name_tokens, tag_tokens, description_tokens = _skill_tokens_cache(skill.name, skill.tags, skill.description)
+        alias_terms = skill.aliases if not synonyms else tuple(dict.fromkeys(tuple(skill.aliases) + tuple(synonyms.get(skill.normalized_name, ()))))
         reasons: list[str] = []
         score = 0.0
 
@@ -1474,7 +1486,7 @@ def select_skill(
     )
     table = _rank_table(ranked)
     if not ranked or ranked[0].score < float(min_score):
-        if any(_skill_is_negated(skill.name, query) for skill in catalog.skills):
+        if _query_might_contain_negation(query) and any(_skill_is_negated(skill.name, query) for skill in catalog.skills):
             return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
         return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
     if len(ranked) > 1 and ranked[0].score - ranked[1].score < float(min_margin):
