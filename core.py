@@ -786,7 +786,8 @@ _SEA_SPACELESS_RANGES = (
 
 def _is_sea_spaceless_character(character: str) -> bool:
     code = ord(character)
-    return any(start <= code <= end for start, end in _SEA_SPACELESS_RANGES)
+    # Southeast Asian scripts: Thai (0E00-0E7F), Lao (0E80-0EFF), Myanmar (1000-109F), Khmer (1780-17FF)
+    return (0x0E00 <= code <= 0x0EFF) or (0x1000 <= code <= 0x109F) or (0x1780 <= code <= 0x17FF)
 
 
 _STOPWORDS = {
@@ -807,6 +808,8 @@ _STOPWORDS = {
 }
 
 
+# ponytail: lru_cache on _tokens cuts repeated tokenization across catalog scans
+@lru_cache(maxsize=8192)
 def _tokens(value: str) -> tuple[str, ...]:
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
     raw_tokens: list[str] = []
@@ -948,7 +951,16 @@ _SPACELESS_RANGES = (
 
 def _is_spaceless_character(character: str) -> bool:
     code = ord(character)
-    return any(start <= code <= end for start, end in _SPACELESS_RANGES)
+    return (
+        (0x0E00 <= code <= 0x0EFF)
+        or (0x1000 <= code <= 0x109F)
+        or (0x1780 <= code <= 0x17FF)
+        or (0x3040 <= code <= 0x30FF)
+        or (0x3400 <= code <= 0x4DBF)
+        or (0x4E00 <= code <= 0x9FFF)
+        or (0xAC00 <= code <= 0xD7AF)
+        or (0x1100 <= code <= 0x11FF)
+    )
 
 
 def _contains_spaceless_script(value: str) -> bool:
@@ -989,20 +1001,23 @@ def _ngram_dice(left: "frozenset[str]", right: "frozenset[str]") -> float:
     return (2.0 * shared) / (len(left) + len(right))
 
 
+@lru_cache(maxsize=2048)
+def _phrase_boundary_pattern(shorter: str) -> "re.Pattern[str]":
+    return re.compile(rf"(?<!\w){re.escape(shorter)}(?!\w)")
+
+
 def _phrase_present(shorter: str, longer: str) -> bool:
     """True when *shorter* occurs in *longer* as a complete token span.
 
-    Spaceless scripts (Thai, CJK, Hangul, ...) keep raw substring matching:
+    Spaceless scripts (Thai, CJK, ...) keep raw substring matching:
     there are no word boundaries to split on. Anything else must match on
     token boundaries so "ui" never fires inside "build".
     """
-    if not shorter:
+    if not shorter or shorter not in longer:
         return False
-    if " " not in shorter and " " not in longer:
-        if _contains_spaceless_script(shorter + longer):
-            return shorter in longer
-        return bool(re.search(rf"(?<!\w){re.escape(shorter)}(?!\w)", longer))
-    return bool(re.search(rf"(?<!\w){re.escape(shorter)}(?!\w)", longer))
+    if " " not in shorter and " " not in longer and _contains_spaceless_script(shorter + longer):
+        return True
+    return bool(_phrase_boundary_pattern(shorter).search(longer))
 
 
 # Closed vocabularies for requests that point at the *ongoing* skill instead of
@@ -1269,6 +1284,11 @@ def _rank(
         for token in tokens:
             document_frequency[token] = document_frequency.get(token, 0) + 1
     total_documents = max(1, len(catalog.skills))
+    token_weights = {
+        token: log((total_documents + 1) / (document_frequency.get(token, 0) + 1)) + 1
+        for token in query_tokens
+    }
+    query_weight = sum(token_weights.values()) if query_tokens else 0.0
 
     ranked: list[RankedCandidate] = []
     for skill in catalog.skills:
@@ -1315,34 +1335,29 @@ def _rank(
                 reasons.append("alias_phrase")
                 break
 
-        if query_tokens:
-            query_weight = sum(
-                log((total_documents + 1) / (document_frequency.get(token, 0) + 1)) + 1
-                for token in query_tokens
-            )
-            if query_weight:
-                def coverage(field_tokens: set[str]) -> float:
-                    return sum(
-                        log((total_documents + 1) / (document_frequency.get(token, 0) + 1)) + 1
-                        for token in query_tokens & field_tokens
-                    ) / query_weight
+        if query_tokens and query_weight:
+            def coverage(field_tokens: set[str]) -> float:
+                matched = query_tokens & field_tokens
+                if not matched:
+                    return 0.0
+                return sum(token_weights[token] for token in matched) / query_weight
 
-                name_coverage = coverage(name_tokens)
-                tag_coverage = coverage(tag_tokens)
-                description_coverage = coverage(description_tokens)
-                alias_coverage = coverage(set(_tokens(" ".join(alias_terms)))) if alias_terms else 0.0
-                if name_coverage:
-                    score += 0.58 * name_coverage
-                    reasons.append("name_terms")
-                if tag_coverage:
-                    score += 0.22 * tag_coverage
-                    reasons.append("tag_terms")
-                if alias_coverage:
-                    score += 0.22 * alias_coverage
-                    reasons.append("alias_terms")
-                if description_coverage:
-                    score += 0.34 * description_coverage
-                    reasons.append("description_terms")
+            name_coverage = coverage(name_tokens)
+            tag_coverage = coverage(tag_tokens)
+            description_coverage = coverage(description_tokens)
+            alias_coverage = coverage(set(_tokens(" ".join(alias_terms)))) if alias_terms else 0.0
+            if name_coverage:
+                score += 0.58 * name_coverage
+                reasons.append("name_terms")
+            if tag_coverage:
+                score += 0.22 * tag_coverage
+                reasons.append("tag_terms")
+            if alias_coverage:
+                score += 0.22 * alias_coverage
+                reasons.append("alias_terms")
+            if description_coverage:
+                score += 0.34 * description_coverage
+                reasons.append("description_terms")
 
         # A focused skill only wins when it is already a plausible candidate:
         # focus nudges the ranking, it never hijacks an unrelated turn.
