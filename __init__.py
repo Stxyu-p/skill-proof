@@ -19,9 +19,21 @@ from functools import wraps
 from typing import Any, Mapping, Optional, Sequence
 
 try:  # Hermes loads directory plugins as packages; direct unit tests do not.
-    from .core import SkillProofEngine, __version__ as CORE_VERSION, normalize_identifier, default_hermes_home
+    from .core import (
+        SkillProofEngine,
+        __version__ as CORE_VERSION,
+        normalize_identifier,
+        default_hermes_home,
+        detect_agent_roots,
+    )
 except ImportError:  # pragma: no cover - exercised by direct adapter tests
-    from core import SkillProofEngine, __version__ as CORE_VERSION, normalize_identifier, default_hermes_home
+    from core import (
+        SkillProofEngine,
+        __version__ as CORE_VERSION,
+        normalize_identifier,
+        default_hermes_home,
+        detect_agent_roots,
+    )
 
 
 logger = logging.getLogger(__name__)
