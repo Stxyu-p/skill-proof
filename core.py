@@ -23,7 +23,7 @@ from math import log
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 
-__version__ = "0.14.1"
+__version__ = "0.14.2"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
@@ -1559,6 +1559,19 @@ def _skill_tokens_cache(
 
 
 @lru_cache(maxsize=32)
+def _catalog_duplicate_names(skills: tuple[SkillRecord, ...]) -> frozenset[str]:
+    counts = Counter(skill.normalized_name for skill in skills)
+    return frozenset(name for name, count in counts.items() if count > 1)
+
+
+@lru_cache(maxsize=2048)
+def _skill_spaceless_ngrams(
+    description: str, tags: tuple[str, ...], aliases: tuple[str, ...]
+) -> frozenset[str]:
+    return _char_ngrams(" ".join((description, " ".join(tags), " ".join(aliases))))
+
+
+@lru_cache(maxsize=32)
 def _catalog_document_frequency(skills: tuple[SkillRecord, ...]) -> tuple[dict[str, int], int]:
     document_frequency: dict[str, int] = {}
     for skill in skills:
@@ -1584,8 +1597,7 @@ def _rank(
     query_tokens = set(_tokens(query))
     query_ngrams = _char_ngrams(query)
     normalized_query = normalize_identifier(query)
-    name_counts = Counter(skill.normalized_name for skill in catalog.skills)
-    duplicate_names = {name for name, count in name_counts.items() if count > 1}
+    duplicate_names = _catalog_duplicate_names(tuple(catalog.skills))
     document_frequency, total_documents = _catalog_document_frequency(tuple(catalog.skills))
     token_weights = {
         token: log((total_documents + 1) / (document_frequency.get(token, 0) + 1)) + 1
@@ -1612,8 +1624,13 @@ def _rank(
             alias_terms = skill.aliases
             alias_tokens = cached_alias_tokens
         else:
-            alias_terms = tuple(dict.fromkeys(tuple(skill.aliases) + tuple(synonyms.get(skill.normalized_name, ()))))
-            alias_tokens = frozenset(_tokens(" ".join(alias_terms)))
+            extra = tuple(synonyms.get(skill.normalized_name, ()))
+            if not extra:
+                alias_terms = skill.aliases
+                alias_tokens = cached_alias_tokens
+            else:
+                alias_terms = tuple(dict.fromkeys(tuple(skill.aliases) + extra))
+                alias_tokens = frozenset(_tokens(" ".join(alias_terms)))
         if has_negation and _skill_is_negated(skill.name, query, alias_terms):
             continue
         reasons: list[str] = []
@@ -1622,9 +1639,7 @@ def _rank(
         # Only computed when the query itself contains a spaceless script, so
         # spaced-language turns pay nothing for this path.
         if query_ngrams:
-            field_ngrams = _char_ngrams(
-                " ".join((skill.description, " ".join(skill.tags), " ".join(alias_terms)))
-            )
+            field_ngrams = _skill_spaceless_ngrams(skill.description, skill.tags, alias_terms)
             dice = _ngram_dice(query_ngrams, field_ngrams)
             if dice >= _NGRAM_MINIMUM_DICE:
                 score += _NGRAM_WEIGHT * dice

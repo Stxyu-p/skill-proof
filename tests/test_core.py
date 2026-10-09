@@ -435,6 +435,49 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(suggest_roots(None), [])
         self.assertEqual(suggest_roots({}), [])
 
+    def test_lru_caches_on_duplicates_and_spaceless_ngrams(self):
+        from core import _catalog_duplicate_names, _skill_spaceless_ngrams
+        # _catalog_duplicate_names should return a frozenset
+        dupes = _catalog_duplicate_names(())
+        self.assertIsInstance(dupes, frozenset)
+        # _skill_spaceless_ngrams should cache and return a frozenset
+        ngrams = _skill_spaceless_ngrams("ทดสอบการใช้งาน", ("แท็ก",), ("ชื่ออื่น",))
+        self.assertIsInstance(ngrams, frozenset)
+        self.assertGreater(len(ngrams), 0)
+
+    def test_cli_select_supports_both_positional_and_flag_queries(self):
+        import cli
+        import io
+        import contextlib
+        catalog, tmp = self.catalog([("demo-cli-skill", "Testing CLI positional query")])
+        try:
+            # Positional query
+            buf_pos = io.StringIO()
+            with contextlib.redirect_stdout(buf_pos):
+                code = cli.main(["select", "demo-cli-skill", "--root", str(tmp.name), "--json"])
+            self.assertEqual(code, 0)
+            data_pos = json.loads(buf_pos.getvalue())
+            self.assertEqual(data_pos["decision"]["status"], "selected")
+            self.assertEqual(data_pos["selected"]["name"], "demo-cli-skill")
+
+            # Flag query (--query)
+            buf_flag = io.StringIO()
+            with contextlib.redirect_stdout(buf_flag):
+                code = cli.main(["select", "--query", "demo-cli-skill", "--root", str(tmp.name), "--json"])
+            self.assertEqual(code, 0)
+            data_flag = json.loads(buf_flag.getvalue())
+            self.assertEqual(data_flag["decision"]["status"], "selected")
+            self.assertEqual(data_flag["selected"]["name"], "demo-cli-skill")
+
+            # Missing query fails with exit code 2
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code = cli.main(["select", "--root", str(tmp.name)])
+            self.assertEqual(code, 2)
+            self.assertIn("query is required", err.getvalue())
+        finally:
+            tmp.cleanup()
+
 
 class EngineTests(unittest.TestCase):
     def setUp(self):

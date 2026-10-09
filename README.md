@@ -5,7 +5,7 @@
   <p><em>Route in sub-milliseconds. Save 4,000+ prompt tokens. Never trust prompt-only guessing.</em></p>
 
   <p>
-    <a href="https://github.com/Stxyu-p/skill-proof/releases"><img src="https://img.shields.io/badge/Release-v0.14.1-315C4B?style=for-the-badge" alt="Release" /></a>
+    <a href="https://github.com/Stxyu-p/skill-proof/releases"><img src="https://img.shields.io/badge/Release-v0.14.2-315C4B?style=for-the-badge" alt="Release" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
     <a href="https://docs.python.org/3/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge" alt="Python" /></a>
   </p>
@@ -15,7 +15,7 @@
     <img src="https://img.shields.io/badge/Dependencies-0_(Stdlib_Only)-success?style=flat-square" alt="Stdlib only" />
     <img src="https://img.shields.io/badge/Latency-0.58_ms_|_1,724_QPS-brightgreen?style=flat-square" alt="Latency" />
     <img src="https://img.shields.io/badge/Token_Cost-0_Tokens_In--Memory-blueviolet?style=flat-square" alt="Tokens" />
-    <img src="https://img.shields.io/badge/Tests-301_Passing-brightgreen?style=flat-square" alt="Tests" />
+    <img src="https://img.shields.io/badge/Tests-303_Passing-brightgreen?style=flat-square" alt="Tests" />
     <img src="https://img.shields.io/badge/Routing_Gate-58%2F58-brightgreen?style=flat-square" alt="Routing Gate" />
     <img src="https://img.shields.io/badge/Hard_Scenarios-10%2F10_PASS-brightgreen?style=flat-square" alt="Scenarios" />
   </p>

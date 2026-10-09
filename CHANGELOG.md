@@ -4,6 +4,18 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.2] - 2026-10-09
+
+### Optimized
+- **Duplicate Names & Spaceless N-gram Caching**:
+  - Added `@lru_cache` to `_catalog_duplicate_names` avoiding `Counter` allocations across queries in `_rank`.
+  - Added `@lru_cache` to `_skill_spaceless_ngrams` caching joined description, tags, and aliases n-grams for spaceless script turns.
+  - Optimized alias resolution in `_rank`: avoids `dict.fromkeys` and string re-tokenizing when no custom synonyms exist for a skill.
+
+### Added
+- **CLI Positional Query Support for `select`**:
+  - `python cli.py select "my query"` is now accepted alongside `python cli.py select --query "my query"`, matching `eval` command ergonomics.
+
 ## [0.14.1] - 2026-10-09
 
 ### Fixed

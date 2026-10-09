@@ -234,7 +234,8 @@ def main(argv=None) -> int:
     subparsers.add_parser("roots", parents=[common], help="list detected skill roots")
     subparsers.add_parser("scan", parents=[common], help="scan roots and report catalog state")
     select_parser = subparsers.add_parser("select", parents=[common], help="choose one skill for a query")
-    select_parser.add_argument("--query", required=True, help="the user request to route")
+    select_parser.add_argument("pos_query", nargs="?", default="", metavar="QUERY", help="the user request to route")
+    select_parser.add_argument("--query", dest="flag_query", default="", help="the user request to route")
     select_parser.add_argument("--min-score", type=float, default=0.28)
     select_parser.add_argument("--min-margin", type=float, default=0.05)
     select_parser.add_argument("--limit", type=int, default=3)
@@ -325,7 +326,11 @@ def main(argv=None) -> int:
             else _format_eval(payload)
         )
         return 0
-    payload = _select_payload(roots, args.query, args.min_score, args.min_margin, args.limit)
+    target_query = args.flag_query or args.pos_query
+    if not target_query:
+        print("error: query is required for select", file=sys.stderr)
+        return 2
+    payload = _select_payload(roots, target_query, args.min_score, args.min_margin, args.limit)
     print(
         json.dumps(payload, indent=2, ensure_ascii=False)
         if args.json
