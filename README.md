@@ -1,246 +1,176 @@
 <div align="center">
 
-# 🛡️ Skill Proof <sub>v0.13.0</sub>
+# Skill Proof
 
-**Local skill routing for Hermes agents: deterministic selection, tool gating, truthful receipts**
+**Deterministic, auditable skill routing with no model call in the ranking path.**
 
-*Python 3.11, stdlib only, offline, zero external calls, 7 hooks*
+Python 3.11+ | Standard library only | Offline
 
-[![Release: v0.13.0](https://img.shields.io/badge/Release-v0.13.0-10b981?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
-[![Changelog](https://img.shields.io/badge/Changelog-View_Notes-blueviolet?style=for-the-badge)](CHANGELOG.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
-[![Hermes: Native Plugin](https://img.shields.io/badge/Hermes-Native_Plugin-7B61FF?style=for-the-badge)](https://github.com/NousResearch/hermes-agent)
+[![Release](https://img.shields.io/badge/release-v0.13.0-315C4B?style=for-the-badge)](https://github.com/Stxyu-p/skill-proof/releases)
+[![License](https://img.shields.io/github/license/Stxyu-p/skill-proof?style=for-the-badge)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=for-the-badge)](https://docs.python.org/3/)
 
-![Tests: 295 OK](https://img.shields.io/badge/Tests-295_OK-brightgreen?style=flat-square)
-![Routing: 58 of 58 gated](https://img.shields.io/badge/Routing-58_of_58_gated-brightgreen?style=flat-square)
-![Speed: 0.66ms / 1500+ QPS](https://img.shields.io/badge/Speed-0.66ms_%2F_1500+_QPS-brightgreen?style=flat-square)
-![Hooks: 7](https://img.shields.io/badge/Hooks-7-blue?style=flat-square)
-![Dependencies: Zero](https://img.shields.io/badge/Dependencies-Zero-success?style=flat-square)
-![Python: 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square)
+[![Tests](https://img.shields.io/badge/tests-296%20run%2C%202%20skipped-2E7D32?style=flat-square)](CHANGELOG.md)
+[![Routing gate](https://img.shields.io/badge/routing-58%2F58-2E7D32?style=flat-square)](routing_cases.json)
+[![Dependencies](https://img.shields.io/badge/dependencies-0-2E7D32?style=flat-square)](plugin.yaml)
+[![Hooks](https://img.shields.io/badge/Hermes%20hooks-7-00739C?style=flat-square)](plugin.yaml)
 
 </div>
 
 ---
 
-## ⚡ Overview
+## Overview
 
-**Skill Proof** answers three questions on every turn: which skill was chosen, why it won, and what evidence backs the claim.
+Skill Proof answers one question with evidence: **which skill best matches this turn, and why?**
 
-Each user turn scans the configured `SKILL.md` roots, picks one skill with deterministic lexical ranking, gates operational tools by mode, and appends a short receipt to the response. The session also remembers what it selected, so *use the same skill*, *อันที่แล้ว*, and *keep using X* resolve against that history instead of guessing. No model call. No network. No vector database. Python 3.11 with stdlib only.
+It indexes existing `SKILL.md` files, ranks them against the request with a deterministic lexical scorer, and abstains when the match is weak or ambiguous. As a Hermes plugin, it also observes skill-load and tool events so the selection can be compared with what the host actually did.
 
-What a typical turn looks like:
-
-```text
-[Skill Proof: python-tdd | loaded | compliance verified]
-```
-
-When something needs attention, the receipt says so and points at the detail:
+The ranking path makes no model call and needs no network service. Decisions are reproducible from the same catalog, query, and settings.
 
 ```text
-[Skill Proof: none | not loaded | missing_required_tool:terminal; see /skill-proof explain]
+$ python cli.py select --query "use tdd skill"
+decision: selected (lexical_match)
+suggested fleet agent: sora
+selected: test-driven-development score=0.56 reasons=tag_terms,description_terms companions=systematic-debugging
+candidate: test-driven-development score=0.56 reasons=tag_terms,description_terms
 ```
 
-Eight commands inspect the evidence: `/skill-proof status`, `explain`, `why <name>`, `stats`, `overlap`, `trace`, `refresh`, `health`.
-
----
-
-## 🌟 Why Skill Proof?
-
-Picking a skill from the prompt alone fails in predictable ways. The wrong skill loads, unavailable skills get suggested anyway, a veto still selects the vetoed skill, short queries match inside longer words, and load claims carry no evidence.
-
-**Skill Proof routes differently:**
-
-- 🎯 **Deterministic ranking:** explicit `$name`, `skill:name`, and English or Thai phrase requests take precedence. Ties request disambiguation instead of silently dropping a skill.
-- 🚫 **Veto handling in English and Thai:** excluded skills leave the ranking with a `negated_skill` receipt instead of becoming the selection.
-- 🔍 **Token-boundary phrase matching:** short queries stop matching inside longer words. Thai text without word spaces keeps substring matching.
-- 🧾 **Truthful receipts:** lifecycle event, source hash, and tool-result hash behind every claim. Prompts and skill bodies are never stored.
-- 🧭 **Truthful availability:** Windows junctions and other reparse points are classified instead of silently rejected, and a Hermes-listed skill with no local source reports `listed_but_unindexed` instead of `unknown`.
-- 🔗 **Provenance-aware:** the hub lock is cross-checked read-only; receipts carry trust level, scan verdict, pinned revision, and a `match`/`modified`/`unknown` bundle verdict (hash algorithm verified against live lock entries).
-- 🌍 **Language-agnostic matching:** `aliases:` and `synonyms` work in any script — Thai, CJK, Hangul and other spaceless scripts match by substring, spaced scripts keep token boundaries.
-- 🧠 **Multi-turn memory:** session history answers *use the same skill* and *อันที่แล้ว*, a bounded focus keeps the current skill in play for `focus_turns` turns, and both fail closed with a named reason when there is no history to answer from.
-- ❓ **Answerable decisions:** `/skill-proof why <name>` gives the exact score, threshold, gap to the top, matching terms, or the veto that kept a skill out — from stored numbers, never from prompt text.
-- 📒 **Append-only audit:** one derived-numbers JSON line per turn (`audit_log`), rotated by `audit_limit`, with prompts and skill bodies never written to disk.
-- 📈 **Measured outcomes:** `/skill-proof stats` turns that audit into per-skill hit rates, misses, focus-fallbacks, and the loads the host made *instead* of our selection.
-- 🧹 **Prunable library:** `/skill-proof overlap` and `cli.py overlap` surface near-duplicate skills by pure vocabulary overlap, with the shared terms, a recommendation, and — when the audit log exists — which side is actually loaded.
-- 🧳 **Beyond Hermes:** the core is host-independent; a portable CLI and a stdlib stdio MCP server bring the same selection engine to Claude Code, Codex, Antigravity, Cursor, Gemini CLI, and any MCP-capable host.
-- 🛡️ **Progressive gating plus invariant checks:** `observe`, `nudge`, and `enforce-tools` modes with `required`, `forbidden`, and `ordered` tool rules.
-
-## 📊 Feature Comparison
-
-| Capability | Without Skill Proof | 🛡️ **Skill Proof** |
-| :--- | :---: | :--- |
-| **Skill selection** | Guesswork, no audit trail | ✅ **Deterministic lexical rank with a per-turn receipt** |
-| **Unavailable skills** | Suggested even when unlisted | ✅ **Checked against the live listing, receipt `not_in_hermes_list`** |
-| **Veto requests** | `don't use X` still selects X | ✅ **Veto excludes X, receipt `negated_skill`** |
-| **Short queries** | `ui` matches inside `build` | ✅ **Token-boundary matching, Thai spaceless keeps substring** |
-| **Load evidence** | Claimed in prose | ✅ **Lifecycle event plus source and result hashes** |
-| **Tool gating** | None | ✅ **`observe`, `nudge`, `enforce-tools`** |
-| **Execution compliance** | Never checked | ✅ **Required, forbidden, and ordered invariants, `verified` or `failed`** |
-| **External calls** | Varies | ✅ **Zero, stdlib only, fully offline** |
-| **Hub provenance** | Load claims have no supply-chain context | ✅ **Trust level, scan verdict, pinned revision, bundle `match`/`modified`** |
-| **Non-Hermes hosts** | Locked to one agent platform | ✅ **Portable CLI plus stdio MCP server over the same engine** |
-| **Follow-up turns** | Every turn starts from zero | ✅ **Session history, `same skill`/`อันที่แล้ว` references, bounded focus with expiry** |
-| **Asking why** | Re-reading prose and guessing | ✅ **`/skill-proof why` with exact score, threshold, gap, and veto list** |
-| **Decision history** | Nothing retained | ✅ **Append-only JSONL audit of derived numbers, rotated by limit** |
-| **Outcome measurement** | No way to tell if routing helped | ✅ **`/skill-proof stats`: per-skill hit rate, misses, overrides** |
-| **Library hygiene** | Duplicates pile up unnoticed | ✅ **`overlap` reports near-duplicates with shared terms and a drop candidate** |
-
----
-
-## 🧭 Architectural Dataflow
-
-```mermaid
-flowchart LR
-    T[User turn] --> S[Scan SKILL.md roots]
-    S --> R[Lexical rank with veto]
-    R --> C[Check live listing]
-    C --> G[Gate tools by mode]
-    G --> V[Verify invariants]
-    V --> E[Receipt and trace]
+```text
+$ python routing_benchmark.py --gate
+cases:         58 (35 expect a skill, 23 expect abstain)
+results:       recall=1.0  precision=1.0  abstain_accuracy=1.0  decision_accuracy=1.0
+errors:        false_selections=0  misses=0
+gate: PASS
 ```
 
-How a turn is decided, in plain language:
-
-1. Explicit `$name` or `skill:name` wins. A vetoed explicit name falls back to lexical ranking.
-2. Without an explicit name, a dialogue reference (*same skill*, *keep using X*, *อันที่แล้ว*) resolves against session history and fails closed when there is no history.
-3. Phrase and tag matches score against fixed thresholds (`min_score` 0.28, `min_margin` 0.05); an active focus adds a bounded, decaying bonus to a skill that already has lexical signal, and carries it (`focus_fallback`, score 0) only when nothing else matched.
-4. Vetoed names are excluded with reason `negated_skill`; a release (`stop using X`) drops the focus and routes the rest of the sentence.
-5. Names outside the live listing resolve to `not_in_hermes_list` with no selection.
-6. Ties, unknown names, and multiple requests return no selection with a named reason.
-7. No match allows ordinary work. Only `enforce-tools` mode blocks operational tools.
+The routing results are from a synthetic test corpus, not a production accuracy claim.
 
 ---
 
-## 🚀 Key Modules and Engineering Advantages
+## Capabilities
 
-| Component | What It Does | Technical Advantage |
-| :--- | :--- | :--- |
-| **Lexical Ranker** | Scores name, description phrase, and tags against score and margin thresholds | Deterministic, no model call, no network |
-| **Negation Guard** | Detects English and Thai veto phrasing around a skill name | A veto never becomes a selection |
-| **Phrase Matcher** | Token-boundary match for spaced text, substring for Thai spaceless text | Short queries stop matching inside longer words |
-| **Listing Check** | Matches local names against the live skill listing every turn | Unavailable skills stay visible as filtered, never loaded silently |
-| **Tool Gate** | `observe`, `nudge`, `enforce-tools` (`enforce` is an alias) | Progressive strictness, discovery tools always allowed |
-| **Receipt Engine** | Compact or verbose footer plus `status`, `explain`, `trace`, `refresh`, `health` | Every claim carries evidence, last 20 receipts retained |
-| **Invariant Verifier** | `required_tools`, `forbidden_tools`, `ordered_tools` from frontmatter or config | Violations fail compliance with a named reason, `enforce-tools` blocks outright |
-| **Alias Matcher** | `aliases:` frontmatter plus `synonyms` config, any script | Language-agnostic recall without embeddings or dictionaries |
-| **Session Memory** | Per-session skill history and a decaying focus bonus | `same skill` / `อันที่แล้ว` / `keep using X` resolve deterministically and fail closed without history |
-| **Explain Engine** | `/skill-proof why` over a bounded rank table and veto list | Exact per-skill score and gap with no prompt read or returned |
-| **Audit Log** | One JSON line per turn, append-only with tail rotation | Derived numbers only; a broken path stops logging instead of failing a turn |
-| **Outcome Telemetry** | Hit rate, misses, and overrides derived from the audit log | Fallbacks excluded from hit rate; overrides never count as our load evidence |
-| **Overlap Report** | Jaccard similarity over name, description, tags, aliases | No embeddings or network; exact copies are already collapsed before scoring |
-| **Hub Provenance** | Read-only cross-check against the local hub lock | `trust_level`, `scan_verdict`, pinned revision, bundle drift |
-| **Portable Entrypoints** | `cli.py` (`roots`/`scan`/`select`) and `mcp_server.py` (stdio JSON-RPC) | The same deterministic engine outside Hermes, stdlib only |
-| **Cache** | Metadata-keyed reuse of parsed skills, at most 100 completed turns | Normal edits detected next turn, `refresh` forces a reread |
-
----
-
-## 📊 System Footprint
-
-| Metric | Measured Value | Note |
-| :--- | :--- | :--- |
-| **Python files** | 22 | Core, hooks, benchmarks, CLI, MCP server, 14 test files |
-| **Python lines** | 8,350 | Includes tests and benchmarks |
-| **Tests** | 261 passing, 2 skipped | `python -m unittest discover -s tests` |
-| **Routing cases** | 48 of 48 gated | `routing_benchmark.py --gate`, zero false selections, 5 stretch cases reported |
-| **Hooks** | 7 | Pre and post LLM, pre and post tool, transform, lifecycle, session end |
-| **External dependencies** | 0 | Stdlib only |
-| **Network calls** | 0 | Fully offline at runtime |
-
----
-
-## ⚙️ Modes and Configuration
-
-| Mode | Behavior |
+| Capability | What it does |
 | :--- | :--- |
-| `observe` | Suggests a candidate and records events, tools remain allowed |
-| `nudge` (default) | Requests loading before operational tools, tools remain allowed |
-| `enforce-tools` | Blocks operational tools until a selected skill has a load event |
+| Skill discovery | Scans configured roots for `SKILL.md`; can auto-detect common Hermes, Claude, Codex, Gemini/Antigravity, OpenCode, Copilot, Cursor, Windsurf, and Kilo locations |
+| Deterministic ranking | Weights matching terms across skill name, tags, description, and aliases; uses character n-grams for scripts without spaces |
+| Explicit skill requests | Resolves explicit skill names against the catalog; unknown, duplicate, or multiple names are not silently guessed |
+| Abstention | Applies minimum-score and score-margin thresholds to lexical matches; returns a reason when no selection is safe |
+| Negation | Vetoes supported English, Thai, Chinese, Hindi, Japanese, Korean, Vietnamese, German, French, and Spanish forms; includes Japanese and Korean post-negation forms |
+| Session references | Resolves phrases such as “use the same skill”, “keep using X”, and `อันที่แล้ว` against this session's bounded skill history |
+| Companion skills | Reports `related_skills` that exist in the active catalog; companions do not become the primary selection |
+| Live availability | When Hermes exposes its skill listing, filters out locally indexed skills that are not available to the host |
+| Evidence receipts | Records decision reasons, hashes, lifecycle events, and bounded tool evidence without storing prompt text or skill bodies |
+| Invariant checks | Observes required tools and checks forbidden or ordered tools; `enforce-tools` can block forbidden and out-of-order calls |
+| Overlap report | Measures vocabulary overlap to help find possible near-duplicates |
+| Fleet suggestion | Returns an advisory agent name; it does not dispatch work |
+| CLI and MCP | Provides the same local selection engine through a command-line interface and a stdio MCP server |
+| Host bridges | Optional setup adapters for Claude Code, Codex, Gemini, Cursor, Cline, Windsurf, and Copilot |
 
-| Command | What It Shows |
+### Decision rules
+
+1. Resolve an explicit skill name if it exists in the catalog.
+2. Resolve a dialogue reference only when this session has matching skill history.
+3. Otherwise rank the catalog lexically using weighted term overlap and character n-grams.
+4. Remove vetoed skills before selection.
+5. A lexical match must clear the configured score and margin thresholds. Otherwise Skill Proof abstains with a named reason. An explicit known skill request is handled as an explicit selection rather than a lexical match.
+
+### Fleet suggestions
+
+A selected skill from a `profile-<name>` root maps to that profile. Otherwise, Skill Proof checks an explicit manifest or a local `fleet.json` / `agents.json`, then uses built-in intent patterns. If none match, the default suggestion is `mika`. These names are suggestions only: Skill Proof does not call, launch, or dispatch agents.
+
+When a role changes, a manifest can describe the new intent mapping. Profile-root ownership applies only to skills indexed from that profile; shared-root skills use the manifest or fallback patterns.
+
+---
+
+## Modes
+
+| Mode | Behaviour |
 | :--- | :--- |
-| `/skill-proof status` | Compact state for the latest turn, plus focus and reference |
-| `/skill-proof explain` | Selection decision, ranked candidates, focus, and session history |
-| `/skill-proof why <name>` | Why this skill won, lost, or was vetoed this turn |
-| `/skill-proof stats` | Hit rate, misses, focus-fallbacks, and overrides from the audit log |
-| `/skill-proof overlap` | Near-duplicate skills with shared terms and a drop candidate |
+| `observe` | Reports a candidate without asking the model to load it |
+| `nudge` | Default. Requests the selected skill be loaded before operational tools; does not block tools |
+| `enforce-tools` | Blocks operational tools until a selected skill load is observed; blocks configured forbidden-tool and tool-order violations. `enforce` is an alias |
+
+`required_tools` are checked when compliance is evaluated; they are not a pre-call blocking rule.
+
+---
+
+## Interfaces
+
+### Hermes commands
+
+| Command | Purpose |
+| :--- | :--- |
+| `/skill-proof status` | Compact state for the latest turn |
+| `/skill-proof explain` | Decision and ranked candidates |
+| `/skill-proof why <name>` | Why a skill won, lost, or was vetoed |
+| `/skill-proof stats` | Hit rate, misses, and overrides from the audit log |
+| `/skill-proof overlap` | Near-duplicate report |
 | `/skill-proof trace` | Full bounded JSON receipt |
 | `/skill-proof refresh` | Reread local skill content on the next turn |
 | `/skill-proof health` | Hook activity, catalog diagnostics, and timing |
 
-Skills declare invariants in `SKILL.md` frontmatter:
+### CLI
 
-```yaml
----
-name: my-skill
-description: ...
-invariants:
-  required_tools: [terminal]
-  forbidden_tools: [git_push]
-  ordered_tools: [terminal, write_file]
----
-```
+Run from the Skill Proof directory:
 
-Or centrally in `config.yaml`:
+| Command | Purpose |
+| :--- | :--- |
+| `python cli.py roots` | List detected skill roots |
+| `python cli.py scan` | Scan the catalog and report diagnostics |
+| `python cli.py select --query "..."` | Rank one request; use `--json` for machine-readable output |
+| `python cli.py eval "..."` | Inspect the tokens and ranking evidence behind a decision |
+| `python cli.py overlap` | Find possible near-duplicate skills |
+| `python cli.py bridge status` | Check optional bridge files in the target project |
+| `python cli.py bridge init --host codex --dry-run` | Preview bridge setup without writing files |
 
-```yaml
-plugins:
-  entries:
-    skill-proof:
-      settings:
-        invariants:
-          test-driven-development:
-            required_tools: [terminal]
-            ordered_tools: [terminal, write_file]
-          codebase-inspection:
-            forbidden_tools: [write_file, patch]
-```
+`select`, `eval`, `roots`, and `scan` accept repeatable `--root DIR` arguments and an optional `--profile NAME`.
 
-Skills may also declare `aliases:` (inline or block list) in frontmatter, and config `synonyms` can map skill names to extra terms — both accept any language:
+### MCP server
 
-```yaml
-aliases:
-  - caveman
-  - ตัวพูดสั้น
-  - 文档助手
-```
+Start `python mcp_server.py` as a stdio MCP process. It exposes three tools:
 
-Key settings: `mode` (default `nudge`), `skill_roots` (must already be readable through `skill_view`), `visible_receipt` (default `true`), `receipt_style` (`compact` or `verbose`, trace always carries full evidence), `receipt_history_limit` (default 20), `hub_provenance` (default `true`, read-only hub lock cross-check), `hub_lock_path` (override; empty auto-detects), `synonyms` (skill name to extra matching terms), `session_memory` (default `true`; skill history for dialogue references), `focus_turns` (default 5, range 0-50; `0` keeps a focus until it is released), `audit_log` (default `true`; append the per-turn decision line), `audit_path` (override; empty uses `plugin-data/skill-proof/audit.jsonl`), `audit_limit` (default 500, range 10-10000).
+| Tool | Purpose |
+| :--- | :--- |
+| `skill_roots` | List detected skill roots |
+| `skill_scan` | Scan roots and return catalog diagnostics |
+| `skill_select` | Rank a request and return the decision and candidates |
 
-When several roots index the same skill name, the first configured root wins: byte-identical copies collapse as `alias_skipped` (for example a junction facade plus its physical store), divergent copies are reported as `shadowed_by_root`, and same-root collisions stay ambiguous `duplicate_name`.
+The server uses newline-delimited JSON-RPC over stdin/stdout. It does not require an external service.
 
-## 🌐 Beyond Hermes
+### Optional host bridges
 
-The engine (`core.py`) has no Hermes imports, so the same deterministic selection and evidence work on any host that can run Python 3.11:
-
-```bash
-python cli.py roots                 # detected skill roots (Codex, Claude, Gemini/Antigravity, Cursor, ...)
-python cli.py scan                  # catalog summary, diagnostics, canonical root suggestions
-python cli.py select --query "ใช้สกิล caveman" --json
-python cli.py overlap            # near-duplicate skills worth pruning
-```
-
-For MCP-capable hosts (Claude Code, Codex, Antigravity, Cursor, ...), register the stdio server:
-
-```bash
-python mcp_server.py
-```
-
-It exposes `skill_roots`, `skill_scan`, and `skill_select` over newline-delimited JSON-RPC 2.0, stdlib only, fully offline. `skill_select` returns the decision, the selected skill, and the ranked candidates; roots default to auto-detection and can be passed per call.
+`bridge.py` can initialize, inspect, or remove project-level host bridge files. Supported host values are `claude-code`, `codex`, `gemini`, `cursor`, `cline`, `windsurf`, `copilot`, and `auto`. Preview changes with `--dry-run` before writing.
 
 ---
 
-## 📦 Installation and Setup
+## Configuration
 
-| Method | Source | Notes |
+The plugin accepts the following settings. Defaults are defined in `plugin.yaml`.
+
+| Setting | Default | Purpose |
 | :--- | :--- | :--- |
-| **Git clone** | [Repo](https://github.com/Stxyu-p/skill-proof) | `git clone https://github.com/Stxyu-p/skill-proof.git`, copy into place |
-| **Manual** | This directory | Copy to the active profile `plugins/skill-proof`, run `hermes plugins enable skill-proof`, start a new session |
+| `mode` | `nudge` | `observe`, `nudge`, or `enforce-tools` |
+| `skill_roots` | `[]` | Absolute skill roots. Empty uses the active profile's skills directory |
+| `min_score` | `0.28` | Minimum score required for a lexical selection |
+| `min_margin` | `0.05` | Minimum score lead over the next candidate |
+| `max_candidates` | `3` | Maximum candidates retained in a decision |
+| `max_skill_bytes` | `262144` | Maximum bytes read from one skill file |
+| `context_budget_bytes` | `1200` | Maximum injected context size |
+| `observed_tool_limit` | `16` | Maximum tools observed per turn for compliance |
+| `visible_receipt` | `true` | Show a receipt in the response |
+| `receipt_style` | `compact` | `compact` or `verbose`; trace always contains full evidence |
+| `receipt_history_limit` | `20` | Maximum in-session receipts retained for commands |
+| `invariants` | `{}` | Per-skill `required_tools`, `forbidden_tools`, and `ordered_tools` |
+| `hub_provenance` | `true` | Read-only cross-check against the local hub lock |
+| `hub_lock_path` | `""` | Override lock path; empty auto-detects the profile home |
+| `synonyms` | `{}` | Extra matching terms per skill, in any language |
+| `session_memory` | `true` | Retain selected-skill history for dialogue references |
+| `focus_turns` | `5` | Focus duration; `0` keeps focus until released |
+| `audit_log` | `true` | Append derived decision data per turn |
+| `audit_path` | `""` | Override audit path; empty uses `plugin-data/skill-proof/audit.jsonl` |
+| `audit_limit` | `500` | Retained audit lines, from 10 to 10000 |
 
-Quick start in four steps:
-
-1. Copy this directory to the active profile `plugins/skill-proof`.
-2. Run `hermes plugins enable skill-proof` and start a new session.
-3. Merge these settings into the existing configuration and keep other enabled plugins:
+Example Hermes configuration. Merge these entries into the existing config and keep any other enabled plugins:
 
 ```yaml
 plugins:
@@ -251,84 +181,147 @@ plugins:
       settings:
         mode: nudge
         skill_roots:
-          - C:/Users/BlankScreen/AppData/Local/hermes/skills
+          - /absolute/path/to/skills
         visible_receipt: true
-        receipt_history_limit: 20
+        audit_log: true
 ```
 
-4. Ask for a skill, then run `/skill-proof explain` to see the decision and the evidence.
+Skills can declare aliases and invariants in `SKILL.md` frontmatter:
 
-Use explicit roots for custom profiles. Start with `nudge` and inspect `explain` before enabling tool gating.
+```yaml
+---
+name: example-skill
+description: Example skill
+aliases: [short-name, another-term]
+invariants:
+  required_tools: [terminal]
+  forbidden_tools: [git_push]
+  ordered_tools: [terminal, write_file]
+---
+```
+
+Or define invariants centrally:
+
+```yaml
+plugins:
+  entries:
+    skill-proof:
+      settings:
+        invariants:
+          example-skill:
+            required_tools: [terminal]
+            ordered_tools: [terminal, write_file]
+```
+
+### Fleet manifest format
+
+Place `fleet.json` or `agents.json` in the current working directory to map agent names to intent terms. An explicit manifest passed to the API takes precedence.
+
+```json
+{
+  "reviewer": ["review", "audit", "rubric", "รีวิว"],
+  "builder": ["code", "debug", "tdd", "แก้บั๊ก"],
+  "researcher": ["evidence", "research", "verify", "ค้นคว้า"]
+}
+```
 
 ---
 
-## 📜 Release History & Changelog
+## Installation
 
-All version release notes and historical changes are documented in [CHANGELOG.md](CHANGELOG.md) per Keep a Changelog standards.
+| Use | Steps |
+| :--- | :--- |
+| Hermes plugin | Copy this directory to the active profile's `plugins/skill-proof`, run `hermes plugins enable skill-proof`, then start a new session |
+| CLI | Run `python cli.py` from this directory |
+| MCP | Register `python /absolute/path/to/skill-proof/mcp_server.py` as a stdio MCP server in the host |
+| Host bridge | Run `python cli.py bridge init --host <host> --dry-run`, review the changes, then rerun without `--dry-run` |
 
----
+Source: [GitHub repository](https://github.com/Stxyu-p/skill-proof) | [Releases](https://github.com/Stxyu-p/skill-proof/releases)
 
-## 🔬 Evidence and Limitations
+Quick start for the standalone CLI:
 
-- `loaded=yes` means a matching successful lifecycle event was observed, not proof of the exact bytes served or of task success.
-- `active=yes` means an operational tool was requested after that event, another gate can still block execution.
-- Compliance without invariants stays `unassessed`, satisfied invariants report `verified`.
-- The local source hash is a filesystem recheck, tool hashes observe results before later output transforms.
-- Lifecycle events carry no turn IDs, so correlation is session and task scoped.
-- Session history records the skills Skill Proof selected, cleared at session end; it is not a log of every skill a host loaded on its own.
-- Focus is a bounded score bonus, never a tie-breaker: a competing match, a veto, or an ambiguity always wins. Only when nothing else matches does `focus_fallback` (score 0) carry the focused skill, and the context says so.
-- Thai matching is lexical and phrase based, with no word segmentation or embeddings.
-- Routing fixtures are synthetic English and Thai examples with a gated `core` tier and a reported `stretch` tier. No production accuracy claim is supported.
-- Synthetic core results live in `VALIDATION.md` and exclude listing overhead.
-- Stored per turn: hashes, event flags, and bounded receipts. Stored never: prompts and skill bodies.
-- The audit file (`audit_log`, default on) stores one JSON line of derived numbers per turn and rotates to `audit_limit` lines; it contains `query_sha256`, never query text, and session ids are hashed. `audit_log: false` writes nothing.
-- `/skill-proof why` reads only the live in-process turn state; after a restart use `/skill-proof trace`, which holds no prompt either.
-- `hit_rate` counts a selected skill the host actually loaded, over `routed - fallback`; focus carries (score 0) are excluded on purpose. A user re-asking the same question is *not* measured, because detecting it would require storing prompt text.
+```bash
+git clone https://github.com/Stxyu-p/skill-proof.git
+cd skill-proof
+python -m unittest discover -s tests
+python cli.py select --query "design a landing page"
+```
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 | Path | Purpose |
 | :--- | :--- |
-| `core.py` | Ranking, negation guard, phrase matching, gating, receipts, invariants |
-| `__init__.py` | Hook wiring, commands, 7 hook registrations |
-| `plugin.yaml` | Manifest, version 0.10.1, config schema |
-| `bridge.py` | Optional removable host bridges for Claude Code, Codex, and Cursor |
-| `tests/` | Discovery, ranking, gating, evidence, bridge, and isolation suites, 15 files |
-| `routing_benchmark.py`, `routing_cases.json` | Labeled routing corpus with tiers, gate, and threshold sweep, 58 of 58 gated passing |
-| `benchmark.py` | Synthetic core performance probe |
-| `host_smoke.py` | Optional live listing and filter check against the host source |
-| `VALIDATION.md` | Synthetic benchmark notes and scope limits |
+| `core.py` | Skill parsing, ranking, negation, receipts, invariants, and fleet suggestions |
+| `__init__.py` | Hermes plugin adapter, hook registration, and commands |
+| `cli.py` | Command-line interface |
+| `mcp_server.py` | Stdio MCP server |
+| `bridge.py` | Optional host bridge setup and removal |
+| `plugin.yaml` | Plugin manifest and full configuration schema |
+| `routing_cases.json` | Labeled routing corpus with gated core and reported stretch tiers |
+| `routing_benchmark.py` | Routing gate and threshold sweep |
+| `benchmark.py` | Synthetic lifecycle performance probe |
+| `tests/` | 18 test modules covering core, plugin, bridge, portability, compliance, and multilingual behavior |
+| `CHANGELOG.md` | Release history |
+| `VALIDATION.md` | Benchmark notes and scope limits |
 
 ---
 
-## 🧪 Verification and Automated Testing
+## Verification
 
-Run from this directory:
+Run from the repository root:
 
-```powershell
+```bash
 python -m unittest discover -s tests -v
-python -m py_compile __init__.py core.py bridge.py
+python -m py_compile __init__.py core.py bridge.py cli.py mcp_server.py
 hermes plugins doctor . --ci
 python benchmark.py
 python routing_benchmark.py --gate
 python routing_benchmark.py --sweep
 ```
 
-**Verification Status:** **273 tests passing (2 skipped), 58 of 58 gated routing cases (0 false selections), doctor OK as standalone with 7 hooks.**
+Current local verification: 296 tests run, 2 skipped, no failures; routing gate 58/58; plugin doctor reports version 0.13.0 with 7 hooks registered and 0 tools.
+
+### Measured benchmark
+
+`benchmark.py` creates 300 synthetic skills and measures `begin_turn`, including the plugin's selection lifecycle. Latest local run:
+
+| Measurement | Result |
+| :--- | :--- |
+| Cold first turn | 1,210.8 ms |
+| Warm median | 209.6 ms |
+| Warm p95 | 269.8 ms |
+| Synthetic selections | 5 of 5 |
+
+These results depend on the machine and are not a user-facing latency guarantee. The routing gate tests selection behavior separately from catalog scan overhead.
 
 ---
 
-## 📄 License
+## Evidence and Limitations
 
-Distributed under the [MIT License](LICENSE).
-Copyright (c) 2026 P Choke & SORA.
+- `loaded=yes` means a matching successful lifecycle event was observed. It does not prove the exact bytes served, that the model followed the skill, or that the task succeeded.
+- `active=yes` means an operational tool was requested after that event; another gate can still block execution.
+- Compliance is `unassessed` when no invariants are declared, `verified` when declared invariants are satisfied, and `failed` with named reasons otherwise. Task outcome verification is always `unverified`.
+- Lifecycle events have no turn IDs, so evidence correlation is session and task scoped.
+- Session history records the skills Skill Proof selected. It is cleared at session end and is not a log of every skill the host loaded independently.
+- Focus is a bounded score bonus, never a tie-breaker. A stronger match, veto, or ambiguity wins over focus.
+- Multilingual matching is lexical and phrase based. There is no word segmentation or embedding model, including for Thai.
+- Routing fixtures are synthetic. A passing core gate is not a production accuracy claim.
+- Overlap similarity measures vocabulary overlap. It can flag shared wording for different tasks and miss paraphrased duplicates.
+- `hit_rate` counts a selected skill the host actually loaded over `routed - fallback`. Focus carries are excluded. Repeated user requests are not measured because detecting them would require storing prompt text.
+- Audit entries contain `query_sha256`, never query text. Session identifiers are hashed. `audit_log: false` disables audit writes.
+- Stored per turn: hashes, event flags, bounded receipts, and derived numbers. Stored never: prompts and skill bodies.
+- `/skill-proof why` uses live in-process state. After a restart, use `/skill-proof trace`, which also contains no prompt.
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 <div align="center">
 
-**Skill Proof** <sub>v0.10.1</sub> · Built for deterministic routing
-
-*Local-first, Auditable, Gated, Governed*
+**Skill Proof** <sub>v0.13.0</sub> | Local-first | Auditable | Offline
 
 </div>
