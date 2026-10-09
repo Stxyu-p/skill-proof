@@ -392,6 +392,21 @@ class SelectionTests(unittest.TestCase):
         finally:
             tmp.cleanup()
 
+    def test_negation_vetoes_skill_via_alias(self):
+        catalog, tmp = self.catalog([
+            ("test-driven-development", "TDD tests before code"),
+            ("python-debugpy", "Debug Python code and bugs"),
+        ])
+        try:
+            # Query explicitly vetoes "TDD" ("ไม่เอา TDD") which is an alias for test-driven-development
+            res = select_skill(catalog, "ช่วยดูโค้ด Python ให้หน่อย ไม่เอา TDD ขอแค่หาจุดบั๊ก")
+            # test-driven-development MUST NOT be selected
+            if res.selected:
+                self.assertNotEqual(res.selected.skill.name, "test-driven-development")
+                self.assertEqual(res.selected.skill.name, "python-debugpy")
+        finally:
+            tmp.cleanup()
+
 
 class EngineTests(unittest.TestCase):
     def setUp(self):

@@ -439,14 +439,19 @@ def load_disabled_skills(hermes_home: Optional[os.PathLike[str] | str] = None) -
 # ponytail: default synonym bridges for high-frequency natural-language routing
 DEFAULT_SYNONYMS: dict[str, tuple[str, ...]] = {
     "ui-ux-pro-max": ("dashboard", "หน้าเว็บ", "ออกแบบเว็บ", "frontend", "ui", "ux", "interface", "web design"),
-    "github-pr-workflow": ("pull request", "pr", "review pr", "pull", "merge"),
-    "hermes-context-budget": ("compress", "context", "token", "budget", "บีบอัด", "ย่อบทสนทนา"),
-    "slides": ("presentation", "pitch", "สไลด์", "deck"),
+    "github-pr-workflow": ("pull request", "pr", "review pr", "pull", "merge", "เปิด pr"),
+    "github-code-review": ("รีวิว pull request", "ตรวจ pr", "github review", "code review github", "ตรวจ pull request"),
+    "hermes-context-budget": ("compress", "context", "token", "budget", "บีบอัด", "ย่อบทสนทนา", "context เต็ม"),
+    "slides": ("presentation", "pitch", "สไลด์", "deck", "pitch deck"),
     "test-driven-development": ("tdd", "เขียนเทสต์", "red-green-refactor", "unit test"),
-    "python-debugpy": ("แก้บั๊ก python", "debug python", "pdb", "debugpy"),
+    "python-debugpy": ("แก้บั๊ก python", "debug python", "pdb", "debugpy", "โค้ดไพธอน", "traceback", "ส่องที"),
+    "systematic-debugging": ("แก้บั๊ก", "debugging", "root cause", "โค้ดพัง", "หาสาเหตุบั๊ก"),
     "impeccable": ("ใส่สี", "spacing", "polish ui", "design polish"),
     "banner-design": ("แบนเนอร์", "promotion banner", "social media banner"),
     "imagegen": ("สร้าง logo", "โลโก้", "generate logo"),
+    "edge-case-sadist": ("เคสพิสดาร", "boundary โหดๆ", "หาจุดพัง", "stress test", "break the api"),
+    "adversarial-boundary-testing": ("boundary testing", "test boundary", "ทดสอบ boundary"),
+    "superpowers-dispatching-parallel-agents": ("กระจายงาน", "subagent ขนาน", "dispatch parallel", "กระจาย subagent", "ขนานกัน"),
 }
 
 
@@ -1096,8 +1101,8 @@ def _query_might_contain_negation(query: str) -> bool:
     return any(stem in folded for stem in _NEGATION_SUBSTRINGS)
 
 
-def _skill_is_negated(name: str, query: str) -> bool:
-    """True when the query vetoes *name* ("don't use X", "ไม่เอา X").
+def _skill_is_negated(name: str, query: str, aliases: Sequence[str] = ()) -> bool:
+    """True when the query vetoes *name* or any of its *aliases* ("don't use X", "ไม่เอา X").
 
     Three shapes are accepted: a loose window for Thai vetoes, a structured
     filler-vocabulary clause for prefix vetoes, and an SOV post-negation pattern
@@ -1105,15 +1110,16 @@ def _skill_is_negated(name: str, query: str) -> bool:
     """
     if not _query_might_contain_negation(query):
         return False
-    normalized_name = normalize_identifier(name)
-    if not normalized_name:
-        return False
     normalized_query = normalize_identifier(query)
-    # ponytail: fast-path substring check; tail cannot match if skill name is absent
-    if normalized_name not in normalized_query:
-        return False
-    loose, structured, post_negation = _negation_patterns(normalized_name)
-    return bool(loose.search(normalized_query)) or bool(structured.search(normalized_query)) or bool(post_negation.search(normalized_query))
+    candidates = (name,) + tuple(aliases)
+    for cand in candidates:
+        norm = normalize_identifier(cand)
+        if not norm or norm not in normalized_query:
+            continue
+        loose, structured, post_negation = _negation_patterns(norm)
+        if bool(loose.search(normalized_query)) or bool(structured.search(normalized_query)) or bool(post_negation.search(normalized_query)):
+            return True
+    return False
 
 
 # Scripts that do not separate words with spaces: raw substring matching is the
@@ -1590,8 +1596,6 @@ def _rank(
     for skill in catalog.skills:
         if skill.normalized_name in duplicate_names or skill.normalized_name in excluded:
             continue
-        if has_negation and _skill_is_negated(skill.name, query):
-            continue
         name_tokens, tag_tokens, description_tokens, cached_alias_tokens = _skill_tokens_cache(
             skill.name, skill.tags, skill.description, skill.aliases
         )
@@ -1601,6 +1605,8 @@ def _rank(
         else:
             alias_terms = tuple(dict.fromkeys(tuple(skill.aliases) + tuple(synonyms.get(skill.normalized_name, ()))))
             alias_tokens = frozenset(_tokens(" ".join(alias_terms)))
+        if has_negation and _skill_is_negated(skill.name, query, alias_terms):
+            continue
         reasons: list[str] = []
         score = 0.0
 
@@ -1744,7 +1750,10 @@ def select_skill(
     )
     table = _rank_table(ranked)
     if not ranked or ranked[0].score < float(min_score):
-        if _query_might_contain_negation(query) and any(_skill_is_negated(skill.name, query) for skill in catalog.skills):
+        if _query_might_contain_negation(query) and any(
+            _skill_is_negated(skill.name, query, tuple(skill.aliases) + tuple(effective_synonyms.get(skill.normalized_name, ())))
+            for skill in catalog.skills
+        ):
             return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
         return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
     if len(ranked) > 1 and ranked[0].score - ranked[1].score < float(min_margin):
