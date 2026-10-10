@@ -4,6 +4,25 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **MCP `skill_search` and `skill_read`**: hybrid RRF top-k search
+  (Anthropic Tool Search style) and full SKILL.md reading for any
+  MCP-capable agent; `bridge.py mcp` prints ready-to-paste JSON/TOML
+  registration for Claude Code, Codex, Antigravity, and Cursor.
+- **SQLite vector index + RRF fusion**: `VectorIndex` (`core.py`) persists
+  embeddings in `plugin-data/skill-proof/embeddings.db` (stdlib only),
+  syncs only changed skills by `source_sha256`, caches query vectors, and
+  fuses with lexical ranking via RRF (k=60) with negation veto and graceful
+  offline fallback.
+
+### Performance
+- **Adapter `skills_list` cache**: 30 s TTL with invalidation on skill
+  lifecycle events eliminates the ~364 ms dispatch on warm turns.
+- **Ambiguity nudge**: emits the top-3 candidate names instead of a static
+  message (measured top-3 recall 97.6% on the 102-case gold set).
+
 ## [0.14.3] - 2026-10-09
 
 ### Optimized

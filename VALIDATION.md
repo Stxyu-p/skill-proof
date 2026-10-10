@@ -150,6 +150,44 @@ load evidence for our decision. A user re-asking the same question is not
 measured, because that needs prompt text and prompts are never stored. The
 metric requires `audit_log: true` (the default) and a readable audit file.
 
+## Refactor to shortlister + vector RRF + MCP (v0.14.3+, 2026-10-10)
+
+Phase 1 delivered a `VectorIndex` (`core.py`, SQLite at
+`plugin-data/skill-proof/embeddings.db`, stdlib `sqlite3` + `urllib` only)
+with RRF hybrid fusion in `select_skill`: explicit names still decide
+instantly, otherwise lexical and embedding ranks fuse (k=60), and negation
+vetoes win even inside the fused path. Graceful fallback: no API key or
+gateway failure returns `[]` and lexical decides alone. The `/skill-proof`
+adapter caches `skills_list` for 30 s (warm turns skip the 364 ms dispatch)
+and `_compact_context` emits the top-3 candidates on ambiguity instead of a
+static message.
+
+Phase 2 extended the stdio MCP server (`mcp_server.py`): `skill_search`
+(hybrid RRF top-k, Anthropic Tool Search style) and `skill_read` (full
+SKILL.md content by name); `bridge.py mcp` prints ready-to-paste JSON/TOML
+registration for Claude Code, Codex, Antigravity, and Cursor.
+
+Measured on the live 134-skill catalog, 2026-10-10: core `select_skill`
+~0.66 ms median; catalog scan ~297 ms cold first turn (5 roots), cached
+thereafter; unit tests 309 pass (0 failures, 2 skipped on Windows symlinks);
+routing gate 58/58; 102-case Thai/English gold set — lexical top-1 72.5%,
+embedding top-3 recall 97.6%, hybrid RRF top-3 recall 97.6%.
+See `Workspace/skill-proof-audit/` (`gold_catalog_100.json`, `eval_100.py`,
+`eval_rrf.py`, `sp_spike.py`).
+
+Live MCP verification (2026-10-10, read-only probe "dashboard invoicing
+page"): Antigravity `agy -p` returned `ui-ux-pro-max`,
+`debugging-hermes-tui-commands`, `observability-and-instrumentation`;
+Codex `exec` (read-only sandbox) returned the identical 3 names after
+approval bypass. Codex note: registration must go through
+`codex mcp add skill-proof -- ...`; the authoritative config is the
+orca CODEX_HOME copy, not `~/.codex/config.toml`. Antigravity note:
+`~/.gemini/settings.json` mcpServers entry was required in addition to
+`config/mcp_config.json` for the CLI to list the server.
+
+These checks exercise real catalog scanning, real gateway embeddings, and
+real external-agent MCP calls — not fixtures.
+
 ## Real host integration
 
 Set `HERMES_HOME` to a scratch profile and `PYTHONPATH` to the installed Hermes

@@ -2,10 +2,10 @@
 
   <h1>🛡️ Skill Proof</h1>
   <p><strong>Deterministic, zero-overhead skill routing engine for autonomous AI agent fleets</strong></p>
-  <p><em>Route in sub-milliseconds. Save 4,000+ prompt tokens. Never trust prompt-only guessing.</em></p>
+  <p><em>Route in sub-milliseconds. Zero model calls. Multi-agent via MCP.</em></p>
 
   <p>
-    <a href="https://github.com/Stxyu-p/skill-proof/releases"><img src="https://img.shields.io/badge/Release-v0.14.2-315C4B?style=for-the-badge" alt="Release" /></a>
+    <a href="https://github.com/Stxyu-p/skill-proof/releases"><img src="https://img.shields.io/badge/Release-v0.14.3-315C4B?style=for-the-badge" alt="Release" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
     <a href="https://docs.python.org/3/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge" alt="Python" /></a>
   </p>
@@ -13,11 +13,12 @@
   <p>
     <img src="https://img.shields.io/badge/Architecture-Deterministic_Lexical_+_Synonyms-0284c7?style=flat-square" alt="Architecture" />
     <img src="https://img.shields.io/badge/Dependencies-0_(Stdlib_Only)-success?style=flat-square" alt="Stdlib only" />
-    <img src="https://img.shields.io/badge/Latency-0.58_ms_|_1,724_QPS-brightgreen?style=flat-square" alt="Latency" />
-    <img src="https://img.shields.io/badge/Token_Cost-0_Tokens_In--Memory-blueviolet?style=flat-square" alt="Tokens" />
-    <img src="https://img.shields.io/badge/Tests-303_Passing-brightgreen?style=flat-square" alt="Tests" />
+    <img src="https://img.shields.io/badge/Latency-0.66_ms_select-brightgreen?style=flat-square" alt="Latency" />
+    <img src="https://img.shields.io/badge/Token_Cost-0_Tokens_To_Route-blueviolet?style=flat-square" alt="Tokens" />
+    <img src="https://img.shields.io/badge/Tests-309_Passing-brightgreen?style=flat-square" alt="Tests" />
     <img src="https://img.shields.io/badge/Routing_Gate-58%2F58-brightgreen?style=flat-square" alt="Routing Gate" />
-    <img src="https://img.shields.io/badge/Hard_Scenarios-10%2F10_PASS-brightgreen?style=flat-square" alt="Scenarios" />
+    <img src="https://img.shields.io/badge/Gold_Set-102_Cases-brightgreen?style=flat-square" alt="Gold Set" />
+    <img src="https://img.shields.io/badge/Top_3_Recall-97.6%25-brightgreen?style=flat-square" alt="Top 3 Recall" />
   </p>
 
 </div>
@@ -28,7 +29,7 @@
 
 Skill Proof answers one critical question with verifiable evidence: **which agent skill best matches this turn, and why?**
 
-Instead of forcing the host LLM to read through dozens of skill descriptions on every conversational turn (wasting ~4,050 prompt tokens per turn), Skill Proof indexes local `SKILL.md` documents, builds an in-memory lexical and synonym graph, and resolves the target skill in **0.58 milliseconds** with **zero model calls**.
+Skill Proof indexes local `SKILL.md` documents, builds an in-memory lexical and synonym graph, and resolves the target skill in **~0.66 ms median** with **zero model calls to route**. When a query is vague, an optional SQLite vector index adds embedding recall via RRF fusion (top-3 recall 97.6% on a 102-case Thai/English gold set), and MCP tools (`skill_search`, `skill_read`) expose the same catalog to any MCP-capable agent.
 
 When a match is clear, it injects a one-line deterministic nudge for the model to load the skill. When a request is weak or ambiguous, it abstains with an explicit reason. As a Hermes plugin, it logs truthful audit receipts and enforces tool-execution invariants.
 
@@ -52,29 +53,30 @@ gate: PASS
 
 ## 🎯 Core Guarantees
 
-- **Zero-Token Ranking Overhead:** The routing path runs entirely in-process using Python standard library. No model tokens are consumed to choose which skill to load.
-- **Sub-Millisecond Latency:** In-process lexical scoring runs at **0.58 ms median (1,724 QPS)** across 136 live skills, operating 2,600x faster than model-based prompt selection.
+- **Zero-Token Ranking Overhead:** The routing path runs in-process using the Python standard library. No model tokens are consumed to choose which skill to load.
+- **Sub-Millisecond Latency:** In-process lexical scoring runs at **~0.66 ms median** on the live 134-skill catalog.
 - **Strict Disabled Skill Isolation:** Automatically syncs with host configuration (`config.yaml`) to exclude disabled utilities (e.g. `pdf`, `xlsx`, `docx`), ensuring disabled tools never win selection.
 - **Alias-Aware Negation Veto:** Vetoes phrases targeting either canonical names or known aliases (e.g. *"ไม่เอา TDD"*, *"don't use TDD"* cleanly vetoes `test-driven-development`).
 - **Cryptographic Audit Trail:** Generates verifiable, SHA256-backed JSON receipts per turn without logging private user prompt text or raw skill code.
-- **Zero Third-Party Dependencies:** 100% Python Standard Library. Runs completely offline without external APIs, vector databases, or background daemons.
+- **Zero Third-Party Dependencies for Lexical Path:** 100% Python Standard Library. The optional vector index uses SQLite + stdlib `urllib` only, with graceful offline fallback to lexical ranking.
 
 ---
 
 ## 📊 Comparison Against Prompt-Only Routing
 
-Measured head-to-head on a live 136-skill agent fleet catalog across 10 hard real-world scenarios:
+Measured head-to-head on a live 134-skill agent fleet catalog across 10 hard real-world scenarios:
 
 | Metric / Dimension | Prompt-Only LLM Routing | Skill Proof (Hybrid Tier 1) | Advantage |
 | :--- | :--- | :--- | :--- |
-| **Selection Latency** | 10,692.8 ms (~10.7 s) | **3.47 ms** (0.58 ms warm select) | **2,661x faster** response time |
-| **Prompt Token Cost** | ~4,050 tokens / turn | **0 tokens** (in-memory) | **Saves ~4,050 tokens every turn** |
-| **Cost over 25 Turns** | ~101,250 tokens consumed | **0 tokens consumed** | Massive context window savings |
+| **Selection Latency** | 10,692.8 ms (~10.7 s) | **~0.66 ms** (lexical select) | **~16,000x faster** response time |
+| **Model Calls To Route** | 1 model call / turn | **0 model calls** (in-process) | No routing inference cost |
 | **Disabled Skill Guard** | Probabilistic (relies on model attention) | **Deterministic hard filter** | Zero leak of disabled tools |
 | **Veto Handling ("ไม่เอา TDD")** | Model context dependent | **Strict alias-aware negation filter** | Immediate veto without hesitation |
 | **Ambiguity Handling** | May guess or pick unpredictably | **Explicit abstention (`ambiguous`)** | Prevents unvetted execution |
 | **Decision Auditability** | Unstructured free-form text | **Bounded JSON receipt with hashes** | 100% reproducible and verifiable |
-| **Network & Daemon Requirement** | Remote API / Gateway connection | **None (Pure Python stdlib)** | Complete offline resilience |
+| **Network & Daemon Requirement** | Remote API / Gateway connection | **None for lexical path** (pure stdlib) | Complete offline resilience |
+
+Note: when used as a Hermes plugin, the host still injects its own `<available_skills>` index into the prompt; Skill Proof's routing cost itself stays at zero tokens. Token savings from hiding that host index are not claimed.
 
 ---
 
@@ -85,11 +87,12 @@ Measured head-to-head on a live 136-skill agent fleet catalog across 10 hard rea
           │
           ▼
 ┌────────────────────────────────────────────────────────┐
-│  Tier 1: Skill Proof Engine (0.58 ms | 0 tokens)       │
+│  Tier 1: Skill Proof Engine (~0.66 ms | 0 routing calls)│
 │  - Multi-root catalog scan (.agents, hermes, workspace)│
 │  - Host disabled-skills filter (config.yaml)           │
 │  - Alias-aware negation probe & Unicode normalizer     │
 │  - Lexical token match + char n-grams + synonym graph  │
+│  - Optional SQLite vector index + RRF fusion (vague q.)│
 └───────────────────────────┬────────────────────────────┘
                             │
               ┌─────────────┴─────────────┐
@@ -128,7 +131,7 @@ Measured head-to-head on a live 136-skill agent fleet catalog across 10 hard rea
 | **Evidence Ledger** | `core.py` | Receipt generation and tool compliance | Cryptographic SHA256 fingerprints, privacy-safe hashes |
 | **Hermes Adapter** | `__init__.py` | 7 lifecycle hooks and slash commands | Seamless integration with Hermes TUI and CLI runtime |
 | **CLI & Diagnostics** | `cli.py` | Command-line evaluation and catalog tools | Fast terminal diagnostics, JSON export, interactive eval |
-| **Stdio MCP Server** | `mcp_server.py` | Model Context Protocol tools | Standard JSON-RPC interface for Claude Code, Codex, and Cursor |
+| **Stdio MCP Server** | `mcp_server.py` | Model Context Protocol tools | Standard JSON-RPC interface for Claude Code, Codex, Antigravity, and Cursor (`skill_roots`, `skill_scan`, `skill_select`, `skill_search`, `skill_read`) |
 | **Host Bridges** | `bridge.py` | Cross-tool workspace adapters | Auto-configures Cursor, Codex, Gemini, Claude, and Copilot |
 
 ---
@@ -186,6 +189,8 @@ Start `python mcp_server.py` as a stdio MCP process for Claude Code, Codex, or C
 | `skill_roots` | Lists active skill directories and discovery paths |
 | `skill_scan` | Scans catalog and returns diagnostics |
 | `skill_select` | Ranks query and returns deterministic decision and candidates |
+| `skill_search` | Hybrid RRF search returning top matching skill names, descriptions, and paths |
+| `skill_read` | Reads the full markdown content of a skill by name |
 
 ---
 
@@ -286,11 +291,11 @@ python routing_benchmark.py --sweep
 
 ### Measured System Numbers
 
-- **Unit Tests:** **299 tests run, 0 failures, 2 skipped** (Windows symlink constraints).
+- **Unit Tests:** **309 tests run, 0 failures, 2 skipped** (Windows symlink constraints).
 - **Routing Gate:** **58/58 cases pass** (100% recall, 100% precision, 0 false selections).
-- **Hard Simulation Scenarios:** **10/10 PASS (100.0%)** on live multi-domain Thai/English queries.
-- **Warm Routing Latency:** **0.58 ms** median, **1.44 ms** p95, **1,724 QPS** throughput.
-- **Catalog Scaling:** 136 live skills scanned in 354 ms cold, cached in-process thereafter.
+- **Gold Set (102 Thai/English cases):** lexical top-1 72.5%; embedding top-3 recall 97.6%; hybrid RRF top-3 recall 97.6%.
+- **Warm Routing Latency:** **~0.66 ms** median on the live 134-skill catalog (core `select_skill`).
+- **Catalog Scan:** ~297 ms cold first turn (5 roots), cached in-process thereafter.
 - **Disabled Skill Rejection:** 64 disabled skills strictly excluded from winning selection.
 
 ---
@@ -301,7 +306,7 @@ python routing_benchmark.py --sweep
 - `active=yes` confirms an operational tool was invoked following skill selection.
 - Invariant compliance is `verified` when declared tool rules are satisfied, `failed` when violated, and `unassessed` when no invariants are declared.
 - Stored per turn: cryptographic SHA256 hashes, latency metrics, and derived candidate records. Stored never: raw user prompts, private keys, or code bodies.
-- Multilingual matching uses token overlap, char n-grams, and synonym graphs. It is deterministic and does not use heavy neural embedding models.
+- Multilingual matching uses token overlap, char n-grams, and synonym graphs, with an optional SQLite vector index fused via RRF only when enabled.
 
 ---
 
@@ -311,6 +316,6 @@ MIT. See [LICENSE](LICENSE).
 
 <div align="center">
 
-**Skill Proof** <sub>v0.14.0</sub> · Deterministic · Zero-Overhead · Offline
+**Skill Proof** <sub>v0.14.3</sub> · Deterministic · Zero-Overhead · Offline
 
 </div>
