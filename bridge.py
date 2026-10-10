@@ -401,6 +401,8 @@ def main(argv=None) -> int:
     sub_install.add_argument("--dry-run", action="store_true", help="print, write nothing")
     sub_install.add_argument("--force", action="store_true", help="overwrite an existing file")
     subparsers.add_parser("ai-setup", help="print deterministic instructions for AI coding agents")
+    sub_mcp = subparsers.add_parser("mcp", help="print MCP registration config for external agents")
+    sub_mcp.add_argument("--format", choices=("json", "toml", "all"), default="all")
     hook_parser = subparsers.add_parser("hook", help="runtime entrypoint (stdin JSON -> stdout JSON)")
     hook_parser.add_argument("--event", default="pre-tool-use")
     args = parser.parse_args(argv)
@@ -423,6 +425,29 @@ def main(argv=None) -> int:
         print(f"1. Check skill roots: python {cli_path} roots")
         print(f"2. Select skill for task: python {cli_path} select --query \"<user request>\" --json")
         print(f"3. Auto-install workspace bridge: python {_here() / 'bridge.py'} install")
+        return 0
+
+    if args.command == "mcp":
+        mcp_path = (_here() / "mcp_server.py").resolve().as_posix()
+        python_exe = sys.executable.replace("\\", "/")
+        json_cfg = {
+            "mcpServers": {
+                "skill-proof": {
+                    "command": python_exe,
+                    "args": [mcp_path],
+                }
+            }
+        }
+        toml_cfg = f'[mcp_servers.skill-proof]\ncommand = "{python_exe}"\nargs = ["{mcp_path}"]'
+        if args.format == "json":
+            print(json.dumps(json_cfg, indent=2))
+        elif args.format == "toml":
+            print(toml_cfg)
+        else:
+            print("=== Claude Code / Cursor / Antigravity / Windsurf (JSON) ===")
+            print(json.dumps(json_cfg, indent=2))
+            print("\n=== OpenAI Codex (~/.codex/config.toml) ===")
+            print(toml_cfg)
         return 0
 
     target = pathlib.Path(getattr(args, "target", ".")).expanduser()

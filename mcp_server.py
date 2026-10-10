@@ -70,6 +70,36 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "skill_search",
+        "description": (
+            "Search skills using hybrid ranking (Anthropic Tool Search style). "
+            "Returns top matching skill names, descriptions, and file paths."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "description": "Max skills to return, default 5"},
+                "roots": _ROOTS_SCHEMA,
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "skill_read",
+        "description": "Read the full markdown content of a SKILL.md by skill name.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Canonical name of the skill"},
+                "roots": _ROOTS_SCHEMA,
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -112,6 +142,8 @@ def _tool_select(parameters):
     explicit = core.extract_explicit_skill_names(
         query, known_names=(skill.name for skill in catalog.skills)
     )
+    vdb_path = core.default_hermes_home() / "plugin-data" / "skill-proof" / "embeddings.db"
+    vector_index = core.VectorIndex(db_path=vdb_path) if vdb_path.exists() else None
     selection = core.select_skill(
         catalog,
         query,
@@ -119,6 +151,7 @@ def _tool_select(parameters):
         min_score=float(parameters.get("min_score", 0.28)),
         min_margin=float(parameters.get("min_margin", 0.05)),
         limit=int(parameters.get("limit", 3)),
+        vector_index=vector_index,
     )
     selected = selection.selected
     return {
@@ -150,7 +183,82 @@ def _tool_select(parameters):
     }
 
 
-_TOOLS = {"skill_roots": _tool_roots, "skill_scan": _tool_scan, "skill_select": _tool_select}
+def _tool_search(parameters):
+    query = parameters.get("query")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+    limit = int(parameters.get("limit", 5))
+    roots = _roots(parameters)
+    catalog = core.scan_catalog(roots)
+    vdb_path = core.default_hermes_home() / "plugin-data" / "skill-proof" / "embeddings.db"
+    vector_index = core.VectorIndex(db_path=vdb_path) if vdb_path.exists() else None
+    explicit = core.extract_explicit_skill_names(
+        query, known_names=(skill.name for skill in catalog.skills)
+    )
+    selection = core.select_skill(
+        catalog,
+        query,
+        explicit_names=explicit,
+        limit=max(limit, 5),
+        vector_index=vector_index,
+    )
+    skills_found = []
+    seen = set()
+    if selection.selected and selection.selected.skill.name not in seen:
+        s = selection.selected.skill
+        seen.add(s.name)
+        skills_found.append({
+            "name": s.name,
+            "description": s.description,
+            "source_path": str(s.source_path),
+            "score": selection.selected.score,
+            "reasons": list(selection.selected.reasons),
+        })
+    for cand in selection.candidates:
+        s = cand.skill
+        if s.name not in seen:
+            seen.add(s.name)
+            skills_found.append({
+                "name": s.name,
+                "description": s.description,
+                "source_path": str(s.source_path),
+                "score": cand.score,
+                "reasons": list(cand.reasons),
+            })
+        if len(skills_found) >= limit:
+            break
+    return {
+        "query": query,
+        "status": selection.status,
+        "results": skills_found,
+    }
+
+
+def _tool_read(parameters):
+    name = parameters.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name must be a non-empty string")
+    roots = _roots(parameters)
+    catalog = core.scan_catalog(roots)
+    matches = catalog.by_name(name.strip())
+    if not matches:
+        raise ValueError(f"Skill '{name}' not found in catalog")
+    skill = matches[0]
+    content = skill.source_path.read_text(encoding="utf-8")
+    return {
+        "name": skill.name,
+        "source_path": str(skill.source_path),
+        "content": content,
+    }
+
+
+_TOOLS = {
+    "skill_roots": _tool_roots,
+    "skill_scan": _tool_scan,
+    "skill_select": _tool_select,
+    "skill_search": _tool_search,
+    "skill_read": _tool_read,
+}
 
 
 def handle(request):

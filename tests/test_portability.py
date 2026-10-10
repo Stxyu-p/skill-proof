@@ -138,12 +138,43 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(responses[0]["result"]["protocolVersion"], "2024-11-05")
         self.assertEqual(responses[0]["result"]["serverInfo"]["name"], "skill-proof")
         tool_names = [tool["name"] for tool in responses[1]["result"]["tools"]]
-        self.assertEqual(tool_names, ["skill_roots", "skill_scan", "skill_select"])
+        self.assertEqual(tool_names, ["skill_roots", "skill_scan", "skill_select", "skill_search", "skill_read"])
         call = responses[2]["result"]
         self.assertFalse(call["isError"])
         payload = json.loads(call["content"][0]["text"])
         self.assertEqual(payload["selected"]["name"], "demo-skill")
         self.assertEqual(payload["decision"]["status"], "selected")
+
+        # Test skill_search and skill_read
+        more_responses = self.converse(
+            [
+                {
+                    "jsonrpc": "2.0",
+                    "id": 10,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "skill_search",
+                        "arguments": {"query": "demo workflow", "roots": [str(self.root)]},
+                    },
+                },
+                {
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "skill_read",
+                        "arguments": {"name": "demo-skill", "roots": [str(self.root)]},
+                    },
+                },
+            ]
+        )
+        self.assertEqual(len(more_responses), 2)
+        search_res = json.loads(more_responses[0]["result"]["content"][0]["text"])
+        self.assertTrue(len(search_res["results"]) > 0)
+        self.assertEqual(search_res["results"][0]["name"], "demo-skill")
+        read_res = json.loads(more_responses[1]["result"]["content"][0]["text"])
+        self.assertEqual(read_res["name"], "demo-skill")
+        self.assertIn("Demo workflow", read_res["content"])
 
     def test_unknown_method_and_tool_errors_do_not_crash(self):
         responses = self.converse(
