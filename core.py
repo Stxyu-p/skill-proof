@@ -9,14 +9,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
+import sqlite3
 import stat
+import struct
 import threading
 import time
 import unicodedata
+import urllib.request
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from math import log
@@ -1460,6 +1465,187 @@ def _release_remainder(query: str, reference: DialogueReference, released: str) 
     return rest.lstrip(" \t,.;:!?—–-")
 
 
+class VectorIndex:
+    """SQLite-backed vector cache and ranker for Skill Proof.
+
+    # ponytail: stdlib sqlite3 and urllib with local in-memory dict cache;
+    # upgrades to sqlite-vec only if catalog grows beyond 1,000 skills.
+    """
+
+    def __init__(
+        self,
+        db_path: Optional[os.PathLike[str] | str] = None,
+        model: str = "openrouter/nvidia/llama-nemotron-embed-vl-1b-v2:free",
+        gateway_url: str = "http://localhost:20128/v1/embeddings",
+        api_key: Optional[str] = None,
+        timeout: float = 3.0,
+    ) -> None:
+        self.db_path = pathlib.Path(db_path).resolve() if db_path else None
+        self.model = str(model)
+        self.gateway_url = str(gateway_url)
+        self.api_key = api_key if api_key is not None else os.environ.get("HERMES_CUSTOM_LOCALHOST_20128_API_KEY", "")
+        self.timeout = float(timeout)
+        self._memory_vectors: dict[str, tuple[float, ...]] = {}
+        if self.db_path:
+            self._init_db()
+            self._load_memory()
+
+    @contextmanager
+    def _connect(self):
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def _init_db(self) -> None:
+        if not self.db_path:
+            return
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS skill_embeddings (
+                    skill_name TEXT PRIMARY KEY,
+                    source_sha256 TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    dim INTEGER NOT NULL,
+                    vector BLOB NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS query_embeddings (
+                    query_sha256 TEXT PRIMARY KEY,
+                    model TEXT NOT NULL,
+                    dim INTEGER NOT NULL,
+                    vector BLOB NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            conn.commit()
+
+    def _load_memory(self) -> None:
+        if not self.db_path or not self.db_path.exists():
+            return
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT skill_name, dim, vector FROM skill_embeddings WHERE model = ?",
+                (self.model,),
+            ).fetchall()
+            for name, dim, blob in rows:
+                self._memory_vectors[name] = struct.unpack(f"{dim}f", blob)
+
+    def _call_embeddings(self, texts: list[str]) -> list[tuple[float, ...]]:
+        if not self.api_key:
+            return []
+        out: list[tuple[float, ...]] = []
+        for i in range(0, len(texts), 32):
+            batch = texts[i : i + 32]
+            req = urllib.request.Request(
+                self.gateway_url,
+                data=json.dumps({"model": self.model, "input": batch}).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    data = json.load(resp)
+                items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+                out.extend([tuple(float(v) for v in item["embedding"]) for item in items])
+            except Exception:
+                return []
+        return out
+
+    def sync_catalog(self, catalog_skills: Sequence[SkillRecord]) -> int:
+        if not self.db_path or not self.api_key:
+            return 0
+        missing: list[SkillRecord] = []
+        with self._connect() as conn:
+            cur = conn.cursor()
+            for s in catalog_skills:
+                row = cur.execute(
+                    "SELECT source_sha256 FROM skill_embeddings WHERE skill_name = ? AND model = ?",
+                    (s.name, self.model),
+                ).fetchone()
+                if not row or row[0] != s.source_sha256:
+                    missing.append(s)
+
+        if not missing:
+            return 0
+
+        texts = [f"{s.name}: {s.description}" for s in missing]
+        vectors = self._call_embeddings(texts)
+        if not vectors or len(vectors) != len(missing):
+            return 0
+
+        now = time.time()
+        with self._connect() as conn:
+            for s, vec in zip(missing, vectors):
+                dim = len(vec)
+                blob = struct.pack(f"{dim}f", *vec)
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO skill_embeddings (skill_name, source_sha256, model, dim, vector, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (s.name, s.source_sha256, self.model, dim, blob, now),
+                )
+                self._memory_vectors[s.name] = vec
+            conn.commit()
+        return len(missing)
+
+    def get_query_vector(self, query: str) -> Optional[tuple[float, ...]]:
+        q_sha = hashlib.sha256(query.encode("utf-8")).hexdigest()
+        if self.db_path and self.db_path.exists():
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT dim, vector FROM query_embeddings WHERE query_sha256 = ? AND model = ?",
+                    (q_sha, self.model),
+                ).fetchone()
+                if row:
+                    return struct.unpack(f"{row[0]}f", row[1])
+
+        vectors = self._call_embeddings([query])
+        if not vectors:
+            return None
+        vec = vectors[0]
+        dim = len(vec)
+        if self.db_path:
+            blob = struct.pack(f"{dim}f", *vec)
+            try:
+                with self._connect() as conn:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO query_embeddings (query_sha256, model, dim, vector, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (q_sha, self.model, dim, blob, time.time()),
+                    )
+                    conn.commit()
+            except Exception:
+                pass
+        return vec
+
+    def rank(self, query: str, top_k: int = 20) -> list[tuple[str, float]]:
+        if not self._memory_vectors:
+            return []
+        q_vec = self.get_query_vector(query)
+        if not q_vec:
+            return []
+
+        def cos(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+            dot = sum(x * y for x, y in zip(a, b))
+            norm1 = math.sqrt(sum(x * x for x in a))
+            norm2 = math.sqrt(sum(y * y for y in b))
+            return dot / (norm1 * norm2) if (norm1 and norm2) else 0.0
+
+        scores = [(name, cos(q_vec, s_vec)) for name, s_vec in self._memory_vectors.items()]
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[:top_k]
+
+
 @dataclass(frozen=True)
 class RankedCandidate:
     skill: SkillRecord
@@ -1727,6 +1913,7 @@ def select_skill(
     exclude: Sequence[str] = (),
     preferred: Optional[str] = None,
     preferred_bonus: float = 0.0,
+    vector_index: Optional[VectorIndex] = None,
 ) -> Selection:
     """Choose one skill conservatively or return a reason for not choosing."""
     if not 0 <= float(min_score) <= 1:
@@ -1780,6 +1967,57 @@ def select_skill(
     ranked = _rank(
         catalog, query, effective_synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
     )
+
+    if vector_index and vector_index._memory_vectors:
+        vec_ranked = vector_index.rank(query, top_k=20)
+        if vec_ranked:
+            k_rrf = 60.0
+            has_negation = _query_might_contain_negation(query)
+            normalized_query = normalize_identifier(query)
+            lex_map = {c.skill.name: idx for idx, c in enumerate(ranked, 1)}
+            vec_map = {name: idx for idx, (name, _) in enumerate(vec_ranked, 1)}
+            max_vec_sim = vec_ranked[0][1] if vec_ranked else 0.0
+
+            if max_vec_sim < 0.145 and (not ranked or ranked[0].score < float(min_score)):
+                table = _rank_table(ranked)
+                return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
+
+            rrf_scores: dict[str, float] = {}
+            skill_by_name = {s.name: s for s in catalog.skills}
+            cand_names = set(lex_map.keys()) | set(vec_map.keys())
+            excluded_names = normalize_identifiers(exclude)
+            for name in cand_names:
+                sk = skill_by_name.get(name)
+                if not sk or normalize_identifier(name) in excluded_names:
+                    continue
+                if has_negation and _skill_is_negated(
+                    sk.name,
+                    query,
+                    tuple(sk.aliases) + tuple(effective_synonyms.get(sk.normalized_name, ())),
+                    normalized_query,
+                ):
+                    continue
+                sc = 0.0
+                if name in lex_map:
+                    sc += 1.0 / (k_rrf + lex_map[name])
+                if name in vec_map:
+                    sc += 1.0 / (k_rrf + vec_map[name])
+                rrf_scores[name] = sc
+
+            sorted_rrf = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+            if sorted_rrf:
+                new_ranked: list[RankedCandidate] = []
+                for name, score in sorted_rrf:
+                    sk = skill_by_name[name]
+                    reasons: list[str] = ["rrf_hybrid"]
+                    if name in lex_map:
+                        reasons.append("lexical")
+                    if name in vec_map:
+                        reasons.append("vector")
+                    companions = _resolve_companions(sk, catalog)
+                    new_ranked.append(RankedCandidate(sk, round(score * 30.0, 4), tuple(reasons), companions=companions))
+                ranked = new_ranked
+
     table = _rank_table(ranked)
     if not ranked or ranked[0].score < float(min_score):
         if _query_might_contain_negation(query) and any(
@@ -1924,6 +2162,7 @@ class SkillProofEngine:
         session_memory: bool = True,
         focus_turns: int = 5,
         disabled: Optional[Iterable[str]] = None,
+        vector_index: Optional[VectorIndex] = None,
     ) -> None:
         normalized_mode = normalize_identifier(mode)
         normalized_mode = self._MODE_ALIASES.get(normalized_mode, normalized_mode)
@@ -1998,6 +2237,7 @@ class SkillProofEngine:
         self._latest_by_session: dict[str, str] = {}
         self._latest_turn_id: Optional[str] = None
         self._lock = threading.RLock()
+        self.vector_index = vector_index
 
     @staticmethod
     def _text_id(value: object) -> str:
@@ -2441,6 +2681,11 @@ class SkillProofEngine:
             catalog = Catalog(eligible, catalog.diagnostics + exclusions, filtered_hash)
         known_names = tuple(skill.name for skill in catalog.skills)
         explicit_names = extract_explicit_skill_names(query_text, known_names=known_names)
+        if self.vector_index is not None:
+            try:
+                self.vector_index.sync_catalog(catalog.skills)
+            except Exception:
+                pass
         memory = self._session(clean_session_id)
         dialogue: dict[str, Any] = {}
         selection: Optional[Selection] = None
@@ -2481,6 +2726,7 @@ class SkillProofEngine:
                         limit=self.max_candidates,
                         synonyms=self.synonyms,
                         exclude=(released,) if released else (),
+                        vector_index=self.vector_index,
                     )
                     if selection.status == "no_match":
                         dialogue["released"] = released or named
@@ -2508,6 +2754,7 @@ class SkillProofEngine:
                 synonyms=self.synonyms,
                 preferred=focus,
                 preferred_bonus=self._focus_bonus(memory) if (memory and focus) else 0.0,
+                vector_index=self.vector_index,
             )
             selection = self._focus_fallback(selection, catalog, focus, query_text)
         session_evidence: dict[str, Any] = {}

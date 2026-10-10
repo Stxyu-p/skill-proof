@@ -21,6 +21,7 @@ from typing import Any, Mapping, Optional, Sequence
 try:  # Hermes loads directory plugins as packages; direct unit tests do not.
     from .core import (
         SkillProofEngine,
+        VectorIndex,
         __version__ as CORE_VERSION,
         normalize_identifier,
         default_hermes_home,
@@ -29,6 +30,7 @@ try:  # Hermes loads directory plugins as packages; direct unit tests do not.
 except ImportError:  # pragma: no cover - exercised by direct adapter tests
     from core import (
         SkillProofEngine,
+        VectorIndex,
         __version__ as CORE_VERSION,
         normalize_identifier,
         default_hermes_home,
@@ -120,6 +122,14 @@ class SkillProofPlugin:
                 if configured_hub
                 else _default_profile_home() / "skills" / ".hub" / "lock.json"
             )
+        enable_vectors = _bool_setting(ctx.get_config("enable_vectors", False), False)
+        configured_vdb = str(ctx.get_config("vector_db_path", "") or "").strip()
+        vdb_path = (
+            pathlib.Path(configured_vdb).expanduser()
+            if configured_vdb
+            else _default_profile_home() / "plugin-data" / "skill-proof" / "embeddings.db"
+        )
+        vector_index = VectorIndex(db_path=vdb_path) if enable_vectors else None
         self.engine = SkillProofEngine(
             self.roots,
             mode=mode,
@@ -139,6 +149,7 @@ class SkillProofPlugin:
             session_memory=_bool_setting(ctx.get_config("session_memory", True), True),
             focus_turns=_bounded_int(ctx.get_config("focus_turns", 5), 5, 0, 50),
             disabled=ctx.get_config("disabled", None),
+            vector_index=vector_index,
         )
         self.visible_receipt = _bool_setting(ctx.get_config("visible_receipt", True), True)
         self.receipt_style = ctx.get_config("receipt_style", "compact")
