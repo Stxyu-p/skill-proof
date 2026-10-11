@@ -5,19 +5,13 @@
   <p><em>Sub-millisecond routing · Zero model tokens · Multi-agent via Stdio MCP</em></p>
 
   <p>
-    <a href="#-quick-start"><img src="https://img.shields.io/badge/Quick_Start-CLI-0284c7?style=for-the-badge" alt="Quick Start" /></a>
-    <a href="#-key-capabilities-what-you-get"><img src="https://img.shields.io/badge/Routing-Off_%7C_Local_%7C_Gateway-7B61FF?style=for-the-badge" alt="Routing Modes" /></a>
-    <a href="#-multi-agent-mcp-integration"><img src="https://img.shields.io/badge/Protocol-Stdio_MCP-10b981?style=for-the-badge" alt="MCP Server" /></a>
-    <a href="#-installation"><img src="https://img.shields.io/badge/Install-Hermes_%26_CLI-8b5cf6?style=for-the-badge" alt="Installation" /></a>
-  </p>
-
-  <p>
-    <img src="https://img.shields.io/badge/Architecture-Deterministic_Lexical_%26_ONNX-07405E?style=flat-square" alt="Architecture" />
-    <img src="https://img.shields.io/badge/Latency-%3C_1_ms_(In--Process)-brightgreen?style=flat-square" alt="Latency" />
-    <img src="https://img.shields.io/badge/Routing_Cost-0_Tokens-blueviolet?style=flat-square" alt="Tokens" />
-    <img src="https://img.shields.io/badge/Dependencies-0_(Stdlib_Default)-success?style=flat-square" alt="Dependencies" />
-    <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License" />
-    <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square" alt="Python" />
+    <a href="#-quick-start"><img src="https://img.shields.io/badge/Architecture-Deterministic_Lexical_+_ONNX-0284c7?style=flat-square" alt="Architecture" /></a>
+    <a href="#-key-capabilities-what-you-get"><img src="https://img.shields.io/badge/Latency-Sub--Millisecond-brightgreen?style=flat-square" alt="Latency" /></a>
+    <a href="#-why-use-skill-proof-what-it-solves"><img src="https://img.shields.io/badge/Routing_Cost-0_Tokens-blueviolet?style=flat-square" alt="Routing Cost" /></a>
+    <a href="#-multi-agent-mcp-integration"><img src="https://img.shields.io/badge/Protocol-Stdio_MCP-10b981?style=flat-square" alt="Stdio MCP" /></a>
+    <img src="https://img.shields.io/badge/Dependencies-Stdlib_Default-success?style=flat-square" alt="Dependencies" />
+    <img src="https://img.shields.io/badge/License-MIT-slate?style=flat-square" alt="License" />
+    <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square" alt="Python" />
   </p>
 
 </div>
@@ -54,11 +48,11 @@ vetoed: test-driven-development (matched negation: 'do not use TDD')
 | Challenge in LLM-Based Routing | How Skill Proof Solves It | Practical Benefit |
 | :--- | :--- | :--- |
 | **Prompt Bloat (~4,000 tok/turn)** | Replaces massive catalog prompt dumps with a single-line directive (`Use skill_view for "X" first`). | **Saves ~4,000 tokens on every turn** |
-| **Routing Delay (5–15 seconds)** | In-process lexical scoring executes in **&lt; 1 ms** (or ~19 ms with local ONNX cache). | **Over 500x faster execution response** |
+| **Routing Delay (5–15 seconds)** | In-process lexical scoring executes in **&lt; 1 ms** (or ~19 ms with local ONNX cache). | **Thousands of times faster execution response** |
 | **Disabled Tool Leaks** | Reads host configuration (`config.yaml`) to strictly filter disabled utilities (e.g. inactive converters). | **Zero tool hallucinations or accidental leaks** |
 | **Ignoring Negative Constraints** | Probes negation patterns across canonical names and aliases (*"do not use TDD"*). | **Strictly vetoes unwanted workflows** |
 | **Wild Guesses on Weak Prompts** | Enforces conservative decision thresholds (`min_score=0.28`, `min_margin=0.05`); marks ties as `ambiguous`. | **Eliminates false-positive tool activation** |
-| **Unverifiable Actions** | Emits cryptographic SHA256 audit receipts recording selection rationale and tool invariants. | **100% reproducible compliance audit trail** |
+| **Unverifiable Actions** | Emits SHA256 audit receipts recording selection rationale and tool invariants. | **100% reproducible execution audit trail** |
 
 ---
 
