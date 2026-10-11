@@ -5,6 +5,7 @@
   <p><em>Sub-millisecond routing · Zero model tokens · Multi-agent via Stdio MCP</em></p>
 
   <p>
+    <a href="https://github.com/Stxyu-p/skill-proof"><img src="https://img.shields.io/badge/Repository-Stxyu--p%2Fskill--proof-0284c7?style=flat-square&logo=github" alt="Repository" /></a>
     <a href="#-quick-start"><img src="https://img.shields.io/badge/Architecture-Deterministic_Lexical_+_ONNX-0284c7?style=flat-square" alt="Architecture" /></a>
     <a href="#-key-capabilities-what-you-get"><img src="https://img.shields.io/badge/Latency-Sub--Millisecond-brightgreen?style=flat-square" alt="Latency" /></a>
     <a href="#-why-use-skill-proof-what-it-solves"><img src="https://img.shields.io/badge/Routing_Cost-0_Tokens-blueviolet?style=flat-square" alt="Routing Cost" /></a>
