@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="460" viewBox="0 0 960 460" role="img" aria-label="Skill Proof Two-Tier Routing Architecture">
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="480" viewBox="0 0 1020 480" role="img" aria-label="Skill Proof Two-Tier In-Process Routing Architecture">
   <title>Skill Proof Two-Tier In-Process Routing Architecture</title>
   <defs>
-    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
-      <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#131d31" stroke-width="0.5"/>
+    <pattern id="grid" width="25" height="25" patternUnits="userSpaceOnUse">
+      <path d="M 25 0 L 0 0 0 25" fill="none" stroke="#131d31" stroke-width="0.5"/>
     </pattern>
     <filter id="shadow" x="-5%" y="-5%" width="110%" height="115%">
       <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.45"/>
@@ -26,95 +26,93 @@
       .card-blue { fill: #0c1e38; stroke: #0284c7; stroke-width: 1.2; rx: 6px; filter: url(#shadow); }
       .card-green { fill: #08241f; stroke: #059669; stroke-width: 1.2; rx: 6px; filter: url(#shadow); }
       .card-amber { fill: #241a0b; stroke: #d97706; stroke-width: 1.2; rx: 6px; filter: url(#shadow); }
-      .t-header { fill: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; font-weight: 600; }
-      .t-title { fill: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 12px; font-weight: 600; }
-      .t-desc { fill: #94a3b8; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 10px; }
+      .t-lane { fill: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
       .t-badge { fill: #38bdf8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
       .t-badge-green { fill: #34d399; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
       .t-badge-amber { fill: #fbbf24; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
-      .t-lane { fill: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+      .t-title { fill: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; font-weight: 600; }
+      .t-sub { fill: #94a3b8; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; }
       .wire { stroke: #475569; stroke-width: 1.3; fill: none; marker-end: url(#arrow); }
       .wire-blue { stroke: #38bdf8; stroke-width: 1.4; fill: none; marker-end: url(#arrow-blue); }
       .wire-green { stroke: #10b981; stroke-width: 1.4; fill: none; marker-end: url(#arrow-green); }
       .wire-amber { stroke: #f59e0b; stroke-width: 1.4; fill: none; marker-end: url(#arrow-amber); }
-      .wire-dash { stroke: #334155; stroke-width: 1.2; stroke-dasharray: 4 3; fill: none; marker-end: url(#arrow); }
     </style>
   </defs>
 
   <!-- Background Base -->
-  <rect class="bg" width="960" height="460"/>
-  <rect width="960" height="460" fill="url(#grid)" opacity="0.6"/>
+  <rect class="bg" width="1020" height="480"/>
+  <rect width="1020" height="480" fill="url(#grid)" opacity="0.6"/>
 
-  <!-- ==================== STAGE 1: INGEST ==================== -->
-  <text class="t-lane" x="24" y="24">1. USER TURN INGEST</text>
-  <rect class="card" x="24" y="34" width="200" height="74"/>
-  <text class="t-title" x="124" y="58" text-anchor="middle">User Instruction / Turn</text>
-  <text class="t-desc" x="124" y="74" text-anchor="middle">Natural Language Prompt</text>
-  <text class="t-badge" x="124" y="92" text-anchor="middle">Thai · English · CJK</text>
+  <!-- ==================== STAGE 1: USER INPUT ==================== -->
+  <text class="t-lane" x="24" y="26">1. TURN INGEST</text>
+  <rect class="card" x="24" y="38" width="210" height="80"/>
+  <text class="t-badge" x="38" y="58">INPUT PROMPT</text>
+  <text class="t-title" x="38" y="78">User Instruction / Turn</text>
+  <text class="t-sub" x="38" y="98">Natural Language Task Specification</text>
 
   <!-- Wire 1 -> 2 -->
-  <path class="wire-blue" d="M224 71 H 264"/>
+  <path class="wire-blue" d="M234 78 H 274"/>
 
   <!-- ==================== STAGE 2: TIER 1 ENGINE ==================== -->
-  <text class="t-lane" x="270" y="24">2. TIER 1: DETERMINISTIC IN-PROCESS ENGINE (0 TOKENS · &lt; 2 MS)</text>
-  <rect class="zone" x="270" y="34" width="410" height="396"/>
+  <text class="t-lane" x="280" y="26">2. TIER 1: DETERMINISTIC IN-PROCESS ENGINE (0 TOKENS · &lt; 2 MS)</text>
+  <rect class="zone" x="274" y="38" width="430" height="418"/>
 
-  <!-- Step 2A: Catalog Scan & Host Exclusion -->
-  <rect class="card" x="286" y="50" width="378" height="58"/>
-  <text class="t-title" x="302" y="72">Multi-Root Catalog &amp; Host Guard</text>
-  <text class="t-desc" x="302" y="88">Scans .agents/skills, hermes/skills · Filters config.yaml disabled skills</text>
-  <text class="t-badge" x="648" y="72" text-anchor="end">Hard Filter</text>
+  <!-- Step 2A: Catalog Scan & Host Guard -->
+  <rect class="card" x="290" y="52" width="398" height="68"/>
+  <text class="t-badge" x="306" y="72">DISCOVERY &amp; ISOLATION</text>
+  <text class="t-title" x="306" y="90">Multi-Root Catalog &amp; Host Guard</text>
+  <text class="t-sub" x="306" y="106">Scans .agents/skills &amp; host roots · Strictly filters disabled skills</text>
 
   <!-- Wire 2A -> 2B -->
-  <path class="wire" d="M475 108 V 126"/>
+  <path class="wire" d="M489 120 V 138"/>
 
   <!-- Step 2B: Lexical & Negative Veto -->
-  <rect class="card" x="286" y="126" width="378" height="76"/>
-  <text class="t-title" x="302" y="148">Lexical Ranker + Alias-Aware Veto</text>
-  <text class="t-desc" x="302" y="164">Token overlap (+0.92) · Phrase (+0.76) · Synonym graph · Char n-grams</text>
-  <text class="t-desc" x="302" y="180">Strict negation detection: "don't use TDD" / "ไม่เอา TDD" immediately vetoed</text>
-  <text class="t-badge" x="648" y="148" text-anchor="end">Stdlib Fast-Path</text>
+  <rect class="card" x="290" y="138" width="398" height="82"/>
+  <text class="t-badge" x="306" y="158">STDLIB FAST-PATH</text>
+  <text class="t-title" x="306" y="176">Lexical Ranker + Negative Veto</text>
+  <text class="t-sub" x="306" y="194">Token overlap (+0.92) · Phrase (+0.76) · Synonym graph · Char n-grams</text>
+  <text class="t-sub" x="306" y="208">Strict negation probe: "do not use TDD" immediately vetoes target</text>
 
   <!-- Wire 2B -> 2C -->
-  <path class="wire" d="M475 202 V 220"/>
+  <path class="wire" d="M489 220 V 238"/>
 
   <!-- Step 2C: Neutral Provider Layer -->
-  <rect class="card-blue" x="286" y="220" width="378" height="96"/>
-  <text class="t-title" x="302" y="242">Neutral Provider Layer (off | local | gateway)</text>
-  <text class="t-desc" x="302" y="258">• off: Zero-dep stdlib lexical ranker (default 1.3 ms)</text>
-  <text class="t-desc" x="302" y="274">• local: CPU ONNX multilingual-e5-small (19 ms warm cache)</text>
-  <text class="t-desc" x="302" y="290">• gateway: OpenAI-compatible REST with automatic fail-open</text>
-  <text class="t-badge" x="648" y="242" text-anchor="end">Hybrid RRF</text>
+  <rect class="card-blue" x="290" y="238" width="398" height="102"/>
+  <text class="t-badge" x="306" y="258">NEUTRAL PROVIDER LAYER</text>
+  <text class="t-title" x="306" y="276">off | local | gateway (Hybrid RRF)</text>
+  <text class="t-sub" x="306" y="294">• off: Zero-dependency stdlib lexical ranker (default 1.3 ms)</text>
+  <text class="t-sub" x="306" y="310">• local: CPU ONNX multilingual-e5-small (19 ms warm cache)</text>
+  <text class="t-sub" x="306" y="326">• gateway: OpenAI-compatible embeddings REST with automatic fail-open</text>
 
   <!-- Wire 2C -> 2D -->
-  <path class="wire" d="M475 316 V 334"/>
+  <path class="wire" d="M489 340 V 358"/>
 
   <!-- Step 2D: Decision Gate -->
-  <rect class="card" x="286" y="334" width="378" height="80"/>
-  <text class="t-title" x="302" y="356">Threshold Decision Gate</text>
-  <text class="t-desc" x="302" y="372">Evaluates winning margin: min_score = 0.28, min_margin = 0.05</text>
-  <text class="t-desc" x="302" y="388">High confidence wins cleanly · Close scores marked ambiguous</text>
-  <text class="t-badge" x="648" y="356" text-anchor="end">Conservative</text>
+  <rect class="card" x="290" y="358" width="398" height="80"/>
+  <text class="t-badge" x="306" y="378">DECISION GATE</text>
+  <text class="t-title" x="306" y="396">Threshold Evaluation</text>
+  <text class="t-sub" x="306" y="414">min_score = 0.28 · min_margin = 0.05</text>
+  <text class="t-sub" x="306" y="428">Clear winner passes · Close candidates marked ambiguous</text>
 
-  <!-- ==================== STAGE 3: RESOLUTION & FALLBACK ==================== -->
-  <text class="t-lane" x="710" y="24">3. EXECUTION OUTCOME</text>
+  <!-- ==================== STAGE 3: OUTCOMES ==================== -->
+  <text class="t-lane" x="740" y="26">3. EXECUTION OUTCOME</text>
 
-  <!-- Path A: High Confidence Selection -->
-  <path class="wire-green" d="M664 358 H 710"/>
-  <rect class="card-green" x="710" y="324" width="226" height="106"/>
-  <text class="t-header" x="726" y="348" fill="#34d399">Selected (1-Line Nudge)</text>
-  <text class="t-desc" x="726" y="368">Replaces 4,000 token prompt catalog with:</text>
-  <text class="t-title" x="726" y="386" fill="#f8fafc">"Use skill_view for 'X' first."</text>
-  <text class="t-desc" x="726" y="404">+ Emits SHA256 cryptographic audit receipt</text>
-  <text class="t-badge-green" x="920" y="348" text-anchor="end">Fast-Path</text>
+  <!-- Wire Gate -> Ambiguous Fallback (Top) -->
+  <path class="wire-amber" d="M688 385 H 715 V 105 H 734"/>
+  <rect class="card-amber" x="740" y="58" width="256" height="96"/>
+  <text class="t-badge-amber" x="756" y="78">FALLBACK ROUTE</text>
+  <text class="t-title" x="756" y="98">Tier 2: Host LLM Fallback</text>
+  <text class="t-sub" x="756" y="116">Low confidence or ambiguous queries:</text>
+  <text class="t-sub" x="756" y="132">Emits top-3 candidate names only to host LLM</text>
+  <text class="t-sub" x="756" y="146">Eliminates guessing without prompt dump</text>
 
-  <!-- Path B: Ambiguous / No Match -> Tier 2 Fallback -->
-  <path class="wire-amber" d="M664 390 H 685 V 170 H 710"/>
-  <rect class="card-amber" x="710" y="118" width="226" height="106"/>
-  <text class="t-header" x="726" y="142" fill="#fbbf24">Tier 2: Host LLM Fallback</text>
-  <text class="t-desc" x="726" y="162">Unresolved or low confidence query:</text>
-  <text class="t-title" x="726" y="180" fill="#f8fafc">Emits Top-3 Candidates Only</text>
-  <text class="t-desc" x="726" y="198">LLM evaluates nuance without guessing wildly</text>
-  <text class="t-badge-amber" x="920" y="142" text-anchor="end">Safe Fallback</text>
+  <!-- Wire Gate -> Selected (Bottom) -->
+  <path class="wire-green" d="M688 410 H 734"/>
+  <rect class="card-green" x="740" y="342" width="256" height="96"/>
+  <text class="t-badge-green" x="756" y="362">FAST-PATH ROUTE</text>
+  <text class="t-title" x="756" y="382">Selected: 1-Line Prompt Nudge</text>
+  <text class="t-sub" x="756" y="400">Replaces 4,000 token dump with:</text>
+  <text class="t-title" x="756" y="418" font-size="11px">"Use skill_view for 'X' first."</text>
+  <text class="t-sub" x="756" y="432">+ Emits SHA256 verifiable audit receipt</text>
 
 </svg>
