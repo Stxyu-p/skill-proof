@@ -5,7 +5,7 @@
   <p><em>Route in sub-milliseconds. Zero model calls. Multi-agent via MCP.</em></p>
 
   <p>
-    <a href="https://github.com/Stxyu-p/skill-proof/releases"><img src="https://img.shields.io/badge/Release-v0.14.3-315C4B?style=for-the-badge" alt="Release" /></a>
+    <a href="https://github.com/Stxyu-p/skill-proof/releases"><img src="https://img.shields.io/badge/Release-v0.15.0-315C4B?style=for-the-badge" alt="Release" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
     <a href="https://docs.python.org/3/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge" alt="Python" /></a>
   </p>
@@ -15,7 +15,7 @@
     <img src="https://img.shields.io/badge/Dependencies-0_(Stdlib_Only)-success?style=flat-square" alt="Stdlib only" />
     <img src="https://img.shields.io/badge/Latency-0.66_ms_select-brightgreen?style=flat-square" alt="Latency" />
     <img src="https://img.shields.io/badge/Token_Cost-0_Tokens_To_Route-blueviolet?style=flat-square" alt="Tokens" />
-    <img src="https://img.shields.io/badge/Tests-309_Passing-brightgreen?style=flat-square" alt="Tests" />
+    <img src="https://img.shields.io/badge/Tests-317_Passing-brightgreen?style=flat-square" alt="Tests" />
     <img src="https://img.shields.io/badge/Routing_Gate-58%2F58-brightgreen?style=flat-square" alt="Routing Gate" />
     <img src="https://img.shields.io/badge/Gold_Set-102_Cases-brightgreen?style=flat-square" alt="Gold Set" />
     <img src="https://img.shields.io/badge/Top_3_Recall-97.6%25-brightgreen?style=flat-square" alt="Top 3 Recall" />
@@ -316,6 +316,6 @@ MIT. See [LICENSE](LICENSE).
 
 <div align="center">
 
-**Skill Proof** <sub>v0.14.3</sub> · Deterministic · Zero-Overhead · Offline
+**Skill Proof** <sub>v0.15.0</sub> · Deterministic · Zero-Overhead · Offline
 
 </div>
