@@ -69,13 +69,7 @@ Skill Proof provides three interchangeable provider modes to suit any deployment
 | **`local`** | Local CPU ONNX embedding engine with verified registry models. | Multilingual semantic matching without external API keys. | `onnxruntime`, `tokenizers`, and `numpy` are optional runtime dependencies; if missing, routing falls back to lexical. |
 | **`gateway`** | OpenAI-compatible embeddings REST endpoint with automatic fail-open fallback. | Centralized enterprise gateways and existing embedding proxies. | API key + Endpoint URL. |
 
-### 2. High-Throughput & Scale
-
-- **Scale:** Architecture scales to **1,000+ skills** with sub-millisecond in-memory array operations.
-- **Throughput:** Capable of **1,500+ QPS** (queries per second) in continuous multi-agent loops without background daemons.
-- **Zero Token Overhead:** Consistently maintains **0 prompt tokens to route**, regardless of catalog size.
-
-### 3. Multi-Agent Ecosystem Support (MCP)
+### 2. Multi-Agent Ecosystem Support (MCP)
 
 Skill Proof embeds a standard **Model Context Protocol (MCP)** server. External agents connect via Stdio to search and read skills without modifying their harness:
 
@@ -205,6 +199,22 @@ plugins:
 | `skill_roots` | `[]` | Explicit skill search directories (merges project, user, and agent roots). |
 
 `setup` prompts for `off`, `local`, or `gateway` and updates only `plugins.entries.skill-proof.settings` in the active Hermes profile's `config.yaml`. Use `--prefetch` to explicitly download and checksum-verify a selected local model; downloads do not start automatically.
+
+For local inference, install its optional dependencies into the **Hermes runtime environment**. On Windows, run this from the Skill Proof checkout:
+
+```powershell
+& "$env:LOCALAPPDATA\hermes\hermes-agent\venv\Scripts\python.exe" -m pip install -r requirements-local.txt
+```
+
+On macOS or Linux, use the Hermes virtual environment's Python instead:
+
+```bash
+~/.hermes/hermes-agent/venv/bin/python -m pip install -r requirements-local.txt
+```
+
+If Hermes uses a custom installation path, set `HERMES_PYTHON` to its Python executable; `setup --provider local` checks that runtime before writing local mode.
+
+Then configure local mode and prefetch the model with `python cli.py setup --provider local --prefetch`. To check real inference, run `python -m unittest tests.test_v0150.ProviderAbstractionTests.test_local_embedder_real_inference_if_installed -v` with the Hermes virtual environment's Python from this checkout. The default `off` provider still has no third-party dependencies.
 
 ---
 

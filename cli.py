@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
+import subprocess
 import sys
 import tempfile
 from collections import Counter
@@ -302,6 +304,41 @@ def _write_plugin_settings(config_path, settings):
     temp_path.replace(path)
 
 
+def _hermes_runtime_python():
+    configured = os.environ.get("HERMES_PYTHON", "").strip()
+    if configured:
+        return pathlib.Path(configured).expanduser()
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if not local_app_data:
+            return None
+        return pathlib.Path(local_app_data) / "hermes" / "hermes-agent" / "venv" / "Scripts" / "python.exe"
+    hermes_home = pathlib.Path(os.environ.get("HERMES_HOME", "~/.hermes")).expanduser()
+    return hermes_home / "hermes-agent" / "venv" / "bin" / "python"
+
+
+def _missing_local_runtime_dependencies():
+    """Return missing optional imports in Hermes' Python, or None if uncheckable."""
+    python_path = _hermes_runtime_python()
+    if not python_path or not python_path.is_file():
+        return None
+    code = (
+        "import importlib.util, json; "
+        "names = ('onnxruntime', 'tokenizers', 'numpy'); "
+        "print(json.dumps([name for name in names if importlib.util.find_spec(name) is None]))"
+    )
+    try:
+        result = subprocess.run(
+            [str(python_path), "-c", code], capture_output=True, text=True, check=False,
+        )
+        if result.returncode != 0:
+            return None
+        missing = json.loads(result.stdout.strip())
+        return missing if isinstance(missing, list) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="skill-proof",
@@ -379,6 +416,32 @@ def main(argv=None) -> int:
             if not models.get_model_spec(model):
                 print(f"error: unknown model '{model}'", file=sys.stderr)
                 return 2
+            missing = _missing_local_runtime_dependencies()
+            if missing:
+                print(
+                    "error: Hermes runtime is missing local inference dependencies: "
+                    + ", ".join(missing),
+                    file=sys.stderr,
+                )
+                print(
+                    "Install them in the Hermes venv with requirements-local.txt, then retry setup.",
+                    file=sys.stderr,
+                )
+                runtime_python = _hermes_runtime_python()
+                requirements = pathlib.Path(__file__).resolve().parent / "requirements-local.txt"
+                if runtime_python:
+                    if os.name == "nt":
+                        command = f'& "{runtime_python}" -m pip install -r "{requirements}"'
+                    else:
+                        command = f'"{runtime_python}" -m pip install -r "{requirements}"'
+                    print(f"Run: {command}", file=sys.stderr)
+                return 2
+            if missing is None:
+                print(
+                    "warning: could not inspect the Hermes Python environment; "
+                    "verify requirements-local.txt is installed there.",
+                    file=sys.stderr,
+                )
         prefetch = args.prefetch
         if provider == "local" and not prefetch:
             answer = input("Download and verify the local model now? [y/N]: ").strip().lower()

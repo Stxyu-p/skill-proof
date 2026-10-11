@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Corrected on 2026-10-12
 - The adapter's `pre_llm_call` hook adds context to the current user message; it does not remove Hermes' fixed `<available_skills>` system-prompt index. The plugin alone therefore does not reduce the fixed prompt budget, and prior claims of saving about 4,000 tokens per turn are unsupported and withdrawn.
 - Local model downloads are explicit through `prefetch` or `setup --prefetch`; there is no automatic lazy-download flow on a hard query in v0.15.0.
-- The primary model's `tokenizer.json` is a Unigram/Metaspace tokenizer, not WordPiece. Local inference currently uses the optional `tokenizers` package; the planned stdlib WordPiece path cannot safely tokenize this registry model and needs a spec decision before implementation.
+- The primary model's `tokenizer.json` is a Unigram/Metaspace tokenizer, not WordPiece. Local inference uses the optional `tokenizers` package listed in `requirements-local.txt`; a stdlib WordPiece implementation is not compatible with this model.
 
 ## [0.14.4] - 2026-10-10
 

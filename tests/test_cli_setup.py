@@ -74,6 +74,7 @@ class SetupConfigTests(unittest.TestCase):
     def test_setup_local_asks_before_prefetching_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(cli.core, "default_hermes_home", return_value=pathlib.Path(tmp)), \
+                 mock.patch.object(cli, "_missing_local_runtime_dependencies", return_value=[]), \
                  mock.patch("builtins.input", side_effect=["local", "", "y"]), \
                  mock.patch.object(models, "download_model", return_value=True) as download:
                 result = cli.main(["setup"])
@@ -83,6 +84,16 @@ class SetupConfigTests(unittest.TestCase):
         self.assertEqual(result, 0)
         download.assert_called_once_with("Xenova/multilingual-e5-small")
         self.assertIn('embedding_provider: "local"', config)
+
+    def test_setup_local_refuses_to_write_config_when_runtime_dependencies_are_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(cli.core, "default_hermes_home", return_value=pathlib.Path(tmp)), \
+                 mock.patch.object(cli, "_missing_local_runtime_dependencies", return_value=["tokenizers"]):
+                result = cli.main(["setup", "--provider", "local", "--model", "e5-small"])
+
+            self.assertFalse((pathlib.Path(tmp) / "config.yaml").exists())
+
+        self.assertEqual(result, 2)
 
 
 if __name__ == "__main__":
