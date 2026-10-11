@@ -27,8 +27,16 @@ from functools import lru_cache
 from math import log
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
+try:
+    from . import models
+except ImportError:
+    try:
+        import models
+    except ImportError:
+        models = None
 
-__version__ = "0.14.3"
+
+__version__ = "0.15.0"
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
@@ -1468,27 +1476,60 @@ def _release_remainder(query: str, reference: DialogueReference, released: str) 
 class VectorIndex:
     """SQLite-backed vector cache and ranker for Skill Proof.
 
-    # ponytail: stdlib sqlite3 and urllib with local in-memory dict cache;
-    # upgrades to sqlite-vec only if catalog grows beyond 1,000 skills.
+    Supports neutral providers: 'off' (pure lexical), 'local' (ONNX), 'gateway' (API).
+    # ponytail: stdlib sqlite3 and urllib with local in-memory dict cache.
     """
 
     def __init__(
         self,
         db_path: Optional[os.PathLike[str] | str] = None,
-        model: str = "openrouter/nvidia/llama-nemotron-embed-vl-1b-v2:free",
-        gateway_url: str = "http://localhost:20128/v1/embeddings",
+        provider: str = "off",
+        model: str = "Xenova/multilingual-e5-small",
+        gateway_url: str = "",
         api_key: Optional[str] = None,
+        gateway_key_env: str = "HERMES_CUSTOM_LOCALHOST_20128_API_KEY",
+        models_dir: Optional[os.PathLike[str] | str] = None,
         timeout: float = 3.0,
     ) -> None:
         self.db_path = pathlib.Path(db_path).resolve() if db_path else None
         self.model = str(model)
-        self.gateway_url = str(gateway_url)
-        self.api_key = api_key if api_key is not None else os.environ.get("HERMES_CUSTOM_LOCALHOST_20128_API_KEY", "")
+        self.gateway_url = str(gateway_url) if gateway_url else "http://localhost:20128/v1/embeddings"
+        self.gateway_key_env = str(gateway_key_env)
+        self.models_dir = pathlib.Path(models_dir).resolve() if models_dir else None
         self.timeout = float(timeout)
+
+        # Provider determination with backwards compatibility
+        p = str(provider or "").strip().lower()
+        if not p or p == "off":
+            if api_key:
+                p = "gateway"
+            else:
+                p = "off"
+        self.provider = p
+
+        self.api_key = api_key if api_key is not None else os.environ.get(self.gateway_key_env, "")
         self._memory_vectors: dict[str, tuple[float, ...]] = {}
+        self._local_embedder = None
+
+        if self.provider == "local" and models is not None:
+            self._local_embedder = models.LocalEmbedder(model_key=self.model, root_dir=self.models_dir)
+
         if self.db_path:
             self._init_db()
             self._load_memory()
+
+    def provider_status(self) -> dict[str, Any]:
+        active = False
+        if self.provider == "local":
+            active = self._local_embedder is not None and self._local_embedder.is_available()
+        elif self.provider == "gateway":
+            active = bool(self.api_key and self.gateway_url)
+        return {
+            "provider": self.provider,
+            "active": active,
+            "model": self.model,
+            "cached_skills": len(self._memory_vectors),
+        }
 
     @contextmanager
     def _connect(self):
@@ -1535,31 +1576,45 @@ class VectorIndex:
             for name, dim, blob in rows:
                 self._memory_vectors[name] = struct.unpack(f"{dim}f", blob)
 
-    def _call_embeddings(self, texts: list[str]) -> list[tuple[float, ...]]:
-        if not self.api_key:
+    def _call_embeddings(self, texts: list[str], is_query: bool = False) -> list[tuple[float, ...]]:
+        if not texts or self.provider == "off":
             return []
-        out: list[tuple[float, ...]] = []
-        for i in range(0, len(texts), 32):
-            batch = texts[i : i + 32]
-            req = urllib.request.Request(
-                self.gateway_url,
-                data=json.dumps({"model": self.model, "input": batch}).encode("utf-8"),
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    data = json.load(resp)
-                items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
-                out.extend([tuple(float(v) for v in item["embedding"]) for item in items])
-            except Exception:
+
+        if self.provider == "local":
+            if self._local_embedder and self._local_embedder.is_available():
+                try:
+                    return self._local_embedder.embed(texts, is_query=is_query)
+                except Exception:
+                    return []
+            return []
+
+        if self.provider == "gateway":
+            if not self.api_key:
                 return []
-        return out
+            out: list[tuple[float, ...]] = []
+            for i in range(0, len(texts), 32):
+                batch = texts[i : i + 32]
+                req = urllib.request.Request(
+                    self.gateway_url,
+                    data=json.dumps({"model": self.model, "input": batch}).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                        data = json.load(resp)
+                    items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+                    out.extend([tuple(float(v) for v in item["embedding"]) for item in items])
+                except Exception:
+                    return []
+            return out
+
+        return []
 
     def sync_catalog(self, catalog_skills: Sequence[SkillRecord]) -> int:
-        if not self.db_path or not self.api_key:
+        if not self.db_path or self.provider == "off":
             return 0
         missing: list[SkillRecord] = []
         with self._connect() as conn:
@@ -1576,7 +1631,7 @@ class VectorIndex:
             return 0
 
         texts = [f"{s.name}: {s.description}" for s in missing]
-        vectors = self._call_embeddings(texts)
+        vectors = self._call_embeddings(texts, is_query=False)
         if not vectors or len(vectors) != len(missing):
             return 0
 
@@ -1597,6 +1652,8 @@ class VectorIndex:
         return len(missing)
 
     def get_query_vector(self, query: str) -> Optional[tuple[float, ...]]:
+        if self.provider == "off":
+            return None
         q_sha = hashlib.sha256(query.encode("utf-8")).hexdigest()
         if self.db_path and self.db_path.exists():
             with self._connect() as conn:
@@ -1607,7 +1664,7 @@ class VectorIndex:
                 if row:
                     return struct.unpack(f"{row[0]}f", row[1])
 
-        vectors = self._call_embeddings([query])
+        vectors = self._call_embeddings([query], is_query=True)
         if not vectors:
             return None
         vec = vectors[0]
@@ -1629,7 +1686,7 @@ class VectorIndex:
         return vec
 
     def rank(self, query: str, top_k: int = 20) -> list[tuple[str, float]]:
-        if not self._memory_vectors:
+        if self.provider == "off" or not self._memory_vectors:
             return []
         q_vec = self.get_query_vector(query)
         if not q_vec:
@@ -2599,7 +2656,7 @@ class SkillProofEngine:
                 "skill compliance or task verification."
             )
         if selection.status == "ambiguous" and selection.candidates:
-            names = ", ".join(item.skill.name for item in selection.candidates)
+            names = ", ".join(item.skill.name for item in selection.candidates[:3])
             return (
                 f"Skill Proof: multiple skills matched ({names}). Ask which skill to load; "
                 "do not claim one was selected."
@@ -3135,6 +3192,8 @@ class SkillProofEngine:
             "errors": list(state.errors),
             "complete": state.complete,
             "performance": dict(state.performance),
+            "provider": getattr(self.vector_index, "provider", "off") if self.vector_index else "off",
+            "model": getattr(self.vector_index, "model", None) if self.vector_index else None,
         }
 
     def record_timing(self, turn_id: str, *, listing_ms: float, total_ms: float) -> None:

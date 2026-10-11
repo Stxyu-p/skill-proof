@@ -4,7 +4,28 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.15.0] - 2026-10-11
+
+### Added
+- **Neutral Provider Abstraction (`off | local | gateway`)**:
+  - `off`: zero-config stdlib lexical router (default for new installations).
+  - `local`: local CPU ONNX runtime inference with lazy model download and verified SHA256 checksums.
+  - `gateway`: OpenAI-compatible embeddings endpoint with graceful fallback on 429 / timeout / network failures.
+- **Model Registry (HuggingFace verified)**:
+  - `Xenova/multilingual-e5-small` (quantized ONNX, 384 dim, MIT).
+  - `Xenova/multilingual-e5-small-fp32` (FP32 ONNX fallback, 384 dim, MIT).
+  - `Xenova/paraphrase-multilingual-MiniLM-L12-v2` (quantized ONNX backup, 384 dim, Apache-2.0).
+- **Token-Cut Fast Path in Adapter**:
+  - `selected`: emits clean 1-line nudge `Use skill_view for "<name>" first.`
+  - `ambiguous`: emits top-3 candidate names `Ambiguous match: choose between <cands>.`
+  - `no_match`: returns unconstrained prompt allowing full LLM fallback.
+- **CLI Subcommands**:
+  - `python cli.py models`: list available registry models, size, license, and installation status.
+  - `python cli.py prefetch --model <name>`: download and SHA256-verify model files.
+  - `python cli.py remove --model <name>`: remove downloaded model files cleanly.
+  - `python cli.py status`: report catalog skills, installed models, and vector provider status.
+
+## [0.14.4] - 2026-10-10
 
 ### Added
 - **MCP `skill_search` and `skill_read`**: hybrid RRF top-k search

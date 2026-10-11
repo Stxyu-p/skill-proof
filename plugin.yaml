@@ -1,5 +1,5 @@
 name: skill-proof
-version: 0.14.3
+version: 0.15.0
 description: Local skill discovery, tool gating, truthful load receipts, and invariant compliance verification
 kind: standalone
 manifest_version: 2
@@ -85,3 +85,23 @@ config_schema:
     type: int
     default: 500
     description: Retained audit lines (10-10000); older lines are dropped on rotation
+  embedding_provider:
+    type: str
+    default: off
+    description: off, local, or gateway (neutral abstraction; off is zero-config stdlib default)
+  embedding_model:
+    type: str
+    default: Xenova/multilingual-e5-small
+    description: Registry model key or HF repo id
+  gateway_url:
+    type: str
+    default: http://localhost:20128/v1/embeddings
+    description: OpenAI-compatible embeddings endpoint
+  gateway_key_env:
+    type: str
+    default: HERMES_CUSTOM_LOCALHOST_20128_API_KEY
+    description: Environment variable name holding gateway API key
+  models_dir:
+    type: str
+    default: ""
+    description: Directory for local ONNX model downloads (empty defaults to plugin-data/skill-proof/models)

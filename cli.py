@@ -250,6 +250,12 @@ def main(argv=None) -> int:
     )
     overlap_parser.add_argument("--min-similarity", type=float, default=0.4)
     overlap_parser.add_argument("--limit", type=int, default=20)
+    models_parser = subparsers.add_parser("models", parents=[common], help="list available embedding models and installation status")
+    prefetch_parser = subparsers.add_parser("prefetch", parents=[common], help="download and verify an embedding model")
+    prefetch_parser.add_argument("--model", default="Xenova/multilingual-e5-small", help="model key or alias to prefetch")
+    remove_parser = subparsers.add_parser("remove", parents=[common], help="remove an installed embedding model")
+    remove_parser.add_argument("--model", default="Xenova/multilingual-e5-small", help="model key or alias to remove")
+    status_parser = subparsers.add_parser("status", parents=[common], help="report Skill Proof system, catalog, and provider status")
     bridge_parser = subparsers.add_parser("bridge", parents=[common], help="connect or inspect host agent workspaces")
     bridge_parser.add_argument("bridge_action", nargs="?", default="status", choices=("status", "init", "install", "remove", "ai-setup"))
     bridge_parser.add_argument("--host", default="auto")
@@ -300,6 +306,91 @@ def main(argv=None) -> int:
             else _format_scan(payload)
         )
         return 0
+    if args.command == "models":
+        import models
+        res = []
+        for key, spec in models.MODEL_REGISTRY.items():
+            status = models.check_model_status(key)
+            res.append({
+                "model": key,
+                "name": spec["name"],
+                "license": spec["license"],
+                "credit": spec["credit"],
+                "source_url": spec["source_url"],
+                "dim": spec["dim"],
+                "installed": status["installed"],
+                "valid": status["valid"],
+                "size_mb": round(sum(f["size"] for f in spec["files"].values()) / (1024 * 1024), 1),
+            })
+        if args.json:
+            print(json.dumps({"models": res}, indent=2, ensure_ascii=False))
+        else:
+            print(f"{'Model':<40} {'Status':<12} {'Size':<10} {'License':<10} {'Dim'}")
+            print("-" * 80)
+            for m in res:
+                st = "installed" if m["installed"] else "missing"
+                print(f"{m['model']:<40} {st:<12} {m['size_mb']} MB   {m['license']:<10} {m['dim']}")
+        return 0
+
+    if args.command == "prefetch":
+        import models
+        model_key = args.model
+        print(f"Prefetching embedding model '{model_key}'...")
+        spec = models.get_model_spec(model_key)
+        if not spec:
+            print(f"error: unknown model '{model_key}'", file=sys.stderr)
+            return 2
+
+        def _cb(filename, curr, tot):
+            if curr == tot or curr % (10 * 1024 * 1024) < 65536:
+                print(f"  {filename}: {curr / (1024 * 1024):.1f}/{tot / (1024 * 1024):.1f} MB")
+
+        ok = models.download_model(model_key, callback=_cb)
+        if ok:
+            print(f"Model '{model_key}' successfully downloaded and verified.")
+            return 0
+        else:
+            print(f"error: failed to download/verify model '{model_key}'", file=sys.stderr)
+            return 1
+
+    if args.command == "remove":
+        import models
+        ok = models.remove_model(args.model)
+        if ok:
+            print(f"Removed model '{args.model}'.")
+            return 0
+        else:
+            print(f"error: failed to remove model '{args.model}'", file=sys.stderr)
+            return 1
+
+    if args.command == "status":
+        import models
+        catalog = core.scan_catalog(roots)
+        installed_models = []
+        for key in models.MODEL_REGISTRY:
+            st = models.check_model_status(key)
+            if st["installed"]:
+                installed_models.append(key)
+        vdb_path = core.default_hermes_home() / "plugin-data" / "skill-proof" / "embeddings.db"
+        vec_idx = core.VectorIndex(db_path=vdb_path) if vdb_path.exists() else None
+        st_data = {
+            "version": core.__version__,
+            "catalog_skills": len(catalog.skills),
+            "installed_models": installed_models,
+            "embeddings_db_exists": vdb_path.exists(),
+            "vector_index_status": vec_idx.provider_status() if vec_idx else {"provider": "off", "active": False},
+        }
+        if args.json:
+            print(json.dumps(st_data, indent=2, ensure_ascii=False))
+        else:
+            print(f"Skill Proof Status v{st_data['version']}")
+            print(f"  Catalog Skills:     {st_data['catalog_skills']}")
+            print(f"  Installed Models:   {', '.join(installed_models) or 'none'}")
+            print(f"  Embeddings DB:      {'found' if st_data['embeddings_db_exists'] else 'none'}")
+            print(f"  Vector Provider:    {st_data['vector_index_status']['provider']}")
+            print(f"  Vector Active:      {st_data['vector_index_status']['active']}")
+        return 0
+
     if args.command == "overlap":
         try:
             payload = _overlap_payload(roots, args.min_similarity, args.limit)

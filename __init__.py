@@ -122,14 +122,36 @@ class SkillProofPlugin:
                 if configured_hub
                 else _default_profile_home() / "skills" / ".hub" / "lock.json"
             )
-        enable_vectors = _bool_setting(ctx.get_config("enable_vectors", False), False)
+        provider_cfg = str(ctx.get_config("embedding_provider", "") or "").strip().lower()
+        if not provider_cfg:
+            if _bool_setting(ctx.get_config("enable_vectors", False), False):
+                provider_cfg = "gateway"
+            else:
+                provider_cfg = "off"
+
+        embedding_model = str(ctx.get_config("embedding_model", "Xenova/multilingual-e5-small") or "").strip()
+        gateway_url = str(ctx.get_config("gateway_url", "") or "").strip()
+        gateway_key_env = str(ctx.get_config("gateway_key_env", "HERMES_CUSTOM_LOCALHOST_20128_API_KEY") or "").strip()
+        configured_models = str(ctx.get_config("models_dir", "") or "").strip()
+        models_dir = pathlib.Path(configured_models).expanduser() if configured_models else None
+
         configured_vdb = str(ctx.get_config("vector_db_path", "") or "").strip()
         vdb_path = (
             pathlib.Path(configured_vdb).expanduser()
             if configured_vdb
             else _default_profile_home() / "plugin-data" / "skill-proof" / "embeddings.db"
         )
-        vector_index = VectorIndex(db_path=vdb_path) if enable_vectors else None
+        if provider_cfg != "off":
+            vector_index = VectorIndex(
+                db_path=vdb_path,
+                provider=provider_cfg,
+                model=embedding_model,
+                gateway_url=gateway_url,
+                gateway_key_env=gateway_key_env,
+                models_dir=models_dir,
+            )
+        else:
+            vector_index = None
         self.engine = SkillProofEngine(
             self.roots,
             mode=mode,
@@ -221,6 +243,11 @@ class SkillProofPlugin:
                 self._policy_errors.add(key)
             return None
         self._policy_errors.discard(key)
+        if turn.selection.status == "selected" and turn.selection.selected is not None:
+            return {"context": f'Use skill_view for "{turn.selection.selected.skill.name}" first.'}
+        if turn.selection.status == "ambiguous" and turn.selection.candidates:
+            cands = ", ".join(c.skill.name for c in turn.selection.candidates[:3])
+            return {"context": f"Ambiguous match: choose between {cands}."}
         return {"context": turn.context} if turn.context else None
 
     def on_pre_tool_call(
@@ -503,6 +530,8 @@ class SkillProofPlugin:
             "focus": session.get("focus"),
             "loaded": bool(evidence.get("hermes_loaded_event")),
             "compliance": receipt.get("compliance"),
+            "provider": receipt.get("provider", "off"),
+            "model": receipt.get("model"),
             "active": bool(runtime.get("active")),
             "errors": list(receipt.get("errors") or []),
             "query_sha256": receipt.get("query_sha256"),
