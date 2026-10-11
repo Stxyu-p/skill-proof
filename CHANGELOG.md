@@ -9,13 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Neutral Provider Abstraction (`off | local | gateway`)**:
   - `off`: zero-config stdlib lexical router (default for new installations).
-  - `local`: local CPU ONNX runtime inference with lazy model download and verified SHA256 checksums.
+  - `local`: local CPU ONNX runtime inference with explicitly prefetched models and verified SHA256 checksums.
   - `gateway`: OpenAI-compatible embeddings endpoint with graceful fallback on 429 / timeout / network failures.
 - **Model Registry (HuggingFace verified)**:
   - `Xenova/multilingual-e5-small` (quantized ONNX, 384 dim, MIT).
   - `Xenova/multilingual-e5-small-fp32` (FP32 ONNX fallback, 384 dim, MIT).
   - `Xenova/paraphrase-multilingual-MiniLM-L12-v2` (quantized ONNX backup, 384 dim, Apache-2.0).
-- **Token-Cut Fast Path in Adapter**:
+- **Selection Nudge in Adapter**:
   - `selected`: emits clean 1-line nudge `Use skill_view for "<name>" first.`
   - `ambiguous`: emits top-3 candidate names `Ambiguous match: choose between <cands>.`
   - `no_match`: returns unconstrained prompt allowing full LLM fallback.
@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `python cli.py prefetch --model <name>`: download and SHA256-verify model files.
   - `python cli.py remove --model <name>`: remove downloaded model files cleanly.
   - `python cli.py status`: report catalog skills, installed models, and vector provider status.
+
+### Corrected on 2026-10-12
+- The adapter's `pre_llm_call` hook adds context to the current user message; it does not remove Hermes' fixed `<available_skills>` system-prompt index. The plugin alone therefore does not reduce the fixed prompt budget, and prior claims of saving about 4,000 tokens per turn are unsupported and withdrawn.
+- Local model downloads are explicit through `prefetch` or `setup --prefetch`; there is no automatic lazy-download flow on a hard query in v0.15.0.
+- The primary model's `tokenizer.json` is a Unigram/Metaspace tokenizer, not WordPiece. Local inference currently uses the optional `tokenizers` package; the planned stdlib WordPiece path cannot safely tokenize this registry model and needs a spec decision before implementation.
 
 ## [0.14.4] - 2026-10-10
 

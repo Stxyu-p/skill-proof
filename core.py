@@ -1510,6 +1510,8 @@ class VectorIndex:
         self.api_key = api_key if api_key is not None else os.environ.get(self.gateway_key_env, "")
         self._memory_vectors: dict[str, tuple[float, ...]] = {}
         self._local_embedder = None
+        self._trace_local = threading.local()
+        self.reset_trace()
 
         if self.provider == "local" and models is not None:
             self._local_embedder = models.LocalEmbedder(model_key=self.model, root_dir=self.models_dir)
@@ -1529,6 +1531,34 @@ class VectorIndex:
             "active": active,
             "model": self.model,
             "cached_skills": len(self._memory_vectors),
+        }
+
+    def reset_trace(self) -> None:
+        self._trace_local.value = {
+            "provider_configured": self.provider,
+            "provider_used": "off",
+            "fallback_reason": "not_used",
+            "embedding_latency_ms": 0.0,
+            "query_cache_hit": False,
+            "vector_used": False,
+        }
+
+    def _trace(self, **updates: Any) -> None:
+        current = getattr(self._trace_local, "value", None)
+        if current is None:
+            self.reset_trace()
+            current = self._trace_local.value
+        current.update(updates)
+
+    def trace_snapshot(self) -> dict[str, Any]:
+        current = getattr(self._trace_local, "value", None)
+        return dict(current) if current is not None else {
+            "provider_configured": self.provider,
+            "provider_used": "off",
+            "fallback_reason": "not_used",
+            "embedding_latency_ms": 0.0,
+            "query_cache_hit": False,
+            "vector_used": False,
         }
 
     @contextmanager
@@ -1577,21 +1607,34 @@ class VectorIndex:
                 self._memory_vectors[name] = struct.unpack(f"{dim}f", blob)
 
     def _call_embeddings(self, texts: list[str], is_query: bool = False) -> list[tuple[float, ...]]:
-        if not texts or self.provider == "off":
+        if not texts:
+            return []
+        if self.provider == "off":
+            self._trace(provider_used="off", fallback_reason="provider_off")
             return []
 
         if self.provider == "local":
-            if self._local_embedder and self._local_embedder.is_available():
-                try:
-                    return self._local_embedder.embed(texts, is_query=is_query)
-                except Exception:
-                    return []
-            return []
+            if not self._local_embedder or not self._local_embedder.is_available():
+                self._trace(provider_used="off", fallback_reason="local_model_unavailable")
+                return []
+            started = time.perf_counter()
+            try:
+                vectors = self._local_embedder.embed(texts, is_query=is_query)
+            except Exception:
+                vectors = []
+            self._trace(
+                provider_used="local" if vectors else "off",
+                fallback_reason=None if vectors else "local_inference_failed",
+                embedding_latency_ms=round((time.perf_counter() - started) * 1000, 3),
+            )
+            return vectors
 
         if self.provider == "gateway":
             if not self.api_key:
+                self._trace(provider_used="off", fallback_reason="gateway_key_missing")
                 return []
             out: list[tuple[float, ...]] = []
+            started = time.perf_counter()
             for i in range(0, len(texts), 32):
                 batch = texts[i : i + 32]
                 req = urllib.request.Request(
@@ -1608,9 +1651,20 @@ class VectorIndex:
                     items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
                     out.extend([tuple(float(v) for v in item["embedding"]) for item in items])
                 except Exception:
+                    self._trace(
+                        provider_used="off",
+                        fallback_reason="gateway_request_failed",
+                        embedding_latency_ms=round((time.perf_counter() - started) * 1000, 3),
+                    )
                     return []
+            self._trace(
+                provider_used="gateway" if len(out) == len(texts) else "off",
+                fallback_reason=None if len(out) == len(texts) else "gateway_incomplete_response",
+                embedding_latency_ms=round((time.perf_counter() - started) * 1000, 3),
+            )
             return out
 
+        self._trace(provider_used="off", fallback_reason="unknown_provider")
         return []
 
     def sync_catalog(self, catalog_skills: Sequence[SkillRecord]) -> int:
@@ -1653,6 +1707,7 @@ class VectorIndex:
 
     def get_query_vector(self, query: str) -> Optional[tuple[float, ...]]:
         if self.provider == "off":
+            self._trace(provider_used="off", fallback_reason="provider_off")
             return None
         q_sha = hashlib.sha256(query.encode("utf-8")).hexdigest()
         if self.db_path and self.db_path.exists():
@@ -1662,6 +1717,7 @@ class VectorIndex:
                     (q_sha, self.model),
                 ).fetchone()
                 if row:
+                    self._trace(provider_used="cache", fallback_reason=None, query_cache_hit=True)
                     return struct.unpack(f"{row[0]}f", row[1])
 
         vectors = self._call_embeddings([query], is_query=True)
@@ -1686,7 +1742,11 @@ class VectorIndex:
         return vec
 
     def rank(self, query: str, top_k: int = 20) -> list[tuple[str, float]]:
-        if self.provider == "off" or not self._memory_vectors:
+        if self.provider == "off":
+            self._trace(provider_used="off", fallback_reason="provider_off")
+            return []
+        if not self._memory_vectors:
+            self._trace(provider_used="off", fallback_reason="skill_vectors_missing")
             return []
         q_vec = self.get_query_vector(query)
         if not q_vec:
@@ -1700,7 +1760,36 @@ class VectorIndex:
 
         scores = [(name, cos(q_vec, s_vec)) for name, s_vec in self._memory_vectors.items()]
         scores.sort(key=lambda x: x[1], reverse=True)
+        self._trace(vector_used=bool(scores), fallback_reason=None if scores else "skill_vectors_missing")
         return scores[:top_k]
+
+
+def vector_index_from_env(
+    db_path: Optional[os.PathLike[str] | str] = None,
+) -> Optional[VectorIndex]:
+    """Build a configured vector index for standalone CLI/MCP processes.
+
+    Embeddings remain disabled unless ``SKILL_PROOF_EMBEDDING_PROVIDER`` is set.
+    An absent database in ``off`` mode does not create a file as a side effect.
+    """
+    env = os.environ.get
+    provider = (env("SKILL_PROOF_EMBEDDING_PROVIDER") or "off").strip().lower()
+    if provider not in {"off", "local", "gateway"}:
+        provider = "off"
+    configured_db = db_path or env("SKILL_PROOF_VECTOR_DB") or (
+        default_hermes_home() / "plugin-data" / "skill-proof" / "embeddings.db"
+    )
+    path = pathlib.Path(configured_db).expanduser()
+    if provider == "off" and not path.exists():
+        return None
+    return VectorIndex(
+        db_path=path,
+        provider=provider,
+        model=env("SKILL_PROOF_EMBEDDING_MODEL") or "Xenova/multilingual-e5-small",
+        gateway_url=env("SKILL_PROOF_GATEWAY_URL") or "http://localhost:20128/v1/embeddings",
+        gateway_key_env=env("SKILL_PROOF_GATEWAY_KEY_ENV") or "HERMES_CUSTOM_LOCALHOST_20128_API_KEY",
+        models_dir=env("SKILL_PROOF_MODELS_DIR") or None,
+    )
 
 
 @dataclass(frozen=True)
@@ -2145,6 +2234,7 @@ class _TurnState:
     # tell "not indexed" apart from "excluded by the host listing".
     indexed_names: frozenset = frozenset()
     performance: dict = field(default_factory=dict)
+    vector_trace: dict = field(default_factory=dict)
     source_path_match: str = "unknown"
     compliance: str = "unassessed"
     compliance_reasons: list[str] = field(default_factory=list)
@@ -2710,6 +2800,8 @@ class SkillProofEngine:
         clean_task_id = self._text_id(task_id)
         query_text = str(query or "")
         metrics = {}
+        if self.vector_index is not None:
+            self.vector_index.reset_trace()
         with self._lock:
             catalog = scan_catalog(
                 self._roots,
@@ -2738,7 +2830,7 @@ class SkillProofEngine:
             catalog = Catalog(eligible, catalog.diagnostics + exclusions, filtered_hash)
         known_names = tuple(skill.name for skill in catalog.skills)
         explicit_names = extract_explicit_skill_names(query_text, known_names=known_names)
-        if self.vector_index is not None:
+        if self.vector_index is not None and not explicit_names:
             try:
                 self.vector_index.sync_catalog(catalog.skills)
             except Exception:
@@ -2814,6 +2906,23 @@ class SkillProofEngine:
                 vector_index=self.vector_index,
             )
             selection = self._focus_fallback(selection, catalog, focus, query_text)
+        vector_trace = (
+            self.vector_index.trace_snapshot()
+            if self.vector_index is not None
+            else {
+                "provider_configured": "off",
+                "provider_used": "off",
+                "fallback_reason": "provider_off",
+                "embedding_latency_ms": 0.0,
+                "query_cache_hit": False,
+                "vector_used": False,
+            }
+        )
+        metrics.update({
+            "embedding_latency_ms": vector_trace["embedding_latency_ms"],
+            "query_cache_hit": vector_trace["query_cache_hit"],
+            "vector_used": vector_trace["vector_used"],
+        })
         session_evidence: dict[str, Any] = {}
         if memory is not None:
             if selection.selected is not None:
@@ -2857,6 +2966,7 @@ class SkillProofEngine:
             host_name_count=None if available_names is None or availability_error else len(available_names),
             session=session_evidence,
             indexed_names=indexed_names,
+            vector_trace=vector_trace,
             # Recorded so "why not X" can say vetoed instead of guessing; the
             # same scan runs inside _rank for every turn (about 0.5 ms).
             vetoed=tuple(
@@ -3192,7 +3302,10 @@ class SkillProofEngine:
             "errors": list(state.errors),
             "complete": state.complete,
             "performance": dict(state.performance),
-            "provider": getattr(self.vector_index, "provider", "off") if self.vector_index else "off",
+            "provider": state.vector_trace.get("provider_configured", "off"),
+            "provider_used": state.vector_trace.get("provider_used", "off"),
+            "fallback_reason": state.vector_trace.get("fallback_reason", "not_used"),
+            "embedding_latency_ms": state.vector_trace.get("embedding_latency_ms", 0.0),
             "model": getattr(self.vector_index, "model", None) if self.vector_index else None,
         }
 

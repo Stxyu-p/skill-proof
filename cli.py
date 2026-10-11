@@ -18,6 +18,7 @@ import argparse
 import json
 import pathlib
 import sys
+import tempfile
 from collections import Counter
 
 import core
@@ -215,6 +216,92 @@ def _format_eval(payload):
     return "\n".join(lines)
 
 
+def _yaml_indent(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def _section_end(lines, start, indent):
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.strip() and not line.lstrip().startswith("#") and _yaml_indent(line) <= indent:
+            return index
+    return len(lines)
+
+
+def _find_section(lines, parent_start, parent_end, parent_indent, name):
+    expected_indent = parent_indent + 2
+    for index in range(parent_start + 1, parent_end):
+        line = lines[index]
+        stripped = line.strip()
+        key_prefix = f"{name}:"
+        if (
+            _yaml_indent(line) == expected_indent
+            and stripped.startswith(key_prefix)
+            and (len(stripped) == len(key_prefix) or stripped[len(key_prefix)].isspace())
+        ):
+            return index, _section_end(lines, index, expected_indent), expected_indent
+    return None
+
+
+def _ensure_section(lines, parent_start, parent_end, parent_indent, name):
+    found = _find_section(lines, parent_start, parent_end, parent_indent, name)
+    if found:
+        return found
+    index = parent_end
+    lines.insert(index, " " * (parent_indent + 2) + f"{name}:")
+    return index, index + 1, parent_indent + 2
+
+
+def _write_plugin_settings(config_path, settings):
+    """Update only Skill Proof settings, preserving unrelated YAML text."""
+    path = pathlib.Path(config_path)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    plugins = next(
+        (index for index, line in enumerate(lines) if _yaml_indent(line) == 0 and line.strip() == "plugins:"),
+        None,
+    )
+    if plugins is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append("plugins:")
+        plugins = len(lines) - 1
+    plugins_end = _section_end(lines, plugins, 0)
+    entries, entries_end, entries_indent = _ensure_section(lines, plugins, plugins_end, 0, "entries")
+    plugin, plugin_end, plugin_indent = _ensure_section(
+        lines, entries, entries_end, entries_indent, "skill-proof"
+    )
+    settings_start, settings_end, settings_indent = _ensure_section(
+        lines, plugin, plugin_end, plugin_indent, "settings"
+    )
+    setting_indent = settings_indent + 2
+    serialized = {key: json.dumps(value, ensure_ascii=False) for key, value in settings.items()}
+    existing = {}
+    for index in range(settings_start + 1, settings_end):
+        line = lines[index]
+        if _yaml_indent(line) == setting_indent:
+            key, separator, _value = line.strip().partition(":")
+            if separator and key in serialized:
+                existing[key] = index
+    additions = []
+    for key, value in serialized.items():
+        if key in existing:
+            lines[existing[key]] = " " * setting_indent + f"{key}: {value}"
+        else:
+            additions.append(" " * setting_indent + f"{key}: {value}")
+    if additions:
+        lines[settings_end:settings_end] = additions
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = "\n".join(lines) + "\n"
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", newline="\n", dir=path.parent,
+        prefix=path.name + ".", suffix=".tmp", delete=False,
+    ) as handle:
+        temp_path = pathlib.Path(handle.name)
+        handle.write(content)
+    temp_path.replace(path)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="skill-proof",
@@ -251,6 +338,12 @@ def main(argv=None) -> int:
     overlap_parser.add_argument("--min-similarity", type=float, default=0.4)
     overlap_parser.add_argument("--limit", type=int, default=20)
     models_parser = subparsers.add_parser("models", parents=[common], help="list available embedding models and installation status")
+    setup_parser = subparsers.add_parser("setup", parents=[common], help="configure an embedding provider")
+    setup_parser.add_argument("--provider", choices=("off", "local", "gateway"))
+    setup_parser.add_argument("--model", help="registered model key or 'none'")
+    setup_parser.add_argument("--gateway-url")
+    setup_parser.add_argument("--gateway-key-env")
+    setup_parser.add_argument("--prefetch", action="store_true", help="download and verify the local model now")
     prefetch_parser = subparsers.add_parser("prefetch", parents=[common], help="download and verify an embedding model")
     prefetch_parser.add_argument("--model", default="Xenova/multilingual-e5-small", help="model key or alias to prefetch")
     remove_parser = subparsers.add_parser("remove", parents=[common], help="remove an installed embedding model")
@@ -263,6 +356,49 @@ def main(argv=None) -> int:
     bridge_parser.add_argument("--dry-run", action="store_true")
     bridge_parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.command == "setup":
+        provider = args.provider or input("Embedding provider [off/local/gateway] (off): ").strip().lower() or "off"
+        if provider not in {"off", "local", "gateway"}:
+            print("error: provider must be off, local, or gateway", file=sys.stderr)
+            return 2
+        model = args.model or "Xenova/multilingual-e5-small"
+        gateway_url = args.gateway_url or "http://localhost:20128/v1/embeddings"
+        gateway_key_env = args.gateway_key_env or "HERMES_CUSTOM_LOCALHOST_20128_API_KEY"
+        if provider == "local" and not args.model:
+            model = input(f"Model key or 'none' [{model}]: ").strip() or model
+        if model.casefold() == "none":
+            model = "Xenova/multilingual-e5-small"
+            if provider == "local":
+                provider = "off"
+        if provider == "gateway":
+            gateway_url = args.gateway_url or input(f"Gateway URL [{gateway_url}]: ").strip() or gateway_url
+            gateway_key_env = args.gateway_key_env or input(f"Environment variable holding the key [{gateway_key_env}]: ").strip() or gateway_key_env
+        if provider == "local":
+            import models
+            if not models.get_model_spec(model):
+                print(f"error: unknown model '{model}'", file=sys.stderr)
+                return 2
+        prefetch = args.prefetch
+        if provider == "local" and not prefetch:
+            answer = input("Download and verify the local model now? [y/N]: ").strip().lower()
+            prefetch = answer in {"y", "yes"}
+        if provider == "local" and prefetch:
+            if not models.download_model(model):
+                print("error: model download or verification failed; provider remains off", file=sys.stderr)
+                provider = "off"
+        settings = {
+            "embedding_provider": provider,
+            "embedding_model": model,
+            "gateway_url": gateway_url,
+            "gateway_key_env": gateway_key_env,
+        }
+        config_path = core.default_hermes_home() / "config.yaml"
+        _write_plugin_settings(config_path, settings)
+        print(f"Updated {config_path} for skill-proof ({provider}).")
+        if provider == "local" and not prefetch:
+            print("Install model weights separately with: python cli.py prefetch --model " + model)
+        return 0
 
     if args.command == "bridge":
         import bridge
@@ -372,7 +508,7 @@ def main(argv=None) -> int:
             if st["installed"]:
                 installed_models.append(key)
         vdb_path = core.default_hermes_home() / "plugin-data" / "skill-proof" / "embeddings.db"
-        vec_idx = core.VectorIndex(db_path=vdb_path) if vdb_path.exists() else None
+        vec_idx = core.vector_index_from_env(db_path=vdb_path)
         st_data = {
             "version": core.__version__,
             "catalog_skills": len(catalog.skills),

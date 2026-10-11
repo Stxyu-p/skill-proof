@@ -23,7 +23,7 @@
 
 **Skill Proof** is an in-process, deterministic skill routing engine designed for autonomous AI coding agents—including **Hermes Agent, Claude Code, OpenAI Codex, Antigravity, and Cursor**.
 
-In modern agent environments with large catalogs of specialized skills (`SKILL.md`), injecting full skill indexes into system prompts bloats context windows by thousands of tokens every turn. Delegating routing decisions to an external LLM call introduces 5–15 seconds of latency per instruction.
+In modern agent environments with large catalogs of specialized skills (`SKILL.md`), injecting full skill indexes into system prompts can add thousands of tokens each turn. Delegating routing decisions to an external LLM call can add substantial latency.
 
 Skill Proof replaces prompt-based discovery with **in-process deterministic evaluation**. Utilizing token overlap, alias-aware negation analysis, and optional local ONNX vector caching, Skill Proof resolves user requests to the exact winning skill in **under 1 millisecond** with **zero model calls**.
 
@@ -40,7 +40,7 @@ vetoed: test-driven-development (matched negation: 'do not use TDD')
 
 ![Skill Proof Two-Tier In-Process Routing Architecture](docs/architecture.svg)
 
-<sub>Two-tier architecture: Tier 1 resolves high-confidence skills in-process (&lt; 1 ms, 0 tokens) and emits a single-line prompt instruction. Ambiguous or multi-domain instructions fall back safely to a top-3 candidate shortlist evaluated by the host model. Plain SVG, zero external assets.</sub>
+<sub>Two-tier architecture: Tier 1 resolves high-confidence skills in-process and injects a single-line instruction into the current user message. Ambiguous turns receive up to three candidates; no-match turns rely on the host's normal skill index. Plain SVG, zero external assets.</sub>
 
 ---
 
@@ -48,7 +48,7 @@ vetoed: test-driven-development (matched negation: 'do not use TDD')
 
 | Challenge in LLM-Based Routing | How Skill Proof Solves It | Practical Benefit |
 | :--- | :--- | :--- |
-| **Prompt Bloat (~4,000 tok/turn)** | Replaces massive catalog prompt dumps with a single-line directive (`Use skill_view for "X" first`). | **Saves ~4,000 tokens on every turn** |
+| **Prompt Bloat** | Injects a selected skill directive into the current user message; the standard Hermes plugin hook does not remove the system prompt's `<available_skills>` index. | **No fixed-prompt token saving is currently implemented or measured** |
 | **Routing Delay (5–15 seconds)** | In-process lexical scoring executes in **&lt; 1 ms** (or ~19 ms with local ONNX cache). | **Thousands of times faster execution response** |
 | **Disabled Tool Leaks** | Reads host configuration (`config.yaml`) to strictly filter disabled utilities (e.g. inactive converters). | **Zero tool hallucinations or accidental leaks** |
 | **Ignoring Negative Constraints** | Probes negation patterns across canonical names and aliases (*"do not use TDD"*). | **Strictly vetoes unwanted workflows** |
@@ -66,7 +66,7 @@ Skill Proof provides three interchangeable provider modes to suit any deployment
 | Provider | Mechanism | Best Used For | Requirements |
 | :--- | :--- | :--- | :--- |
 | **`off` (Default)** | Python Standard Library lexical matching, character n-grams, and synonym graph. | Production fleets, local development, lightweight containers. | **None (0 dependencies)**, 100% offline. |
-| **`local`** | Local CPU ONNX embedding engine with verified HuggingFace models (`multilingual-e5-small`). | Deep multilingual semantic matching without external API keys. | `onnxruntime` (optional). Zero network calls. |
+| **`local`** | Local CPU ONNX embedding engine with verified registry models. | Multilingual semantic matching without external API keys. | `onnxruntime`, `tokenizers`, and `numpy` are optional runtime dependencies; if missing, routing falls back to lexical. |
 | **`gateway`** | OpenAI-compatible embeddings REST endpoint with automatic fail-open fallback. | Centralized enterprise gateways and existing embedding proxies. | API key + Endpoint URL. |
 
 ### 2. High-Throughput & Scale
@@ -140,6 +140,8 @@ Add Skill Proof to your agent configuration (`~/.codex/config.toml`, Claude Code
 }
 ```
 
+MCP vector search defaults to lexical-only. To enable `local` or `gateway` embeddings, set these environment variables on the MCP server process: `SKILL_PROOF_EMBEDDING_PROVIDER`, `SKILL_PROOF_EMBEDDING_MODEL`, `SKILL_PROOF_VECTOR_DB`, and `SKILL_PROOF_MODELS_DIR`. For `gateway`, also set `SKILL_PROOF_GATEWAY_URL` and `SKILL_PROOF_GATEWAY_KEY_ENV`; the latter names the environment variable that holds the key. The key itself is never passed as an MCP setting or written to the audit log. The Hermes plugin continues to use its normal `config.yaml` settings.
+
 ---
 
 ## 🛠️ Command-Line Reference
@@ -147,6 +149,9 @@ Add Skill Proof to your agent configuration (`~/.codex/config.toml`, Claude Code
 ```bash
 # Display catalog skills, installed models, and provider status
 python cli.py status
+
+# Choose a provider and update Hermes config.yaml
+python cli.py setup
 
 # Route a user instruction to the best matching skill
 python cli.py select --query "Analyze and optimize database SQL query performance"
@@ -198,6 +203,8 @@ plugins:
 | `min_score` | `0.28` | Minimum score threshold required for auto-selection. |
 | `min_margin` | `0.05` | Minimum score margin over the runner-up candidate to avoid ambiguity. |
 | `skill_roots` | `[]` | Explicit skill search directories (merges project, user, and agent roots). |
+
+`setup` prompts for `off`, `local`, or `gateway` and updates only `plugins.entries.skill-proof.settings` in the active Hermes profile's `config.yaml`. Use `--prefetch` to explicitly download and checksum-verify a selected local model; downloads do not start automatically.
 
 ---
 

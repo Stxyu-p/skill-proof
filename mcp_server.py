@@ -121,6 +121,11 @@ def _tool_roots(parameters):
     return {"roots": {root_id: str(path) for root_id, path in core.detect_agent_roots().items()}}
 
 
+def _vector_index():
+    """Read the shared, explicit vector settings for this standalone process."""
+    return core.vector_index_from_env()
+
+
 def _tool_scan(parameters):
     roots = _roots(parameters)
     catalog = core.scan_catalog(roots)
@@ -142,8 +147,9 @@ def _tool_select(parameters):
     explicit = core.extract_explicit_skill_names(
         query, known_names=(skill.name for skill in catalog.skills)
     )
-    vdb_path = core.default_hermes_home() / "plugin-data" / "skill-proof" / "embeddings.db"
-    vector_index = core.VectorIndex(db_path=vdb_path) if vdb_path.exists() else None
+    vector_index = _vector_index()
+    if vector_index is not None:
+        vector_index.sync_catalog(catalog.skills)
     selection = core.select_skill(
         catalog,
         query,
@@ -190,8 +196,9 @@ def _tool_search(parameters):
     limit = int(parameters.get("limit", 5))
     roots = _roots(parameters)
     catalog = core.scan_catalog(roots)
-    vdb_path = core.default_hermes_home() / "plugin-data" / "skill-proof" / "embeddings.db"
-    vector_index = core.VectorIndex(db_path=vdb_path) if vdb_path.exists() else None
+    vector_index = _vector_index()
+    if vector_index is not None:
+        vector_index.sync_catalog(catalog.skills)
     explicit = core.extract_explicit_skill_names(
         query, known_names=(skill.name for skill in catalog.skills)
     )
