@@ -26,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `python cli.py status`: report catalog skills, installed models, and vector provider status.
 
 ### Corrected on 2026-10-12
-- The adapter's `pre_llm_call` hook adds context to the current user message; it does not remove Hermes' fixed `<available_skills>` system-prompt index. The plugin alone therefore does not reduce the fixed prompt budget, and prior claims of saving about 4,000 tokens per turn are unsupported and withdrawn.
+- The `pre_llm_call` hook alone only adds context to the current user message. Hermes also exposes `llm_request` middleware; Skill Proof now uses it behind the opt-in `reduce_skill_prompt` setting to replace the available-skills index only after a confident selection. Ambiguous and no-match requests keep the full index. Character reduction is recorded; prior claims of saving about 4,000 tokens per turn remain withdrawn until measured against actual provider token usage.
+- Historical claims of sub-millisecond end-to-end routing and 1,500+ QPS are also unsupported and withdrawn; the routing benchmark gates decision accuracy, not throughput.
 - Local model downloads are explicit through `prefetch` or `setup --prefetch`; there is no automatic lazy-download flow on a hard query in v0.15.0.
 - The primary model's `tokenizer.json` is a Unigram/Metaspace tokenizer, not WordPiece. Local inference uses the optional `tokenizers` package listed in `requirements-local.txt`; a stdlib WordPiece implementation is not compatible with this model.
 

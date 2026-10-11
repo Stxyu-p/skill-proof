@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import time
 import threading
 from datetime import datetime, timezone
@@ -56,6 +57,69 @@ Usage:
 Loaded means Hermes emitted a successful skill lifecycle event. It does not
 mean the model followed the skill, and it does not verify the task result.
 """
+
+_AVAILABLE_SKILLS_BLOCK = re.compile(r"<available_skills>.*?</available_skills>", re.DOTALL)
+
+
+def _replace_available_skills_text(text: Any, skill_name: str) -> tuple[Any, int]:
+    """Keep only a confidently selected skill in a system-prompt index."""
+    if not isinstance(text, str):
+        return text, 0
+    matches = list(_AVAILABLE_SKILLS_BLOCK.finditer(text))
+    if len(matches) != 1:
+        return text, 0
+    replacement = f"<available_skills>\n  - {skill_name}\n</available_skills>"
+    rewritten = _AVAILABLE_SKILLS_BLOCK.sub(lambda _match: replacement, text, count=1)
+    removed = len(text) - len(rewritten)
+    return (rewritten, removed) if removed > 0 else (text, 0)
+
+
+def _rewrite_prompt_content(content: Any, skill_name: str) -> tuple[Any, int]:
+    if isinstance(content, str):
+        return _replace_available_skills_text(content, skill_name)
+    if not isinstance(content, list):
+        return content, 0
+    rewritten = list(content)
+    removed = 0
+    for index, block in enumerate(content):
+        if not isinstance(block, Mapping) or not isinstance(block.get("text"), str):
+            continue
+        text, count = _replace_available_skills_text(block["text"], skill_name)
+        if count:
+            rewritten[index] = {**block, "text": text}
+            removed += count
+    return (rewritten if removed else content), removed
+
+
+def _rewrite_llm_request(request: Any, skill_name: str) -> tuple[Any, int]:
+    """Rewrite only the skills index across common Hermes provider request shapes."""
+    if not isinstance(request, Mapping):
+        return request, 0
+    rewritten = dict(request)
+    removed = 0
+    for key in ("system", "instructions"):
+        if key in request:
+            value, count = _rewrite_prompt_content(request[key], skill_name)
+            if count:
+                rewritten[key] = value
+                removed += count
+    for key in ("messages", "input"):
+        items = request.get(key)
+        if not isinstance(items, list):
+            continue
+        updated_items = list(items)
+        changed = False
+        for index, item in enumerate(items):
+            if not isinstance(item, Mapping) or item.get("role") not in {"system", "developer"}:
+                continue
+            content, count = _rewrite_prompt_content(item.get("content"), skill_name)
+            if count:
+                updated_items[index] = {**item, "content": content}
+                removed += count
+                changed = True
+        if changed:
+            rewritten[key] = updated_items
+    return (rewritten if removed else request), removed
 
 
 def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
@@ -111,6 +175,7 @@ class SkillProofPlugin:
         self.ctx = ctx
         self.roots = _resolve_roots(ctx.get_config("skill_roots", []))
         mode = str(ctx.get_config("mode", "nudge") or "nudge")
+        self.reduce_skill_prompt = _bool_setting(ctx.get_config("reduce_skill_prompt", False), False)
         self._skills_cache: tuple[float, set[str]] = (0.0, set())
         invariants = ctx.get_config("invariants", {})
         synonyms = ctx.get_config("synonyms", {})
@@ -249,6 +314,28 @@ class SkillProofPlugin:
             cands = ", ".join(c.skill.name for c in turn.selection.candidates[:3])
             return {"context": f"Ambiguous match: choose between {cands}."}
         return {"context": turn.context} if turn.context else None
+
+    def on_llm_request(self, request: Any = None, turn_id: str = "", **_: Any) -> Optional[dict[str, Any]]:
+        """Reduce the host skills index only when Skill Proof chose confidently."""
+        if not self.reduce_skill_prompt or not turn_id:
+            return None
+        receipt = self.engine.receipt(turn_id=str(turn_id))
+        decision = receipt.get("decision") or {}
+        selected = receipt.get("selected")
+        if decision.get("status") != "selected" or not isinstance(selected, Mapping):
+            return None
+        skill_name = selected.get("name")
+        if not isinstance(skill_name, str) or not skill_name:
+            return None
+        rewritten, removed = _rewrite_llm_request(request, skill_name)
+        if removed <= 0:
+            return None
+        self.engine.record_prompt_reduction(str(turn_id), removed)
+        return {
+            "request": rewritten,
+            "source": "skill-proof",
+            "reason": f"skill_index_chars_removed={removed}",
+        }
 
     def on_pre_tool_call(
         self,
@@ -928,6 +1015,12 @@ class SkillProofPlugin:
             ('on_session_end', self.on_session_end),
         ):
             self.ctx.register_hook(name, self._observed_hook(name, callback))
+        if self.reduce_skill_prompt:
+            register_middleware = getattr(self.ctx, "register_middleware", None)
+            if callable(register_middleware):
+                register_middleware("llm_request", self.on_llm_request)
+            else:
+                logger.warning("Prompt reduction is configured, but Hermes does not expose llm_request middleware")
         self.ctx.register_command(
             "skill-proof",
             handler=self.handle_command,

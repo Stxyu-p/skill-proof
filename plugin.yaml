@@ -17,6 +17,10 @@ config_schema:
     type: str
     default: nudge
     description: observe, nudge, or enforce-tools (enforce is an alias)
+  reduce_skill_prompt:
+    type: bool
+    default: false
+    description: Replace the full Hermes skills index with the confidently selected skill for the current request
   skill_roots:
     type: list
     default: []

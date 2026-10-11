@@ -1,14 +1,13 @@
 <div align="center">
 
   <h1>🛡️ Skill Proof</h1>
-  <p><strong>Deterministic, sub-millisecond skill routing engine for autonomous AI agent fleets</strong></p>
-  <p><em>Sub-millisecond routing · Zero model tokens · Multi-agent via Stdio MCP</em></p>
+  <p><strong>Deterministic in-process skill selection for autonomous AI agents</strong></p>
+  <p><em>No separate model call for routing · Optional local prompt reduction · Multi-agent via Stdio MCP</em></p>
 
   <p>
     <a href="https://github.com/Stxyu-p/skill-proof"><img src="https://img.shields.io/badge/Repository-Stxyu--p%2Fskill--proof-0284c7?style=flat-square&logo=github" alt="Repository" /></a>
     <a href="#-quick-start"><img src="https://img.shields.io/badge/Architecture-Deterministic_Lexical_+_ONNX-0284c7?style=flat-square" alt="Architecture" /></a>
-    <a href="#-key-capabilities-what-you-get"><img src="https://img.shields.io/badge/Latency-Sub--Millisecond-brightgreen?style=flat-square" alt="Latency" /></a>
-    <a href="#-why-use-skill-proof-what-it-solves"><img src="https://img.shields.io/badge/Routing_Cost-0_Tokens-blueviolet?style=flat-square" alt="Routing Cost" /></a>
+    <a href="#-key-capabilities-what-you-get"><img src="https://img.shields.io/badge/Routing-Local-blue?style=flat-square" alt="Local routing" /></a>
     <a href="#-multi-agent-mcp-integration"><img src="https://img.shields.io/badge/Protocol-Stdio_MCP-10b981?style=flat-square" alt="Stdio MCP" /></a>
     <img src="https://img.shields.io/badge/Dependencies-Stdlib_Default-success?style=flat-square" alt="Dependencies" />
     <img src="https://img.shields.io/badge/License-MIT-slate?style=flat-square" alt="License" />
@@ -23,9 +22,9 @@
 
 **Skill Proof** is an in-process, deterministic skill routing engine designed for autonomous AI coding agents—including **Hermes Agent, Claude Code, OpenAI Codex, Antigravity, and Cursor**.
 
-In modern agent environments with large catalogs of specialized skills (`SKILL.md`), injecting full skill indexes into system prompts can add thousands of tokens each turn. Delegating routing decisions to an external LLM call can add substantial latency.
+In agent environments with large catalogs of specialized skills (`SKILL.md`), the full skill index can make the system prompt large. Delegating routing to a separate LLM call adds another model request.
 
-Skill Proof replaces prompt-based discovery with **in-process deterministic evaluation**. Utilizing token overlap, alias-aware negation analysis, and optional local ONNX vector caching, Skill Proof resolves user requests to the exact winning skill in **under 1 millisecond** with **zero model calls**.
+Skill Proof offers **in-process deterministic candidate selection** using token overlap, alias-aware negation analysis, and optional local ONNX vectors. When `reduce_skill_prompt` is enabled, a confident selection replaces the full `<available_skills>` index for that provider request. No-match and ambiguous decisions leave the host index intact.
 
 ```bash
 $ python cli.py select --query "Review this pull request for syntax bugs, but do not use TDD"
@@ -48,12 +47,12 @@ vetoed: test-driven-development (matched negation: 'do not use TDD')
 
 | Challenge in LLM-Based Routing | How Skill Proof Solves It | Practical Benefit |
 | :--- | :--- | :--- |
-| **Prompt Bloat** | Injects a selected skill directive into the current user message; the standard Hermes plugin hook does not remove the system prompt's `<available_skills>` index. | **No fixed-prompt token saving is currently implemented or measured** |
-| **Routing Delay (5–15 seconds)** | In-process lexical scoring executes in **&lt; 1 ms** (or ~19 ms with local ONNX cache). | **Thousands of times faster execution response** |
-| **Disabled Tool Leaks** | Reads host configuration (`config.yaml`) to strictly filter disabled utilities (e.g. inactive converters). | **Zero tool hallucinations or accidental leaks** |
+| **Prompt Bloat** | Optional Hermes `llm_request` middleware replaces `<available_skills>` with the confidently selected skill; ambiguous and no-match turns keep Hermes' full index. | Character reduction is recorded in the turn receipt; model-token savings still need live measurement. |
+| **Extra Routing Calls** | Scores candidates in-process before the normal provider request. | No separate model call is made just to choose a skill. |
+| **Disabled Skills** | Reads host configuration and excludes disabled skills from its local catalog. | Disabled skills are omitted from Skill Proof candidates. |
 | **Ignoring Negative Constraints** | Probes negation patterns across canonical names and aliases (*"do not use TDD"*). | **Strictly vetoes unwanted workflows** |
 | **Wild Guesses on Weak Prompts** | Enforces conservative decision thresholds (`min_score=0.28`, `min_margin=0.05`); marks ties as `ambiguous`. | **Eliminates false-positive tool activation** |
-| **Unverifiable Actions** | Emits SHA256 audit receipts recording selection rationale and tool invariants. | **100% reproducible execution audit trail** |
+| **Unverifiable Selection** | Emits SHA256 audit receipts with selection rationale and observed tool evidence. | Selection evidence can be inspected after the turn. |
 
 ---
 
@@ -180,6 +179,7 @@ plugins:
     skill-proof:
       settings:
         mode: nudge                       # nudge (default), observe, or enforce-tools
+        reduce_skill_prompt: false        # opt-in; selected skill replaces the full system-prompt index
         embedding_provider: off           # off (default zero-dep), local, or gateway
         embedding_model: Xenova/multilingual-e5-small
         min_score: 0.28
@@ -191,7 +191,8 @@ plugins:
 
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
-| `mode` | `nudge` | `nudge` (injects 1-line prompt instruction), `observe` (silent observation), or `enforce-tools` (blocks tool use until skill loads). |
+| `mode` | `nudge` | `nudge` (injects a 1-line instruction), `observe` (silent observation), or `enforce-tools` (blocks tool use until skill loads). |
+| `reduce_skill_prompt` | `false` | When true, a confident Skill Proof selection replaces Hermes' full available-skills index with the selected skill for that provider request. Ambiguous/no-match turns are unchanged. Character savings are recorded; token savings depend on the provider/model tokenizer. |
 | `embedding_provider` | `off` | Vector backend: `off` (stdlib lexical), `local` (CPU ONNX), or `gateway` (REST). |
 | `embedding_model` | `Xenova/multilingual-e5-small` | Model repository identifier from the verified registry. |
 | `min_score` | `0.28` | Minimum score threshold required for auto-selection. |
@@ -235,6 +236,6 @@ python -m unittest discover -s tests -q
 
 <div align="center">
 
-**Skill Proof** <sub>v0.15.0</sub> · Deterministic · Zero-Overhead · Offline
+**Skill Proof** <sub>v0.15.0</sub> · Deterministic · Local-first · Offline-capable
 
 </div>

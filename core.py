@@ -3315,6 +3315,17 @@ class SkillProofEngine:
             if state is not None:
                 state.performance.update(listing_ms=round(listing_ms, 3), total_ms=round(total_ms, 3))
 
+    def record_prompt_reduction(self, turn_id: str, chars_removed: int) -> None:
+        """Record bounded, content-free system-prompt reduction telemetry."""
+        if chars_removed <= 0:
+            return
+        with self._lock:
+            state = self._state(turn_id=turn_id)
+            if state is not None:
+                state.performance["skill_index_chars_removed"] = (
+                    int(state.performance.get("skill_index_chars_removed", 0)) + int(chars_removed)
+                )
+
     def receipt(
         self,
         *,

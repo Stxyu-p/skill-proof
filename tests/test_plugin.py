@@ -46,6 +46,7 @@ class FakeContext:
         self.settings = dict(settings or {})
         self.settings.setdefault("audit_log", False)
         self.hooks = {}
+        self.middleware = {}
         self.commands = {}
         self.state = FakeState()
 
@@ -58,6 +59,9 @@ class FakeContext:
 
     def register_hook(self, name, callback):
         self.hooks[name] = callback
+
+    def register_middleware(self, name, callback):
+        self.middleware[name] = callback
 
     def register_command(self, name, handler, **metadata):
         self.commands[name] = (handler, metadata)
@@ -103,6 +107,87 @@ class PluginAdapterTests(unittest.TestCase):
             },
         )
         self.assertIn("skill-proof", ctx.commands)
+        self.assertEqual(ctx.middleware, {})
+
+    def test_registers_request_middleware_only_when_prompt_reduction_is_enabled(self):
+        ctx = self.context(reduce_skill_prompt=True)
+
+        plugin_module.register(ctx)
+
+        self.assertIn("llm_request", ctx.middleware)
+
+    def test_reduces_skill_index_to_selected_skill_and_records_character_savings(self):
+        ctx = self.context(reduce_skill_prompt=True)
+        plugin = plugin_module.register(ctx)
+        ctx.hooks["pre_llm_call"](
+            session_id="s1", task_id="task1", turn_id="turn1",
+            user_message="Use $python-tdd",
+        )
+        original_system = (
+            "stable instructions\n<available_skills>\n"
+            "  - python-tdd: Write Python tests before implementation\n"
+            "  - unrelated: A long unrelated skill description\n"
+            "</available_skills>\nkeep this ending"
+        )
+        request = {
+            "messages": [
+                {"role": "system", "content": original_system},
+                {"role": "user", "content": "Use $python-tdd"},
+            ],
+            "tools": [{"name": "skill_view"}],
+        }
+
+        result = ctx.middleware["llm_request"](
+            request=request, turn_id="turn1", session_id="s1",
+        )
+
+        rewritten = result["request"]["messages"][0]["content"]
+        self.assertIn("stable instructions", rewritten)
+        self.assertIn("python-tdd", rewritten)
+        self.assertNotIn("unrelated", rewritten)
+        self.assertIn("keep this ending", rewritten)
+        self.assertEqual(request["messages"][0]["content"], original_system)
+        self.assertEqual(result["reason"], f"skill_index_chars_removed={len(original_system) - len(rewritten)}")
+        receipt = plugin.engine.receipt(turn_id="turn1")
+        self.assertEqual(
+            receipt["performance"]["skill_index_chars_removed"],
+            len(original_system) - len(rewritten),
+        )
+
+    def test_prompt_reduction_is_noop_without_confident_selection(self):
+        ctx = self.context(reduce_skill_prompt=True)
+        plugin_module.register(ctx)
+        request = {"instructions": "<available_skills>\n- all skills\n</available_skills>"}
+
+        result = ctx.middleware["llm_request"](
+            request=request, turn_id="missing-turn", session_id="s1",
+        )
+
+        self.assertIsNone(result)
+        self.assertIn("all skills", request["instructions"])
+
+    def test_prompt_reduction_preserves_provider_text_block_metadata(self):
+        request = {
+            "system": [
+                {
+                    "type": "text",
+                    "text": (
+                        "before <available_skills>many unrelated skill descriptions with substantial text"
+                        "</available_skills> after"
+                    ),
+                    "cache_control": {"type": "ephemeral"},
+                },
+                {"type": "image", "source": {"type": "base64", "data": "unchanged"}},
+            ]
+        }
+
+        rewritten, removed = plugin_module._rewrite_llm_request(request, "python-tdd")
+
+        self.assertGreater(removed, 0)
+        self.assertIn("python-tdd", rewritten["system"][0]["text"])
+        self.assertEqual(rewritten["system"][0]["cache_control"], {"type": "ephemeral"})
+        self.assertEqual(rewritten["system"][1], request["system"][1])
+        self.assertIn("many unrelated skill descriptions", request["system"][0]["text"])
 
     def test_hook_flow_blocks_tools_then_accepts_authoritative_load(self):
         ctx = self.context(mode="enforce-tools")
