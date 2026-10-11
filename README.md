@@ -1,18 +1,36 @@
-# Skill Proof
+<div align="center">
 
-Deterministic, sub-millisecond skill routing engine for autonomous AI coding agents and fleets.
+  <h1>🛡️ Skill Proof</h1>
+  <p><strong>Deterministic, sub-millisecond skill routing engine for autonomous AI agent fleets</strong></p>
+  <p><em>Route in sub-milliseconds · Zero model tokens · Multi-agent via Stdio MCP</em></p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![Stdlib Default](https://img.shields.io/badge/Dependencies-0_(Stdlib_Default)-success.svg)](https://docs.python.org/3/library/)
+  <p>
+    <a href="#-quick-start"><img src="https://img.shields.io/badge/Quick_Start-CLI-0284c7?style=for-the-badge" alt="Quick Start" /></a>
+    <a href="#-key-capabilities-what-you-get"><img src="https://img.shields.io/badge/Routing_Modes-Off_|_Local_|_Gateway-7B61FF?style=for-the-badge" alt="Routing Modes" /></a>
+    <a href="#-multi-agent-mcp-integration"><img src="https://img.shields.io/badge/Multi--Agent-MCP_Server-10b981?style=for-the-badge" alt="MCP Server" /></a>
+    <a href="#-installation"><img src="https://img.shields.io/badge/Installation-Hermes_&_CLI-blueviolet?style=for-the-badge" alt="Installation" /></a>
+  </p>
+
+  <p>
+    <img src="https://img.shields.io/badge/Architecture-Deterministic_Lexical_+_ONNX-07405E?style=flat-square" alt="Architecture" />
+    <img src="https://img.shields.io/badge/Latency-1.3_ms_(In--Process)-brightgreen?style=flat-square" alt="Latency" />
+    <img src="https://img.shields.io/badge/Routing_Cost-0_Tokens-blueviolet?style=flat-square" alt="Tokens" />
+    <img src="https://img.shields.io/badge/Dependencies-0_(Stdlib_Default)-success?style=flat-square" alt="Dependencies" />
+    <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License" />
+    <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square" alt="Python" />
+  </p>
+
+</div>
 
 ---
 
-## What is Skill Proof?
+## 🌟 What is Skill Proof?
 
-**Skill Proof** is an in-process, deterministic routing engine designed for AI coding agents such as Hermes Agent, Claude Code, Codex, Antigravity, and Cursor.
+**Skill Proof** is an in-process, deterministic routing engine designed for autonomous AI coding agents—including **Hermes Agent, Claude Code, OpenAI Codex, Antigravity, and Cursor**.
 
-Instead of burning thousands of prompt tokens every turn by injecting massive skill catalogs into system prompts—or making slow, non-deterministic LLM calls just to choose a skill—Skill Proof analyzes the turn in-process and selects the exact matching skill in **under 2 milliseconds**.
+In modern agent environments with 50 to 200+ specialized skills (`SKILL.md`), injecting full skill catalogs into system prompts bloats context windows by ~4,000 tokens every turn, while delegating routing to an LLM adds 5–15 seconds of latency per instruction.
+
+Skill Proof solves this by evaluating instructions **in-process** via lexical token overlap, synonym graphs, and negative veto probes, selecting the exact winning skill in **under 2 milliseconds** with **zero model calls**.
 
 ```bash
 $ python cli.py select --query "ช่วยทำ dashboard หน้าเว็บให้สวยๆ หน่อย"
@@ -22,102 +40,92 @@ selected: ui-ux-pro-max (reasons: tag_terms, alias_terms, description_terms)
 
 ---
 
-## Why Use Skill Proof? (What It Solves)
+## 📐 Architecture
 
-Modern agent systems often maintain 50 to 200+ specialized skills (`SKILL.md`). Managing this catalog directly inside the model prompt creates significant bottlenecks:
+![Skill Proof Two-Tier In-Process Routing Architecture](docs/architecture.svg)
 
-- **Eliminates Prompt Bloat & Token Waste:** Injecting a catalog of 100+ skills consumes ~4,000 tokens on every turn. Skill Proof routes in-process, enabling agents to replace massive prompt dumps with a clean, single-line load instruction.
-- **Eliminates Routing Latency:** LLM-based skill selection takes 5–15 seconds per turn. Skill Proof resolves queries in **~1.3 ms** (pure standard library) or **~19 ms** (local ONNX semantic cache)—over 500x faster.
-- **Prevents Hallucinations & Disabled Tool Leaks:** Automatically syncs with host configuration to strictly exclude disabled tools (such as inactive converters or scripts), ensuring the model never hallucinates or calls forbidden skills.
-- **Strict Negative Constraints:** Correctly identifies explicit negative requests (e.g. *"don't use TDD"*, *"ไม่เอา TDD"*) across canonical names and aliases, preventing unwanted workflows from triggering.
-- **Truthful Audit Receipts:** Emits SHA256-hashed JSON audit receipts recording why a skill was selected, whether it was actually loaded, and whether declared tool invariants were respected—without ever logging private user prompts.
+<sub>Two-tier architecture: Tier 1 resolves high-confidence skills in-process (&lt; 2 ms, 0 tokens) and emits a single-line prompt instruction. Ambiguous or multi-domain instructions fall back safely to a top-3 candidate shortlist evaluated by the host model. Plain SVG, zero external assets.</sub>
 
 ---
 
-## Key Capabilities (What You Get)
+## 🎯 Why Use Skill Proof? (What It Solves)
+
+| Challenge in LLM-Based Routing | How Skill Proof Solves It | Practical Benefit |
+| :--- | :--- | :--- |
+| **Prompt Bloat (~4,000 tok/turn)** | Replaces massive catalog prompt dumps with a clean 1-line nudge (`Use skill_view for "X" first`). | **Saves ~4,000 tokens every single turn** |
+| **Routing Delay (5–15 seconds)** | In-process lexical engine scores the catalog in **~1.3 ms** (or ~19 ms with local ONNX cache). | **~500x faster execution response** |
+| **Disabled Tool Leaks** | Reads host configuration (`config.yaml`) to strictly filter disabled utilities (e.g. inactive converters). | **Zero tool hallucinations or accidental leaks** |
+| **Ignoring Negative Vetoes** | Analyzes negation patterns against canonical names and aliases (*"don't use TDD"*, *"ไม่เอา TDD"*). | **Strictly vetoes unwanted workflows** |
+| **Opaque Hallucinations** | Bounded decision thresholds (`min_score=0.28`, `min_margin=0.05`); marks close calls as `ambiguous`. | **Never guesses wildly on vague instructions** |
+| **Unverifiable Actions** | Generates cryptographic SHA256 audit receipts recording selection rationale and tool invariants. | **100% reproducible compliance audit trail** |
+
+---
+
+## 🚀 Key Capabilities (What You Get)
 
 ### 1. Three Neutral Provider Modes
 
-Skill Proof adapts to your environment without requiring configuration changes:
+Skill Proof provides three interchangeable provider modes to suit any deployment scenario:
 
-| Provider | Description | Requirements |
-| :--- | :--- | :--- |
-| **`off` (Default)** | Pure Python standard library lexical matching, character n-grams, and colloquial synonym graph. | **Zero dependencies**, 100% offline. |
-| **`local`** | Local CPU ONNX embedding engine using verified HuggingFace models for deep multilingual semantic matching. | `onnxruntime` (optional). Zero API keys. |
-| **`gateway`** | OpenAI-compatible embeddings REST endpoint with automatic fail-open fallback to lexical search on network issues. | API key + Gateway URL. |
+| Provider | Mechanism | Best Used For | External Requirements |
+| :--- | :--- | :--- | :--- |
+| **`off` (Default)** | Python Standard Library lexical matching, character n-grams, and colloquial synonym graph. | Production fleets, local development, lightweight containers. | **None (0 dependencies)**, 100% offline. |
+| **`local`** | Local CPU ONNX embedding engine with verified HuggingFace models (`multilingual-e5-small`). | Deep multilingual semantic matching (Thai, English, CJK) without API keys. | `onnxruntime` (optional). Zero network calls. |
+| **`gateway`** | OpenAI-compatible embeddings REST endpoint with automatic fail-open fallback. | Centralized enterprise gateways and existing embedding proxies. | API key + Endpoint URL. |
 
-### 2. Multi-Agent Ecosystem Support (MCP)
+### 2. Multi-Agent MCP Integration
 
-Skill Proof includes a standard Model Context Protocol (MCP) server. External agents like Claude Code, Cursor, and Codex can search and inspect your skill catalog over stdio via `skill_search` and `skill_read`.
+Skill Proof embeds a standard **Model Context Protocol (MCP)** server. External agents connect via Stdio to search and read skills without modifying their harness:
 
-### 3. Model Registry with Verified Checksums
+- `skill_search`: Hybrid RRF top-k search returning matching skill names, descriptions, and file paths.
+- `skill_read`: Direct retrieval of full `SKILL.md` markdown content.
+- `skill_select`: Single-skill deterministic routing decision.
+- `skill_scan`: Multi-root catalog diagnostics and status.
 
-When using local semantic embeddings, Skill Proof downloads official, verified models directly from HuggingFace with real-time SHA256 checksum verification:
+### 3. Official HuggingFace Model Registry
 
-- **`Xenova/multilingual-e5-small`** (Quantized ONNX, 384 dims, MIT license)
+When running with `embedding_provider: local`, Skill Proof downloads official, verified models directly from HuggingFace with streaming SHA256 checksum verification:
+
+- **`Xenova/multilingual-e5-small`** (Quantized ONNX, 384 dims, MIT license) — *Primary recommended*
 - **`Xenova/multilingual-e5-small-fp32`** (FP32 ONNX fallback, 384 dims, MIT license)
 - **`Xenova/paraphrase-multilingual-MiniLM-L12-v2`** (Quantized ONNX backup, 384 dims, Apache-2.0)
 
 ---
 
-## Installation
+## 💻 Quick Start
 
-### As a Hermes Plugin
+### Option A: Install as Hermes Agent Plugin
 
-Clone into your Hermes plugins directory and enable:
+Clone directly into your Hermes plugins directory and activate:
 
 ```bash
 git clone https://github.com/Stxyu-p/skill-proof.git ~/.hermes/plugins/skill-proof
 hermes plugins enable skill-proof
 ```
 
-### Standalone CLI / Any Project
+Verify in your next session:
+```text
+/skill-proof status
+/skill-proof health
+```
 
-Clone the repository and run directly:
+### Option B: Standalone CLI / Local Python
 
 ```bash
+# 1. Clone repository
 git clone https://github.com/Stxyu-p/skill-proof.git
 cd skill-proof
-python cli.py status
-```
 
-*Requirements: Python 3.11+. The default mode runs entirely on the standard library with zero external dependencies.*
-
----
-
-## Usage
-
-### 1. Command-Line Interface (CLI)
-
-```bash
-# Check status of catalog and providers
+# 2. Inspect active skills and system status
 python cli.py status
 
-# Route a user instruction to the best matching skill
+# 3. Route an instruction
 python cli.py select --query "ช่วยดูโค้ด Python ให้หน่อย แต่อย่าเพิ่งรันเทสต์นะ ไม่เอา TDD"
-
-# List available embedding models and local download status
-python cli.py models
-
-# Prefetch a verified local model (optional)
-python cli.py prefetch --model Xenova/multilingual-e5-small
-
-# Scan active roots and inspect catalog diagnostics
-python cli.py scan
 ```
 
-### 2. Hermes Slash Commands
+### Option C: Connect External Agents via Stdio MCP
 
-When running inside Hermes Agent, use the built-in commands:
-
-- `/skill-proof status` — View the current turn's routing decision.
-- `/skill-proof explain` — Inspect scores, candidate margins, and selection rationale.
-- `/skill-proof why <skill>` — Diagnostic view of why a skill won, lost, or was vetoed.
-- `/skill-proof health` — Hook activity, performance timings, and catalog health.
-
-### 3. Stdio MCP Server
-
-To expose your skill catalog to Claude Code, Codex, or Cursor, add Skill Proof to your MCP configuration:
+Add Skill Proof to your agent configuration (`~/.codex/config.toml`, Claude Code, or Cursor settings):
 
 ```json
 {
@@ -130,17 +138,35 @@ To expose your skill catalog to Claude Code, Codex, or Cursor, add Skill Proof t
 }
 ```
 
-Available MCP tools:
-- `skill_search`: Hybrid top-k search over active skills.
-- `skill_read`: Read full markdown content of a skill.
-- `skill_select`: Deterministic single-skill selection.
-- `skill_scan`: Catalog discovery and status.
+---
+
+## 🛠️ Command-Line Reference
+
+```bash
+# Display catalog skills, installed models, and provider status
+python cli.py status
+
+# List available HuggingFace models, download sizes, and installation state
+python cli.py models
+
+# Prefetch and verify an embedding model (optional)
+python cli.py prefetch --model Xenova/multilingual-e5-small
+
+# Scan catalog roots and view diagnostics
+python cli.py scan
+
+# Evaluate scoring breakdown and char n-gram weights for a query
+python cli.py eval "ช่วยทำ dashboard หน้าเว็บให้สวยๆ หน่อย"
+
+# Detect near-duplicate or overlapping skills across roots
+python cli.py overlap --min-similarity 0.4
+```
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
-Configure Skill Proof in your host's `config.yaml` under `plugins.entries.skill-proof.settings`:
+Configure Skill Proof in your host configuration file (`config.yaml`):
 
 ```yaml
 plugins:
@@ -159,10 +185,10 @@ plugins:
           - ~/.hermes/skills
 ```
 
-| Setting | Default | Description |
+| Parameter | Default | Description |
 | :--- | :--- | :--- |
-| `mode` | `nudge` | `nudge` (recommends load), `observe` (silent), or `enforce-tools` (blocks tools until skill loaded). |
-| `embedding_provider` | `off` | Vector backend: `off` (pure stdlib lexical), `local` (CPU ONNX), or `gateway` (REST). |
+| `mode` | `nudge` | `nudge` (injects 1-line prompt instruction), `observe` (silent observation), or `enforce-tools` (blocks tool use until skill loads). |
+| `embedding_provider` | `off` | Vector backend: `off` (stdlib lexical), `local` (CPU ONNX), or `gateway` (REST). |
 | `embedding_model` | `Xenova/multilingual-e5-small` | Model repository identifier from the verified registry. |
 | `min_score` | `0.28` | Minimum score threshold required for auto-selection. |
 | `min_margin` | `0.05` | Minimum score margin over the runner-up candidate to avoid ambiguity. |
@@ -170,18 +196,23 @@ plugins:
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+Contributions and feedback are welcome! Please open an issue first to discuss architectural changes or proposed feature additions.
 
-Please ensure all changes pass the test suite:
-
+To run the offline test suite:
 ```bash
 python -m unittest discover -s tests -q
 ```
 
 ---
 
-## License
+## 📄 License
 
 [MIT](LICENSE) © Stxyu-p
+
+<div align="center">
+
+**Skill Proof** <sub>v0.15.0</sub> · Deterministic · Zero-Overhead · Offline
+
+</div>
