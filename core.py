@@ -940,10 +940,14 @@ def extract_explicit_skill_names(query: str, *, known_names=None) -> tuple[str, 
     return tuple(names)
 
 
+# Single source of truth (zero-spaghetti law 1): every spaceless-script
+# range lives in _SPACELESS_RANGES below; these predicates only slice it.
+_SEA_RANGE_COUNT = 4  # Thai, Lao, Myanmar, Khmer: first entries of the table
+
+
 def _is_sea_spaceless_character(character: str) -> bool:
     code = ord(character)
-    # Southeast Asian scripts: Thai (0E00-0E7F), Lao (0E80-0EFF), Myanmar (1000-109F), Khmer (1780-17FF)
-    return (0x0E00 <= code <= 0x0EFF) or (0x1000 <= code <= 0x109F) or (0x1780 <= code <= 0x17FF)
+    return any(lo <= code <= hi for lo, hi in _SPACELESS_RANGES[:_SEA_RANGE_COUNT])
 
 
 _STOPWORDS = {
@@ -1234,13 +1238,7 @@ _SPACELESS_RANGES = (
 
 def _is_spaceless_character(character: str) -> bool:
     code = ord(character)
-    return _is_sea_spaceless_character(character) or (
-        (0x3040 <= code <= 0x30FF)
-        or (0x3400 <= code <= 0x4DBF)
-        or (0x4E00 <= code <= 0x9FFF)
-        or (0xAC00 <= code <= 0xD7AF)
-        or (0x1100 <= code <= 0x11FF)
-    )
+    return any(lo <= code <= hi for lo, hi in _SPACELESS_RANGES)
 
 
 # ponytail: lru_cache on _contains_spaceless_script cuts repeated character category loops
