@@ -600,6 +600,54 @@ def suggest_roots(
     return suggestions
 
 
+def _tree_fingerprint(
+    roots,
+    max_skill_bytes,
+):
+    """Cheap whole-tree snapshot for the scan fast path (os.scandir stats).
+
+    Returns None when any root is unreadable (caller runs the full secure
+    scan). Otherwise (sorted root ids, root entry counts, per-skill-dir
+    SKILL.md mtime+size) - enough to detect add/remove/edit/rename of
+    skills without opening a single file. Directory mtimes change on child
+    create/delete/rename; SKILL.md mtime+size catches content edits.
+    """
+    try:
+        parts = []
+        for raw_root_id, raw_root in sorted(roots.items(), key=lambda item: str(item[0])):
+            root = pathlib.Path(raw_root).expanduser()
+            try:
+                resolved = root.resolve(strict=True)
+            except (OSError, RuntimeError):
+                return None
+            if not resolved.is_dir():
+                return None
+            entries = []
+            with os.scandir(resolved) as top:
+                for entry in top:
+                    try:
+                        is_dir = entry.is_dir(follow_symlinks=False)
+                    except OSError:
+                        return None
+                    entries.append((entry.name, is_dir))
+            entries.sort()
+            parts.append((str(raw_root_id).strip(), len(entries)))
+            for name, is_dir in entries:
+                if not is_dir or name.startswith(".") or name == "__pycache__":
+                    continue
+                if name == "node_modules":
+                    continue
+                skill = resolved / name / "SKILL.md"
+                try:
+                    st = skill.stat()
+                    parts.append((name, st.st_mtime_ns, st.st_size))
+                except OSError:
+                    parts.append((name, None))
+        return (max_skill_bytes, tuple(parts))
+    except Exception:
+        return None
+
+
 def scan_catalog(
     roots: Mapping[str, os.PathLike[str] | str],
     *,
@@ -617,6 +665,18 @@ def scan_catalog(
     if metrics is not None:
         metrics.update(cache_hits=0, cache_misses=0)
     disabled_set = load_disabled_skills() if disabled is None else normalize_identifiers(disabled)
+    # Fast path: unchanged tree (by cheap scandir fingerprint) reuses the last
+    # Catalog object as-is. Security posture unchanged: any add/remove/edit
+    # changes the fingerprint and runs the full secure scan below.
+    if cache is not None:
+        fp = _tree_fingerprint(roots, max_skill_bytes)
+        # disabled_set participates: same tree + different exclusions is a miss.
+        fp = (fp, tuple(sorted(disabled_set))) if fp is not None else None
+        if fp is not None and cache.get("__tree_fp__") == fp and "__catalog__" in cache:
+            if metrics is not None:
+                metrics.update(cache_hits=len(cache.get("__live_keys__", ())), cache_misses=0, tree_cache_hit=True)
+            return cache["__catalog__"]
+        cache["__tree_fp__"] = fp
 
     for raw_root_id, raw_root in sorted(roots.items(), key=lambda item: str(item[0])):
         root_id = str(raw_root_id).strip()
@@ -706,6 +766,8 @@ def scan_catalog(
 
     if cache is not None:
         for key in set(cache) - live_cache_keys:
+            if isinstance(key, str) and key.startswith("__"):
+                continue
             del cache[key]
     found = _apply_cross_root_precedence(found, roots, diagnostics)
     if disabled_set:
@@ -734,7 +796,11 @@ def scan_catalog(
     catalog_hash = hashlib.sha256(
         json.dumps(catalog_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return Catalog(tuple(found), tuple(diagnostics), catalog_hash)
+    catalog = Catalog(tuple(found), tuple(diagnostics), catalog_hash)
+    if cache is not None:
+        cache["__catalog__"] = catalog
+        cache["__live_keys__"] = frozenset(live_cache_keys)
+    return catalog
 
 
 def overlap_report(
