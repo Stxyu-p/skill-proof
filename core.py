@@ -2742,6 +2742,12 @@ class SkillProofEngine:
                     )
             else:
                 return Selection("no_match", "no_previous_selection", None, (), False, False)
+            if len(matches) > 1:
+                return Selection("ambiguous", "ambiguous", None, (), False, False)
+            if not matches:
+                return Selection(
+                    "no_match", "dialogue_reference_unavailable", None, (), False, False
+                )
             memory.focus = matches[0].normalized_name
             memory.focus_remaining = self.focus_turns
             candidate = RankedCandidate(matches[0], 1.0, ("dialogue_focus_request",))
@@ -2809,7 +2815,12 @@ class SkillProofEngine:
                 f'name="{name}". A Hermes loaded event proves loading only; it does not prove '
                 "skill compliance or task verification."
             )
-        if selection.status == "ambiguous" and selection.candidates:
+        if selection.status == "ambiguous":
+            if not selection.candidates:
+                return (
+                    "Skill Proof: the named skill is ambiguous in the current catalog. "
+                    "Ask which skill to load; do not claim one was selected."
+                )
             names = ", ".join(item.skill.name for item in selection.candidates[:3])
             return (
                 f"Skill Proof: multiple skills matched ({names}). Ask which skill to load; "

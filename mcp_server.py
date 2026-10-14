@@ -53,9 +53,9 @@ TOOLS = [
     {
         "name": "skill_select",
         "description": (
-            "Deterministically select one SKILL.md for a query and return the "
-            "evidence: decision status and reason, selected skill, ranked candidates. "
-            "No network and no model call."
+            "Select one SKILL.md for a query and return the evidence: decision status "
+            "and reason, selected skill, ranked candidates. Lexical-only by default; "
+            "configured embeddings may sync for non-explicit queries."
         ),
         "inputSchema": {
             "type": "object",
@@ -126,6 +126,18 @@ def _vector_index():
     return core.vector_index_from_env()
 
 
+def _selection_vector_index(query, catalog):
+    explicit = core.extract_explicit_skill_names(
+        query, known_names=(skill.name for skill in catalog.skills)
+    )
+    if explicit:
+        return explicit, None
+    vector_index = _vector_index()
+    if vector_index is not None:
+        vector_index.sync_catalog(catalog.skills)
+    return explicit, vector_index
+
+
 def _tool_scan(parameters):
     roots = _roots(parameters)
     catalog = core.scan_catalog(roots)
@@ -144,12 +156,7 @@ def _tool_select(parameters):
         raise ValueError("query must be a non-empty string")
     roots = _roots(parameters)
     catalog = core.scan_catalog(roots)
-    explicit = core.extract_explicit_skill_names(
-        query, known_names=(skill.name for skill in catalog.skills)
-    )
-    vector_index = _vector_index()
-    if vector_index is not None:
-        vector_index.sync_catalog(catalog.skills)
+    explicit, vector_index = _selection_vector_index(query, catalog)
     selection = core.select_skill(
         catalog,
         query,
@@ -196,12 +203,7 @@ def _tool_search(parameters):
     limit = int(parameters.get("limit", 5))
     roots = _roots(parameters)
     catalog = core.scan_catalog(roots)
-    vector_index = _vector_index()
-    if vector_index is not None:
-        vector_index.sync_catalog(catalog.skills)
-    explicit = core.extract_explicit_skill_names(
-        query, known_names=(skill.name for skill in catalog.skills)
-    )
+    explicit, vector_index = _selection_vector_index(query, catalog)
     selection = core.select_skill(
         catalog,
         query,
@@ -250,6 +252,8 @@ def _tool_read(parameters):
     matches = catalog.by_name(name.strip())
     if not matches:
         raise ValueError(f"Skill '{name}' not found in catalog")
+    if len(matches) > 1:
+        raise ValueError(f"Skill '{name}' is ambiguous in catalog")
     skill = matches[0]
     content = skill.source_path.read_text(encoding="utf-8")
     return {

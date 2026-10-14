@@ -252,6 +252,39 @@ class FocusTests(unittest.TestCase):
         self.harness = SessionHarness(focus_turns=3)
         self.addCleanup(self.harness.close)
 
+    def test_named_focus_fails_closed_for_duplicate_names(self):
+        with tempfile.TemporaryDirectory(prefix="skill_proof_duplicate_focus_") as tmp:
+            root = pathlib.Path(tmp)
+            for folder, name in (("first", "python-tdd"), ("second", "Python-TDD"), ("third", "slides")):
+                skill_dir = root / folder
+                skill_dir.mkdir()
+                (skill_dir / "SKILL.md").write_text(
+                    f"---\nname: {name}\ndescription: duplicate\n---\nBody.\n",
+                    encoding="utf-8",
+                )
+            engine = SkillProofEngine({"fixture": root}, focus_turns=3)
+            engine.begin_turn(
+                turn_id="history",
+                session_id="s1",
+                task_id="task",
+                query="Use $slides",
+            )
+            engine.finish_turn(turn_id="history")
+            start = engine.begin_turn(
+                turn_id="focus-duplicate",
+                session_id="s1",
+                task_id="task",
+                query="keep using python-tdd",
+            )
+            receipt = engine.receipt(turn_id="focus-duplicate")
+            state = engine.session_state("s1")
+            engine.finish_turn(turn_id="focus-duplicate")
+
+        self.assertIsNone(receipt.get("selected"))
+        self.assertEqual(receipt["decision"]["reason"], "ambiguous")
+        self.assertEqual(state["focus"], "")
+        self.assertIn("Ask which skill", start.context)
+
     def test_focus_request_sets_focus_with_evidence(self):
         self.harness.select("write Python tests before implementation")
         name, reason, session = self.harness.select("keep using python-tdd")

@@ -8,8 +8,24 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import core
+import mcp_server
+
+
+class FakeVectorIndex:
+    def __init__(self):
+        self.sync_calls = 0
+        self._memory_vectors = {"demo-skill": (1.0, 0.0)}
+
+    def sync_catalog(self, skills):
+        self.sync_calls += 1
+
+    def rank(self, query, top_k=20):
+        return []
+
+
 
 _PLUGIN_DIR = pathlib.Path(__file__).resolve().parents[1]
 
@@ -175,6 +191,59 @@ class McpServerTests(unittest.TestCase):
         read_res = json.loads(more_responses[1]["result"]["content"][0]["text"])
         self.assertEqual(read_res["name"], "demo-skill")
         self.assertIn("Demo workflow", read_res["content"])
+
+    def test_skill_read_duplicate_names_returns_error_without_content(self):
+        duplicate = self.root / "duplicate"
+        duplicate.mkdir()
+        (duplicate / "SKILL.md").write_bytes(_skill_bytes("Demo-Skill", "Another demo"))
+
+        response = mcp_server.handle(
+            {
+                "method": "tools/call",
+                "params": {
+                    "name": "skill_read",
+                    "arguments": {"name": "demo-skill", "roots": [str(self.root)]},
+                },
+            }
+        )
+
+        self.assertTrue(response["isError"])
+        text = response["content"][0]["text"]
+        self.assertNotIn("Body text", text)
+        self.assertIn("ambiguous", text.lower())
+
+    def test_explicit_skill_select_skips_vector_catalog_sync(self):
+        vector_index = FakeVectorIndex()
+        with patch.object(mcp_server, "_vector_index", return_value=vector_index) as get_index:
+            result = mcp_server._tool_select(
+                {"query": "Use $demo-skill", "roots": [str(self.root)]}
+            )
+
+        self.assertEqual(result["decision"]["status"], "selected")
+        get_index.assert_not_called()
+        self.assertEqual(vector_index.sync_calls, 0)
+
+    def test_explicit_skill_search_skips_vector_catalog_sync(self):
+        vector_index = FakeVectorIndex()
+        with patch.object(mcp_server, "_vector_index", return_value=vector_index) as get_index:
+            result = mcp_server._tool_search(
+                {"query": "Use $demo-skill", "roots": [str(self.root)]}
+            )
+
+        self.assertTrue(result["results"])
+        get_index.assert_not_called()
+        self.assertEqual(vector_index.sync_calls, 0)
+
+    def test_non_explicit_mcp_queries_still_sync_vector_catalog(self):
+        for handler, query in (
+            (mcp_server._tool_select, "find a demo workflow"),
+            (mcp_server._tool_search, "find a demo workflow"),
+        ):
+            with self.subTest(handler=handler.__name__):
+                vector_index = FakeVectorIndex()
+                with patch.object(mcp_server, "_vector_index", return_value=vector_index):
+                    handler({"query": query, "roots": [str(self.root)]})
+                self.assertEqual(vector_index.sync_calls, 1)
 
     def test_unknown_method_and_tool_errors_do_not_crash(self):
         responses = self.converse(
