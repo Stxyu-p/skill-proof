@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 import core
-from core import Catalog, SkillRecord, VectorIndex, select_skill
+from core import Catalog, InMemoryPolicyStore, SkillProofEngine, SkillRecord, VectorIndex, select_skill
 
 import routing_benchmark
 import _ranking
@@ -197,6 +197,88 @@ class CandidatePruningTests(unittest.TestCase):
                 [(c.skill.name, c.score) for c in after.candidates],
                 query,
             )
+
+
+class _FakeClock:
+    """Callable monotonic-style clock advanced explicitly by tests."""
+
+    def __init__(self, now: float = 1000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class SeamTests(unittest.TestCase):
+    """v0.16 plan item 5.1: injected clock / turn-policy store (test seams)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name) / "skills"
+        (self.root / "alpha").mkdir(parents=True)
+        (self.root / "alpha" / "SKILL.md").write_text(
+            "---\nname: alpha\ndescription: Testing workflow\n---\nInstructions.\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_plugin_skills_cache_ttl_uses_injected_clock_without_sleeping(self):
+        calls: list[str] = []
+
+        class CountingContext(FakeContext):
+            def dispatch_tool(inner_self, name, args):
+                calls.append(name)
+                return super().dispatch_tool(name, args)
+
+        clock = _FakeClock()
+        plugin = plugin_module.SkillProofPlugin(
+            CountingContext({"skill_roots": [str(self.root)]}), clock=clock
+        )
+        plugin.on_pre_llm_call(session_id="s", task_id="t", turn_id="1", user_message="hello")
+        self.assertEqual(calls.count("skills_list"), 1)
+        clock.advance(5)
+        plugin.on_pre_llm_call(session_id="s", task_id="t", turn_id="2", user_message="hello")
+        self.assertEqual(calls.count("skills_list"), 1, "within the 30s TTL the cached listing must be reused")
+        clock.advance(31)
+        plugin.on_pre_llm_call(session_id="s", task_id="t", turn_id="3", user_message="hello")
+        self.assertEqual(calls.count("skills_list"), 2, "after the 30s TTL the listing must be refetched")
+
+    def test_engine_metrics_use_injected_clock(self):
+        engine = SkillProofEngine(
+            {"test": self.root}, clock=_FakeClock(), policy_store=InMemoryPolicyStore()
+        )
+        turn = engine.begin_turn(turn_id="1", session_id="s", task_id="t", query="Use $alpha")
+        self.assertEqual(turn.selection.status, "selected")
+        performance = engine._state(turn_id="1").performance
+        self.assertEqual(performance["scan_ms"], 0.0)
+        self.assertEqual(performance["selection_ms"], 0.0)
+        self.assertEqual(performance["core_ms"], 0.0)
+
+    def test_begin_turn_publishes_and_clears_turn_policy(self):
+        store = InMemoryPolicyStore()
+        engine = SkillProofEngine(
+            {"test": self.root},
+            mode="enforce-tools",
+            invariants={"alpha": {"forbidden_tools": ["rm"], "ordered_tools": ["first", "second"]}},
+            policy_store=store,
+        )
+        engine.begin_turn(turn_id="1", session_id="s", task_id="t", query="Use $alpha")
+        state = store.read()
+        self.assertEqual(state["mode"], "enforce-tools")
+        self.assertEqual(state["selected_skill"], "alpha")
+        self.assertEqual(state["forbidden_tools"], ["rm"])
+        self.assertEqual(state["ordered_tools"], ["first", "second"])
+        self.assertEqual(state["completed"], [])
+
+        engine.begin_turn(turn_id="2", session_id="s", task_id="t", query="qqqq zzzz nonsense")
+        cleared = store.read()
+        self.assertIsNone(cleared.get("selected_skill"))
+        self.assertNotIn("forbidden_tools", cleared)
 
 
 if __name__ == "__main__":

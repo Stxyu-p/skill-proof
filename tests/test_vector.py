@@ -1,4 +1,4 @@
-import math, os, pathlib, sqlite3, struct, tempfile, unittest
+import hashlib, math, os, pathlib, sqlite3, struct, tempfile, unittest
 from unittest import mock
 
 from core import (
@@ -84,6 +84,60 @@ class VectorIndexTests(unittest.TestCase):
             sel = select_skill(catalog, "do not use skill-a", vector_index=idx)
             self.assertEqual(sel.status, "no_match")
             self.assertIsNone(sel.selected)
+
+
+class DeterministicMockEmbedder:
+    """EmbedderProtocol implementation: stable hashed vectors, no model, no network."""
+
+    def __init__(self, dim: int = 8) -> None:
+        self.dim = dim
+
+    def embed(self, texts, is_query: bool = False):
+        out = []
+        for text in texts:
+            seed = f"{'q' if is_query else 'd'}:{text}"
+            out.append(
+                tuple(
+                    (int(hashlib.sha256(f"{seed}:{i}".encode("utf-8")).hexdigest()[:8], 16) % 1000) / 1000.0
+                    for i in range(self.dim)
+                )
+            )
+        return out
+
+
+class EmbedderSeamTests(unittest.TestCase):
+    """v0.16 plan item 5.1: the EmbedderProtocol seam on VectorIndex."""
+
+    def test_injected_embedder_replaces_provider_and_is_traced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            idx = VectorIndex(
+                pathlib.Path(tmp) / "v.db",
+                provider="gateway",
+                api_key="unused",
+                embedder=DeterministicMockEmbedder(),
+            )
+            vectors = idx._call_embeddings(["alpha skill"], is_query=False)
+            self.assertEqual(len(vectors), 1)
+            self.assertEqual(len(vectors[0]), 8)
+            trace = idx.trace_snapshot()
+            self.assertEqual(trace["provider_used"], "embedder")
+            self.assertIsNone(trace["fallback_reason"])
+
+    def test_injected_embedder_failure_is_fail_open(self):
+        class BoomEmbedder:
+            def embed(self, texts, is_query=False):
+                raise RuntimeError("boom")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            idx = VectorIndex(
+                pathlib.Path(tmp) / "v.db",
+                provider="gateway",
+                api_key="unused",
+                embedder=BoomEmbedder(),
+            )
+            self.assertEqual(idx._call_embeddings(["x"]), [])
+            self.assertEqual(idx.trace_snapshot()["fallback_reason"], "embedder_failed")
+
 
 if __name__ == "__main__":
     unittest.main()

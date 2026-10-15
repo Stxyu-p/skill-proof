@@ -46,6 +46,7 @@ class VectorIndex:
         gateway_key_env: str = "HERMES_CUSTOM_LOCALHOST_20128_API_KEY",
         models_dir: Optional[os.PathLike[str] | str] = None,
         timeout: float = 3.0,
+        embedder: Any = None,
     ) -> None:
         self.db_path = pathlib.Path(db_path).resolve() if db_path else None
         self.model = str(model)
@@ -53,6 +54,7 @@ class VectorIndex:
         self.gateway_key_env = str(gateway_key_env)
         self.models_dir = pathlib.Path(models_dir).resolve() if models_dir else None
         self.timeout = float(timeout)
+        self._embedder = embedder
 
         # Provider determination with backwards compatibility
         p = str(provider or "").strip().lower()
@@ -165,6 +167,20 @@ class VectorIndex:
     def _call_embeddings(self, texts: list[str], is_query: bool = False) -> list[tuple[float, ...]]:
         if not texts:
             return []
+        if self._embedder is not None:
+            # v0.16 seam: an injected embedder (EmbedderProtocol) replaces the
+            # provider entirely; used by tests and embedders of the index.
+            started = time.perf_counter()
+            try:
+                vectors = [tuple(float(x) for x in vec) for vec in self._embedder.embed(texts, is_query=is_query)]
+            except Exception:
+                vectors = []
+            self._trace(
+                provider_used="embedder" if vectors else "off",
+                fallback_reason=None if vectors else "embedder_failed",
+                embedding_latency_ms=round((time.perf_counter() - started) * 1000, 3),
+            )
+            return vectors
         if self.provider == "off":
             self._trace(provider_used="off", fallback_reason="provider_off")
             return []

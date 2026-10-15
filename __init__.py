@@ -17,7 +17,7 @@ import time
 import threading
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 try:  # Hermes loads directory plugins as packages; direct unit tests do not.
     from .core import (
@@ -171,12 +171,13 @@ class SkillProofPlugin:
 
     _SKILL_TOOLS = frozenset({"skill_view", "skills_list", "skill_search", "skill_manage"})
 
-    def __init__(self, ctx: Any) -> None:
+    def __init__(self, ctx: Any, clock: Optional[Callable[[], float]] = None) -> None:
         self.ctx = ctx
         self.roots = _resolve_roots(ctx.get_config("skill_roots", []))
         mode = str(ctx.get_config("mode", "nudge") or "nudge")
         self.reduce_skill_prompt = _bool_setting(ctx.get_config("reduce_skill_prompt", False), False)
         self._skills_cache: tuple[float, set[str]] = (0.0, set())
+        self._clock: Callable[[], float] = clock or time.monotonic
         invariants = ctx.get_config("invariants", {})
         synonyms = ctx.get_config("synonyms", {})
         hub_lock_path: Optional[pathlib.Path] = None
@@ -237,6 +238,7 @@ class SkillProofPlugin:
             focus_turns=_bounded_int(ctx.get_config("focus_turns", 5), 5, 0, 50),
             disabled=ctx.get_config("disabled", None),
             vector_index=vector_index,
+            clock=clock,
         )
         self.visible_receipt = _bool_setting(ctx.get_config("visible_receipt", True), True)
         self.receipt_style = ctx.get_config("receipt_style", "compact")
@@ -271,10 +273,10 @@ class SkillProofPlugin:
     ) -> Optional[dict[str, str]]:
         effective_turn_id = str(turn_id or f"{session_id}:{task_id}:current")
         key = self._key(session_id, task_id, effective_turn_id)
-        started = time.perf_counter()
+        started = self._clock()
         try:
             availability_error = False
-            now = time.monotonic()
+            now = self._clock()
             if now - self._skills_cache[0] < 30.0 and self._skills_cache[1]:
                 names = self._skills_cache[1]
                 listing_ms = 0.0
@@ -291,7 +293,7 @@ class SkillProofPlugin:
                     self._skills_cache = (now, names)
                 except Exception:
                     availability_error = True
-                listing_ms = (time.perf_counter() - started) * 1000
+                listing_ms = (self._clock() - started) * 1000
             turn = self.engine.begin_turn(
                 turn_id=effective_turn_id,
                 session_id=str(session_id or ""),
@@ -301,7 +303,7 @@ class SkillProofPlugin:
                 availability_error=availability_error,
             )
             self.engine.record_timing(effective_turn_id, listing_ms=listing_ms,
-                                      total_ms=(time.perf_counter() - started) * 1000)
+                                      total_ms=(self._clock() - started) * 1000)
         except Exception:
             logger.exception("Skill Proof could not begin turn")
             if self.engine.mode == "enforce-tools":

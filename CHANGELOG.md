@@ -4,9 +4,10 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.16.0] - 2026-10-15
 
 ### Added
+- **Test seams for time, embeddings, and turn policy (v0.16 plan item 5.1)**: `SkillProofEngine(clock=…)` and `SkillProofPlugin(ctx, clock=…)` accept an injected monotonic clock, so the 30s `skills_list` TTL and latency metrics are testable without sleeping; `VectorIndex(embedder=…)` accepts any object implementing `embed(texts, is_query)` and traces `provider_used="embedder"`; every `begin_turn` publishes `active_turn.json` (selected skill + invariants) and `bridge.py::run_hook(payload, store=…)` enforces `forbidden_tools` and `ordered_tools` from it in `enforce-tools` mode, recording completed steps back into the store.
 - **Lightweight English morphology normalizer (v0.16 plan item 5.2c)**: description, tags, and alias token sets now carry common plural/gerund/past base forms (`crashing`/`crashes` → `crash`, `tables` → `table`, `migrations` → `migration`); skill names stay exact (expanding name tokens caused measured false-selection drift). The shipped stretch case "convert this PDF into a table" now selects `pdf-extraction` in `off` mode.
 - **Filtered-view catalog cache (v0.16 plan item 5.2a)**: `begin_turn` reuses the host-filtered catalog for an identical `(catalog_hash, host name set)` instead of rebuilding diagnostics and re-hashing every turn; cleared by `refresh_catalog`.
 - **Confidence-gated vector cascade (v0.16 plan item 5.2d)**: when the lexical winner scores at least 0.55 with a 0.18 margin, the embedding work is skipped entirely and the trace records `provider_used="lexical_fastpath"`.
@@ -17,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `core.py` split into focused modules (v0.16 plan item 5.1) — `_catalog.py` (types, scanning, frontmatter), `_vector.py` (SQLite vector index), `_dialogue.py` (negation, session memory, references), `_ranking.py` (tokenizer, morphology, IDF ranking, candidate index), `_compliance.py` (guard results and the turn-policy store) — with `core.py` as a facade re-exporting every moved name. Pure code movement: `import core` callers are unchanged; test mock targets now patch the owning module.
 
 ### Note
+- `SkillProofEngine` publishes `active_turn.json` under `<hermes home>/plugin-data/skill-proof/` on every turn (cleared when no skill is selected). The policy gates tool calls only in `enforce-tools` mode; host bridges read it through `bridge.py::run_hook`.
 - The remaining stretch cases (`the build keeps crashing`, `review my pull request`, `our pages are slow…`, and the Thai `สรุป` synonym case) are still documented gaps: measured scores rose but remain below the 0.28 threshold. Closing them needs the thin-overlap scoring work from the truncated section of the audit plan.
 
 ### Fixed

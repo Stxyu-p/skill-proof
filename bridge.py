@@ -27,7 +27,7 @@ import argparse
 import json
 import pathlib
 import sys
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 import core
 
@@ -365,7 +365,7 @@ def status(target: pathlib.Path) -> dict[str, Any]:
     }
 
 
-def run_hook(payload: Mapping) -> dict:
+def run_hook(payload: Mapping, store: Any = None) -> dict:
     """Claude Code PreToolUse response for one payload. Never raises."""
     tool = str(payload.get("tool_name") or "").strip()
     cwd = payload.get("cwd")
@@ -373,18 +373,66 @@ def run_hook(payload: Mapping) -> dict:
     policy = load_policy(target_dir if _policy_path(target_dir).is_file() else _here())
     forbidden = {str(name).strip().lower() for name in policy.get("forbidden_tools", [])}
     if tool and tool.lower() in forbidden:
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": (
-                    f"Skill Proof policy forbids {tool} (skill-proof-bridge.json). "
-                    "Remove it from forbidden_tools or delete the bridge to allow it."
-                ),
-            }
-        }
+        return _deny(
+            f"Skill Proof policy forbids {tool} (skill-proof-bridge.json). "
+            "Remove it from forbidden_tools or delete the bridge to allow it."
+        )
+    if tool:
+        active_turn = _active_turn_denial(tool, store)
+        if active_turn is not None:
+            return active_turn
     # Nothing to say: let the host decide as if we were not installed.
     return {}
+
+
+def _deny(reason: str) -> dict:
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def _active_turn_denial(tool: str, store: Any) -> Optional[dict]:
+    """Turn-scoped enforcement from ``active_turn.json`` (enforce-tools only).
+
+    The engine publishes the selected skill and its invariants each turn; this
+    hook denies forbidden tools and enforces ordered_tools call order, writing
+    completed steps back into the same store. Never raises.
+    """
+    try:
+        store = store if store is not None else core.default_policy_store()
+        state = store.read()
+        if not isinstance(state, Mapping) or state.get("mode") != "enforce-tools":
+            return None
+        selected = str(state.get("selected_skill") or "").strip()
+        if not selected:
+            return None
+        tool_key = tool.strip().lower()
+        forbidden = {str(name).strip().lower() for name in state.get("forbidden_tools") or []}
+        if tool_key in forbidden:
+            return _deny(
+                f"Skill Proof forbids {tool}: the active skill '{selected}' lists it in "
+                "forbidden_tools. Switch or finish the skill turn to clear this policy."
+            )
+        ordered = [str(name).strip().lower() for name in state.get("ordered_tools") or []]
+        if tool_key in ordered:
+            completed = {str(name).strip().lower() for name in state.get("completed") or []}
+            missing = [step for step in ordered[: ordered.index(tool_key)] if step not in completed]
+            if missing:
+                return _deny(
+                    f"Skill Proof call order: run {missing[0]} before {tool} "
+                    f"(ordered_tools of '{selected}')."
+                )
+            if tool_key not in completed:
+                next_state = dict(state)
+                next_state["completed"] = [*(state.get("completed") or []), tool_key]
+                store.write(next_state)
+        return None
+    except Exception:
+        return None
 
 
 def main(argv=None) -> int:

@@ -95,16 +95,20 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("forbidden_tools", data)
 
     def test_run_hook_allows_unlisted_tools(self):
-        res = bridge.run_hook({"tool_name": "read_file"})
+        res = bridge.run_hook({"tool_name": "read_file"}, store=core.InMemoryPolicyStore())
         self.assertEqual(res, {})
 
     def test_run_hook_reads_workspace_cwd_policy_and_remove_auto_cleans_detected_hosts(self):
         policy_path = self.target / "skill-proof-bridge.json"
         policy_path.write_text(json.dumps({"forbidden_tools": ["write_file"]}), encoding="utf-8")
 
-        denied = bridge.run_hook({"tool_name": "write_file", "cwd": str(self.target)})
+        denied = bridge.run_hook(
+            {"tool_name": "write_file", "cwd": str(self.target)}, store=core.InMemoryPolicyStore()
+        )
         self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
-        allowed = bridge.run_hook({"tool_name": "read_file", "cwd": str(self.target)})
+        allowed = bridge.run_hook(
+            {"tool_name": "read_file", "cwd": str(self.target)}, store=core.InMemoryPolicyStore()
+        )
         self.assertEqual(allowed, {})
 
         bridge.init_host("codex", self.target)
@@ -113,6 +117,31 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(actions)
         self.assertNotIn(bridge.MARKER_START, (self.target / "AGENTS.md").read_text(encoding="utf-8"))
         self.assertFalse((self.target / ".cursor" / "rules" / "skill-proof.mdc").exists())
+
+    def test_run_hook_enforces_active_turn_policy_store(self):
+        store = core.InMemoryPolicyStore(
+            {
+                "mode": "enforce-tools",
+                "selected_skill": "alpha",
+                "forbidden_tools": ["rm"],
+                "ordered_tools": ["first", "second"],
+                "completed": [],
+            }
+        )
+        denied = bridge.run_hook({"tool_name": "rm"}, store=store)
+        self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
+        out_of_order = bridge.run_hook({"tool_name": "second"}, store=store)
+        self.assertEqual(out_of_order["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertEqual(bridge.run_hook({"tool_name": "first"}, store=store), {})
+        self.assertIn("first", store.read()["completed"])
+        self.assertEqual(bridge.run_hook({"tool_name": "second"}, store=store), {})
+        self.assertIn("second", store.read()["completed"])
+        # Unrelated tools always pass; nudge-mode states never block.
+        self.assertEqual(bridge.run_hook({"tool_name": "read_file"}, store=store), {})
+        nudge = core.InMemoryPolicyStore(
+            {"mode": "nudge", "selected_skill": "alpha", "forbidden_tools": ["rm"]}
+        )
+        self.assertEqual(bridge.run_hook({"tool_name": "rm"}, store=nudge), {})
 
 
 if __name__ == "__main__":

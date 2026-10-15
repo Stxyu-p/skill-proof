@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from math import log
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 try:
     from . import models
@@ -148,11 +148,15 @@ from _ranking import (  # v0.16 facade re-exports
 
 
 from _compliance import (  # v0.16 facade re-exports
+    FilePolicyStore,
     GuardResult,
+    InMemoryPolicyStore,
+    PolicyStoreProtocol,
+    default_policy_store,
 )
 
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 
 
 @dataclass(frozen=True)
@@ -269,6 +273,8 @@ class SkillProofEngine:
         focus_turns: int = 5,
         disabled: Optional[Iterable[str]] = None,
         vector_index: Optional[VectorIndex] = None,
+        clock: Optional[Callable[[], float]] = None,
+        policy_store: Optional[Any] = None,
     ) -> None:
         normalized_mode = normalize_identifier(mode)
         normalized_mode = self._MODE_ALIASES.get(normalized_mode, normalized_mode)
@@ -345,6 +351,8 @@ class SkillProofEngine:
         self._latest_turn_id: Optional[str] = None
         self._lock = threading.RLock()
         self.vector_index = vector_index
+        self._clock: Callable[[], float] = clock or time.perf_counter
+        self._policy_store = policy_store if policy_store is not None else default_policy_store()
 
     @staticmethod
     def _text_id(value: object) -> str:
@@ -759,7 +767,7 @@ class SkillProofEngine:
         available_names: Optional[set[str]] = None,
         availability_error: bool = False,
     ) -> TurnStart:
-        core_started = time.perf_counter()
+        core_started = self._clock()
         clean_turn_id = self._text_id(turn_id)
         if not clean_turn_id:
             raise ValueError("turn_id must not be empty")
@@ -777,11 +785,11 @@ class SkillProofEngine:
                 metrics=metrics,
                 disabled=self.disabled,
             )
-        metrics['scan_ms'] = round((time.perf_counter() - core_started) * 1000, 3)
+        metrics['scan_ms'] = round((self._clock() - core_started) * 1000, 3)
         local_count = len(catalog.skills)
         indexed_names = frozenset(skill.normalized_name for skill in catalog.skills)
         host_unindexed: tuple[str, ...] = ()
-        selection_started = time.perf_counter()
+        selection_started = self._clock()
         if available_names is not None:
             names = normalize_identifiers(available_names)
             view_key = (catalog.catalog_hash, frozenset(available_names))
@@ -916,8 +924,8 @@ class SkillProofEngine:
             # configured roots could be indexed for it: say that instead of
             # claiming the skill is unknown.
             selection = Selection("blocked", "listed_but_unindexed", None, (), True, True)
-        metrics['selection_ms'] = round((time.perf_counter() - selection_started) * 1000, 3)
-        metrics['core_ms'] = round((time.perf_counter() - core_started) * 1000, 3)
+        metrics['selection_ms'] = round((self._clock() - selection_started) * 1000, 3)
+        metrics['core_ms'] = round((self._clock() - core_started) * 1000, 3)
         context = self._selection_context(selection)
         errors: list[str] = ["hermes_catalog_unavailable"] if availability_error else []
         if availability_error:
@@ -956,7 +964,33 @@ class SkillProofEngine:
             if clean_session_id:
                 self._latest_by_session[clean_session_id] = clean_turn_id
             self._latest_turn_id = clean_turn_id
+        self._publish_active_turn(selection)
         return TurnStart(selection, context, tuple(errors))
+
+    def _publish_active_turn(self, selection: Selection) -> None:
+        """Publish (or clear) the bridge-visible turn policy. Never raises.
+
+        ``active_turn.json`` carries only the selected skill and its
+        invariants, so external host hooks (bridge.py) can enforce
+        forbidden_tools / ordered_tools exactly like the engine does.
+        """
+        state: dict[str, Any] = {"mode": self.mode, "selected_skill": None}
+        if selection.selected is not None:
+            invariants = self._resolve_invariants(selection.selected.skill)
+            state.update(
+                {
+                    "selected_skill": selection.selected.skill.name,
+                    "required_tools": list(invariants.required_tools),
+                    "forbidden_tools": list(invariants.forbidden_tools),
+                    "ordered_tools": list(invariants.ordered_tools),
+                    "completed": [],
+                }
+            )
+        try:
+            state["updated_at"] = self._clock()
+            self._policy_store.write(state)
+        except Exception:
+            pass  # fail-open: policy publication must never break a turn
 
     @staticmethod
     def _has_symlink_component(root: pathlib.Path, relative_path: str) -> bool:
