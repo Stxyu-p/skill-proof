@@ -127,5 +127,76 @@ class LifecycleCachePolicyTests(unittest.TestCase):
         self.assertEqual(plugin._skills_cache, (0.0, set()))
 
 
+class CandidatePruningTests(unittest.TestCase):
+    def _catalog(self, specs):
+        skills = tuple(
+            SkillRecord(
+                str(i), name, name, desc, (), "r1", f"p{i}", f"sha{i}", 100,
+                pathlib.Path("."), pathlib.Path("."),
+            )
+            for i, (name, desc) in enumerate(specs)
+        )
+        return Catalog(skills, (), "h1")
+
+    def test_index_is_built_on_catalog_construction(self):
+        catalog = self._catalog([("python-tdd", "Write Python tests before implementation")])
+        self.assertIsNotNone(catalog.index)
+        self.assertEqual(catalog.index.token_postings["python"], (0,))
+        self.assertEqual(catalog.index.name_to_index["python-tdd"], 0)
+
+    def test_prefilter_adds_identifier_and_phrase_hits_without_token_overlap(self):
+        catalog = self._catalog([("python-tdd", "alpha multi axis beta")])
+        index = catalog.index
+        ident = core._candidate_indices(index, set(), frozenset(), "use python-tdd now", {})
+        self.assertEqual(ident, {0})
+        phrase = core._candidate_indices(index, set(), frozenset(), "alpha multi axis", {})
+        self.assertEqual(phrase, {0})
+
+    def test_pruning_reduces_the_scored_set_on_the_fixture(self):
+        data = routing_benchmark.load_fixture(routing_benchmark.DEFAULT_FIXTURE)
+        with routing_benchmark.fixture_catalog(data) as catalog:
+            tokens = set(core._tokens("review my pull request"))
+            core._add_morph_bases(tokens)
+            candidates = core._candidate_indices(
+                catalog.index, tokens, core._char_ngrams("review my pull request"),
+                "review my pull request", {},
+            )
+            total = len(catalog.skills)
+        self.assertTrue(candidates)
+        self.assertLess(len(candidates), total)
+
+    def test_pruning_is_result_identical_on_the_shipped_fixture(self):
+        data = routing_benchmark.load_fixture(routing_benchmark.DEFAULT_FIXTURE)
+        with routing_benchmark.fixture_catalog(data) as catalog:
+            full = set(range(len(catalog.skills)))
+            queries = [str(case["query"]) for case in data["cases"]]
+
+            def run():
+                return [
+                    core.select_skill(
+                        catalog, query, explicit_names=core.extract_explicit_skill_names(query)
+                    )
+                    for query in queries
+                ]
+
+            with mock.patch.object(core, "_candidate_indices", side_effect=lambda *a, **k: set(full)):
+                baseline = run()
+            pruned = run()
+        self.assertEqual(len(baseline), len(queries))
+        for query, before, after in zip(queries, baseline, pruned):
+            self.assertEqual(before.status, after.status, query)
+            self.assertEqual(before.reason, after.reason, query)
+            self.assertEqual(
+                before.selected.skill.name if before.selected else None,
+                after.selected.skill.name if after.selected else None,
+                query,
+            )
+            self.assertEqual(
+                [(c.skill.name, c.score) for c in before.candidates],
+                [(c.skill.name, c.score) for c in after.candidates],
+                query,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

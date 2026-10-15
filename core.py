@@ -106,6 +106,13 @@ class Catalog:
     skills: tuple[SkillRecord, ...]
     diagnostics: tuple[Diagnostic, ...]
     catalog_hash: str
+    # Derived lookup tables for candidate pruning; built once on construction
+    # and excluded from equality/hash comparisons.
+    index: Optional["CatalogIndex"] = field(default=None, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.index is None:
+            object.__setattr__(self, "index", _build_catalog_index(self.skills))
 
     def by_name(self, name: str) -> tuple[SkillRecord, ...]:
         wanted = normalize_identifier(name)
@@ -2044,6 +2051,116 @@ def _catalog_document_frequency(skills: tuple[SkillRecord, ...]) -> tuple[dict[s
     return document_frequency, max(1, len(skills))
 
 
+@dataclass(frozen=True)
+class CatalogIndex:
+    """Immutable lookup tables derived from a catalog's skills (built once)."""
+
+    token_postings: Mapping[str, tuple[int, ...]]
+    ngram_postings: Mapping[str, tuple[int, ...]]
+    alias_phrases: tuple[tuple[str, ...], ...]
+    name_norms: tuple[str, ...]
+    desc_norms: tuple[str, ...]
+    name_to_index: Mapping[str, int]
+    synonym_terms: Mapping[str, tuple[str, ...]]
+
+
+def _build_catalog_index(skills: tuple[SkillRecord, ...]) -> CatalogIndex:
+    token_postings: dict[str, set[int]] = {}
+    ngram_postings: dict[str, set[int]] = {}
+    alias_phrases: list[tuple[str, ...]] = []
+    name_norms: list[str] = []
+    desc_norms: list[str] = []
+    name_to_index: dict[str, int] = {}
+    synonym_terms: dict[str, tuple[str, ...]] = {}
+    for position, skill in enumerate(skills):
+        norm_name = normalize_identifier(skill.name)
+        name_norms.append(norm_name)
+        name_to_index.setdefault(norm_name, position)
+        desc_norms.append(normalize_identifier(skill.description))
+        name_tokens, tag_tokens, desc_tokens, cache_alias_tokens = _skill_tokens_cache(
+            skill.name, skill.tags, skill.description, skill.aliases
+        )
+        extra = tuple(DEFAULT_SYNONYMS.get(skill.normalized_name, ()))
+        if extra:
+            synonym_terms[skill.normalized_name] = extra
+        merged_terms = tuple(dict.fromkeys(tuple(skill.aliases) + extra))
+        alias_phrases.append(tuple(dict.fromkeys(
+            norm for alias in merged_terms if (norm := normalize_identifier(alias))
+        )))
+        alias_tokens = cache_alias_tokens
+        if extra:
+            merged_tokens = set(_tokens(" ".join(merged_terms)))
+            _add_morph_bases(merged_tokens)
+            alias_tokens = cache_alias_tokens | frozenset(merged_tokens)
+        for token in name_tokens | tag_tokens | desc_tokens | alias_tokens:
+            token_postings.setdefault(token, set()).add(position)
+        for gram in _skill_spaceless_ngrams(skill.description, skill.tags, merged_terms):
+            ngram_postings.setdefault(gram, set()).add(position)
+    return CatalogIndex(
+        token_postings={token: tuple(sorted(ids)) for token, ids in token_postings.items()},
+        ngram_postings={gram: tuple(sorted(ids)) for gram, ids in ngram_postings.items()},
+        alias_phrases=tuple(alias_phrases),
+        name_norms=tuple(name_norms),
+        desc_norms=tuple(desc_norms),
+        name_to_index=name_to_index,
+        synonym_terms=synonym_terms,
+    )
+
+
+def _candidate_indices(
+    index: CatalogIndex,
+    query_tokens: set[str],
+    query_ngrams: "frozenset[str]",
+    normalized_query: str,
+    synonyms: Mapping[str, Sequence[str]],
+) -> set[int]:
+    """Skill positions that could score above zero for this query.
+
+    Keep this in lockstep with the scoring body in ``_rank``: every signal that
+    can add score needs a candidate source here, or a matching skill is pruned.
+    """
+    candidates: set[int] = set()
+    postings = index.token_postings
+    for token in query_tokens:
+        hit = postings.get(token)
+        if hit:
+            candidates.update(hit)
+    if query_ngrams:
+        ngram_postings = index.ngram_postings
+        for gram in query_ngrams:
+            hit = ngram_postings.get(gram)
+            if hit:
+                candidates.update(hit)
+    if synonyms:
+        for name, terms in synonyms.items():
+            norm = normalize_identifier(name)
+            position = index.name_to_index.get(norm)
+            if position is None:
+                continue
+            if tuple(terms) != index.synonym_terms.get(norm, ()):
+                candidates.add(position)
+    if not normalized_query:
+        return candidates
+    if len(candidates) == len(index.name_norms):
+        # Everything already matched on tokens: no substring pass can add value.
+        return candidates
+    for position, norm_name in enumerate(index.name_norms):
+        if position in candidates:
+            continue
+        if norm_name and norm_name in normalized_query:
+            candidates.add(position)
+            continue
+        norm_desc = index.desc_norms[position]
+        if norm_desc and (normalized_query in norm_desc or norm_desc in normalized_query):
+            candidates.add(position)
+            continue
+        for phrase in index.alias_phrases[position]:
+            if phrase in normalized_query or normalized_query in phrase:
+                candidates.add(position)
+                break
+    return candidates
+
+
 def _rank(
     catalog: Catalog,
     query: str,
@@ -2069,6 +2186,10 @@ def _rank(
     }
     query_weight = sum(token_weights.values()) if query_tokens else 0.0
 
+    candidates = _candidate_indices(
+        catalog.index, query_tokens, query_ngrams, normalized_query, synonyms
+    )
+
     has_negation = _query_might_contain_negation(query)
     ranked: list[RankedCandidate] = []
 
@@ -2076,7 +2197,8 @@ def _rank(
         matched_weight = sum(token_weights[token] for token in query_tokens if token in field_tokens)
         return (matched_weight / query_weight) if matched_weight else 0.0
 
-    for skill in catalog.skills:
+    for position in sorted(candidates):
+        skill = catalog.skills[position]
         if skill.normalized_name in duplicate_names or skill.normalized_name in excluded:
             continue
         name_tokens, tag_tokens, description_tokens, cached_alias_tokens = _skill_tokens_cache(
