@@ -4,6 +4,18 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `_explain_skill` no longer raises `IndexError` when `/skill-proof why <name>` runs in a turn whose rank table is empty; in-catalog skills report `no_signal` instead.
+- `Xenova/multilingual-e5-small-fp32` registry entries now carry real SHA-256 checksums (config.json, tokenizer_config.json, tokenizer.json previously held SHA-1 digests, which made `prefetch` fail for this model). Values verified against the HuggingFace files themselves.
+- `check_model_status` and `download_model` now verify the SHA-256 of files already on disk whose size matches, so corrupted same-size files are detected and re-downloaded.
+- `guard_tool` records a tool only after it is allowed, so a blocked call can no longer satisfy `ordered_tools` prerequisites, and `observe_tool_result` no longer duplicates consecutive entries.
+- `bridge.py::run_hook` reads `skill-proof-bridge.json` from the workspace (`payload["cwd"]`) instead of the Skill Proof install folder; `remove_host("auto")` now cleans every detected host.
+- `on_pre_llm_call` returns the engine-composed context, so `mode: observe`, `focus_fallback` warnings, and `context_budget_bytes` apply again; the selected-skill nudge remains the terse `Use skill_view for "<name>" first.` message.
+- `cli.py` settings writer rewrites a `settings: {}` header to a block and replaces multi-line YAML values when updating, instead of emitting invalid YAML.
+- `cli.py select` and `cli.py eval` now route through the configured vector index when one is active; the duplicated `ai-setup` block in `bridge.py::main` is removed.
+
 ## [0.15.0] - 2026-10-11
 
 ### Added

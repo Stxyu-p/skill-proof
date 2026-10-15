@@ -2659,8 +2659,8 @@ class SkillProofEngine:
                 note="No indexed SKILL.md under the configured roots has this name.",
             )
             return base
-        last = selection.rank_table[-1].score
         capped = len(selection.rank_table) >= _RANK_TABLE_LIMIT
+        last = selection.rank_table[-1].score if selection.rank_table else 0.0
         base.update(
             verdict="ranked_below_cap" if capped else "no_signal",
             name=None,
@@ -2810,11 +2810,7 @@ class SkillProofEngine:
                     f'Skill Proof candidate: "{name}". If you use it, call skill_view with '
                     f'name="{name}". A load event proves loading only, not compliance or verification.'
                 )
-            return (
-                f'Skill Proof selected "{name}". Before operational tools, call skill_view with '
-                f'name="{name}". A Hermes loaded event proves loading only; it does not prove '
-                "skill compliance or task verification."
-            )
+            return f'Use skill_view for "{name}" first.'
         if selection.status == "ambiguous":
             if not selection.candidates:
                 return (
@@ -3174,8 +3170,8 @@ class SkillProofEngine:
             state = self._state(turn_id=turn_id, session_id=session_id, task_id=task_id)
             if state is None:
                 return GuardResult(True, "no_turn_state")
-            self._remember_tool(state, tool_name)
             if normalized_tool in self._SKILL_TOOLS:
+                self._remember_tool(state, tool_name)
                 return GuardResult(True, "skill_tool")
             selection = state.selection
             if self.mode == "enforce-tools" and selection.status == "blocked" and selection.required:
@@ -3185,6 +3181,7 @@ class SkillProofEngine:
                     f"Skill Proof blocked this tool: {selection.reason}.",
                 )
             if selection.selected is None:
+                self._remember_tool(state, tool_name)
                 return GuardResult(True, "no_required_skill")
             if self.mode == "enforce-tools" and not state.hermes_loaded_event:
                 name = selection.selected.skill.name
@@ -3213,7 +3210,7 @@ class SkillProofEngine:
                 if inv.ordered_tools and normalized_tool in inv.ordered_tools:
                     idx = inv.ordered_tools.index(normalized_tool)
                     prior = inv.ordered_tools[:idx]
-                    normalized_prior = [normalize_identifier(t) for t in state.observed_tools[:-1]]
+                    normalized_prior = [normalize_identifier(t) for t in state.observed_tools]
                     missing = [p for p in prior if p not in normalized_prior]
                     if missing:
                         state.compliance = "failed"
@@ -3227,6 +3224,7 @@ class SkillProofEngine:
                                 f'Skill Proof blocked this tool: skill "{selection.selected.skill.name}" requires "{missing[0]}" before "{tool_name}".',
                             )
 
+            self._remember_tool(state, tool_name)
             if state.hermes_loaded_event:
                 return GuardResult(True, "selected_skill_loaded")
             return GuardResult(True, "mode_not_enforcing")
@@ -3246,7 +3244,8 @@ class SkillProofEngine:
             state = self._state(turn_id=turn_id, session_id=session_id, task_id=task_id)
             if state is None:
                 return False
-            self._remember_tool(state, tool_name)
+            if not state.observed_tools or normalize_identifier(state.observed_tools[-1]) != normalize_identifier(tool_name):
+                self._remember_tool(state, tool_name)
             if normalize_identifier(tool_name) != "skill_view" or state.selection.selected is None:
                 return False
             supplied_name = ""

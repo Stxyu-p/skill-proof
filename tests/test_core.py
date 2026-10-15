@@ -524,7 +524,10 @@ class EngineTests(unittest.TestCase):
 
         self.assertEqual(turn.context, 'Use skill_view for "python-tdd" first.')
         self.assertLessEqual(len(turn.context.encode("utf-8")), 40)
-        self.assertIn("context_budget_exceeded", turn.errors)
+        self.assertNotIn(
+            "context_budget_exceeded", turn.errors,
+            "the terse selected-skill message now fits small budgets without compacting",
+        )
 
     def test_tiny_context_budget_does_not_bypass_enforcement(self):
         engine = self.engine(mode="enforce", context_budget_bytes=1)

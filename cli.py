@@ -73,6 +73,12 @@ def _resolve_selection(roots, query, min_score, min_margin, limit):
     explicit = core.extract_explicit_skill_names(
         query, known_names=(skill.name for skill in catalog.skills)
     )
+    vector_index = None if explicit else core.vector_index_from_env()
+    if vector_index is not None:
+        try:
+            vector_index.sync_catalog(catalog.skills)
+        except Exception:
+            vector_index = None
     selection = core.select_skill(
         catalog,
         query,
@@ -80,6 +86,7 @@ def _resolve_selection(roots, query, min_score, min_margin, limit):
         min_score=min_score,
         min_margin=min_margin,
         limit=limit,
+        vector_index=vector_index,
     )
     return catalog, explicit, selection
 
@@ -248,6 +255,10 @@ def _find_section(lines, parent_start, parent_end, parent_indent, name):
 def _ensure_section(lines, parent_start, parent_end, parent_indent, name):
     found = _find_section(lines, parent_start, parent_end, parent_indent, name)
     if found:
+        sec_start, sec_end, sec_indent = found
+        head = lines[sec_start].strip()[len(name) + 1:].strip()
+        if head in ("", "{}"):
+            lines[sec_start] = " " * sec_indent + f"{name}:"
         return found
     index = parent_end
     lines.insert(index, " " * (parent_indent + 2) + f"{name}:")
@@ -277,21 +288,16 @@ def _write_plugin_settings(config_path, settings):
     )
     setting_indent = settings_indent + 2
     serialized = {key: json.dumps(value, ensure_ascii=False) for key, value in settings.items()}
-    existing = {}
-    for index in range(settings_start + 1, settings_end):
-        line = lines[index]
-        if _yaml_indent(line) == setting_indent:
-            key, separator, _value = line.strip().partition(":")
-            if separator and key in serialized:
-                existing[key] = index
-    additions = []
     for key, value in serialized.items():
-        if key in existing:
-            lines[existing[key]] = " " * setting_indent + f"{key}: {value}"
+        found_key = _find_section(lines, settings_start, settings_end, settings_indent, key)
+        replacement = " " * setting_indent + f"{key}: {value}"
+        if found_key:
+            k_start, k_end, _ = found_key
+            lines[k_start:k_end] = [replacement]
+            settings_end -= (k_end - k_start - 1)
         else:
-            additions.append(" " * setting_indent + f"{key}: {value}")
-    if additions:
-        lines[settings_end:settings_end] = additions
+            lines.insert(settings_end, replacement)
+            settings_end += 1
 
     path.parent.mkdir(parents=True, exist_ok=True)
     content = "\n".join(lines) + "\n"

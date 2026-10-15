@@ -98,6 +98,22 @@ class BridgeTests(unittest.TestCase):
         res = bridge.run_hook({"tool_name": "read_file"})
         self.assertEqual(res, {})
 
+    def test_run_hook_reads_workspace_cwd_policy_and_remove_auto_cleans_detected_hosts(self):
+        policy_path = self.target / "skill-proof-bridge.json"
+        policy_path.write_text(json.dumps({"forbidden_tools": ["write_file"]}), encoding="utf-8")
+
+        denied = bridge.run_hook({"tool_name": "write_file", "cwd": str(self.target)})
+        self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
+        allowed = bridge.run_hook({"tool_name": "read_file", "cwd": str(self.target)})
+        self.assertEqual(allowed, {})
+
+        bridge.init_host("codex", self.target)
+        bridge.init_host("cursor", self.target)
+        actions = bridge.remove_host("auto", self.target)
+        self.assertTrue(actions)
+        self.assertNotIn(bridge.MARKER_START, (self.target / "AGENTS.md").read_text(encoding="utf-8"))
+        self.assertFalse((self.target / ".cursor" / "rules" / "skill-proof.mdc").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

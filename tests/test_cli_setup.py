@@ -60,6 +60,48 @@ class SetupConfigTests(unittest.TestCase):
         self.assertEqual(second.count("embedding_provider:"), 1)
         self.assertIn('gateway_url: "https://embeddings.example/v1"', second)
 
+    def test_write_plugin_settings_replaces_empty_flow_mapping_and_multiline_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            empty_path = pathlib.Path(tmp) / "empty.yaml"
+            empty_path.write_text(
+                "plugins:\n"
+                "  entries:\n"
+                "    skill-proof:\n"
+                "      settings: {}\n"
+                "unrelated:\n"
+                "  keep: value\n",
+                encoding="utf-8",
+            )
+            cli._write_plugin_settings(empty_path, {"embedding_provider": "off"})
+            empty_first = empty_path.read_text(encoding="utf-8")
+            cli._write_plugin_settings(empty_path, {"embedding_provider": "off"})
+            empty_second = empty_path.read_text(encoding="utf-8")
+
+            block_path = pathlib.Path(tmp) / "block.yaml"
+            block_path.write_text(
+                "plugins:\n"
+                "  entries:\n"
+                "    skill-proof:\n"
+                "      settings:\n"
+                "        skill_roots:\n"
+                "          - C:/old-skills\n"
+                "        embedding_provider: off\n",
+                encoding="utf-8",
+            )
+            cli._write_plugin_settings(
+                block_path, {"skill_roots": ["C:/new-skills"], "embedding_provider": "local"}
+            )
+            block_out = block_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("settings: {}", empty_first)
+        self.assertIn('embedding_provider: "off"', empty_first)
+        self.assertIn("keep: value", empty_first)
+        self.assertEqual(empty_second, empty_first)
+        self.assertNotIn("C:/old-skills", block_out)
+        self.assertEqual(block_out.count("skill_roots:"), 1)
+        self.assertIn('skill_roots: ["C:/new-skills"]', block_out)
+        self.assertIn('embedding_provider: "local"', block_out)
+
     def test_setup_off_writes_default_provider_without_creating_vector_db(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(cli.core, "default_hermes_home", return_value=pathlib.Path(tmp)):

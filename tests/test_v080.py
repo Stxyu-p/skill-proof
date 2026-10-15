@@ -94,6 +94,22 @@ class ExplainTests(unittest.TestCase):
         self.assertFalse(skill["score_is_ceiling"])
         self.assertTrue(skill["in_catalog"])
 
+    def test_explain_skill_in_catalog_when_rank_table_is_empty_does_not_crash(self):
+        # A turn with no lexical overlap leaves the rank table empty; asking
+        # "why" for an in-catalog skill must not raise (regression: IndexError).
+        self.engine.begin_turn(
+            turn_id="t-empty", session_id="s", task_id="task",
+            query="what is the weather in Bangkok tomorrow",
+        )
+        report = self.engine.explain("python-tdd", turn_id="t-empty")
+        skill = report["skill"]
+        self.assertEqual(skill["verdict"], "no_signal")
+        self.assertEqual(skill["score"], 0.0)
+        self.assertFalse(skill["threshold_met"])
+        self.assertTrue(skill["in_catalog"])
+        self.assertEqual(report["ranked_count"], 0)
+        self.engine.finish_turn(turn_id="t-empty")
+
     def test_unknown_skill_is_named_as_unknown(self):
         report = self.engine.explain("ghost-skill", turn_id="t1")
         skill = report["skill"]

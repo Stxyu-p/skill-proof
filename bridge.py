@@ -299,6 +299,12 @@ def init_host(host: str, target: pathlib.Path, *, dry_run: bool = False, force: 
 
 def remove_host(host: str, target: pathlib.Path) -> list[str]:
     """Undo exactly what init_host wrote for *host*."""
+    if host == "auto":
+        detected = detect_host_environments(target)
+        actions = []
+        for h in detected:
+            actions.extend(remove_host(h, target))
+        return actions
     actions = []
     if host == "claude-code":
         hook_path = target / "skill-proof-hook.py"
@@ -362,7 +368,9 @@ def status(target: pathlib.Path) -> dict[str, Any]:
 def run_hook(payload: Mapping) -> dict:
     """Claude Code PreToolUse response for one payload. Never raises."""
     tool = str(payload.get("tool_name") or "").strip()
-    policy = load_policy(_here())
+    cwd = payload.get("cwd")
+    target_dir = pathlib.Path(cwd) if isinstance(cwd, str) and cwd.strip() else pathlib.Path.cwd()
+    policy = load_policy(target_dir if _policy_path(target_dir).is_file() else _here())
     forbidden = {str(name).strip().lower() for name in policy.get("forbidden_tools", [])}
     if tool and tool.lower() in forbidden:
         return {
@@ -459,13 +467,6 @@ def main(argv=None) -> int:
             args.host, target, dry_run=args.dry_run, force=args.force
         ):
             print(line)
-        return 0
-    if args.command == "ai-setup":
-        cli_path = _here() / "cli.py"
-        print("=== Skill Proof AI Agent Setup Instructions ===")
-        print(f"1. Check skill roots: python {cli_path} roots")
-        print(f"2. Select skill for task: python {cli_path} select --query \"<user request>\" --json")
-        print(f"3. Auto-install workspace bridge: python {_here() / 'bridge.py'} install")
         return 0
     for line in remove_host(args.host, target):
         print(line)

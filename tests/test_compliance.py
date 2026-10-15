@@ -119,6 +119,37 @@ Only inspect, never modify.
         self.assertEqual(receipt["compliance"], "failed")
         self.assertIn("order_violation:write_file_before_terminal", receipt["compliance_reasons"])
 
+    def test_blocked_tool_call_is_not_recorded_as_satisfied_order_prerequisite(self):
+        (self.root / "gate").mkdir()
+        (self.root / "gate" / "SKILL.md").write_text(
+            """---
+name: gate
+description: Ordered deployment gate workflow
+invariants:
+  forbidden_tools: [terminal]
+  ordered_tools: [terminal, write_file]
+---
+Follow the gate order.
+""",
+            encoding="utf-8",
+        )
+        eng = self.engine(mode="enforce-tools")
+        eng.begin_turn(
+            turn_id="t1", session_id="s1", task_id="k1",
+            query="Use $gate", available_names={"gate"},
+        )
+        eng.observe_skill_loaded(session_id="s1", task_id="k1", skill_name="gate")
+
+        # terminal is forbidden, so this call is blocked and must NOT be
+        # recorded as a satisfied prerequisite for the ordered pipeline.
+        blocked = eng.guard_tool(turn_id="t1", session_id="s1", task_id="k1", tool_name="terminal")
+        self.assertFalse(blocked.allowed)
+        self.assertEqual(blocked.reason, "forbidden_tool")
+
+        after = eng.guard_tool(turn_id="t1", session_id="s1", task_id="k1", tool_name="write_file")
+        self.assertFalse(after.allowed)
+        self.assertEqual(after.reason, "tool_order_violated")
+
     def test_configured_invariants_override_or_extend(self):
         config_invariants = {
             "audit": {"required_tools": ["search_files"]},

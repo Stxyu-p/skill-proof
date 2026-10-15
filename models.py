@@ -64,15 +64,15 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "files": {
             "config.json": {
                 "size": 658,
-                "sha256": "4104f38273cc595fd9500fd243124e9f6cf383dc",
+                "sha256": "cb99455288675345e1a4f411438d5d0adbba5fbd3a67ea4fb03c015433b996c1",
             },
             "tokenizer_config.json": {
                 "size": 443,
-                "sha256": "059214673d9d6d2ee319411e2ffec8c024b816d5",
+                "sha256": "a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b",
             },
             "tokenizer.json": {
                 "size": 17082730,
-                "sha256": "1c8f7c8fd9b7c56a43be9844713bdd468b7a17ed5170311ce768adfc6e2d41ea",
+                "sha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
             },
             "onnx/model.onnx": {
                 "size": 470268533,
@@ -160,6 +160,17 @@ def get_model_dir(model_key: str, root_dir: Optional[pathlib.Path | str] = None)
     return base / dir_name
 
 
+def _file_sha256_matches(path: pathlib.Path, expected_sha256: str) -> bool:
+    hasher = hashlib.sha256()
+    try:
+        with path.open("rb") as fh:
+            while chunk := fh.read(65536):
+                hasher.update(chunk)
+        return hasher.hexdigest().lower() == expected_sha256.lower()
+    except OSError:
+        return False
+
+
 def check_model_status(model_key: str, root_dir: Optional[pathlib.Path | str] = None) -> dict[str, Any]:
     spec = get_model_spec(model_key)
     if not spec:
@@ -198,6 +209,9 @@ def check_model_status(model_key: str, root_dir: Optional[pathlib.Path | str] = 
         if actual_size != meta["size"]:
             valid = False
             missing.append(f"{relpath} (size mismatch: {actual_size} != {meta['size']})")
+        elif not _file_sha256_matches(fp, meta["sha256"]):
+            valid = False
+            missing.append(f"{relpath} (sha256 mismatch)")
 
     installed = len(missing) == 0 and valid
     return {
@@ -282,8 +296,8 @@ def download_model(
 
     for relpath, meta in spec["files"].items():
         fp = target_dir / relpath
-        if fp.is_file() and fp.stat().st_size == meta["size"]:
-            # Quick check if already downloaded correctly
+        if fp.is_file() and fp.stat().st_size == meta["size"] and _file_sha256_matches(fp, meta["sha256"]):
+            # Quick check if already downloaded and verified
             continue
         url = f"https://huggingface.co/{repo_id}/resolve/main/{relpath}"
         logger.info("Downloading %s -> %s...", url, fp)

@@ -88,6 +88,38 @@ class PluginAdapterTests(unittest.TestCase):
         instance = plugin_module.SkillProofPlugin(self.context())
         self.assertFalse(instance.audit_enabled)
 
+    def test_on_pre_llm_call_preserves_observe_and_focus_fallback_context_and_budget(self):
+        observe = plugin_module.SkillProofPlugin(self.context(mode="observe")).on_pre_llm_call(
+            session_id="s1", task_id="task1", turn_id="turn1",
+            user_message="Use $python-tdd",
+        )
+        self.assertIn("Skill Proof candidate", observe["context"])
+        self.assertIn("python-tdd", observe["context"])
+
+        budgeted = plugin_module.SkillProofPlugin(self.context(context_budget_bytes=40)).on_pre_llm_call(
+            session_id="s1", task_id="task1", turn_id="turn2",
+            user_message="Use $python-tdd",
+        )
+        self.assertEqual(budgeted["context"], 'Use skill_view for "python-tdd" first.')
+        self.assertLessEqual(len(budgeted["context"].encode("utf-8")), 40)
+
+        tiny = plugin_module.SkillProofPlugin(self.context(context_budget_bytes=20)).on_pre_llm_call(
+            session_id="s1", task_id="task1", turn_id="turn3",
+            user_message="Use $python-tdd",
+        )
+        self.assertIsNone(tiny, "an over-tight budget must inject nothing, not the unbounded message")
+
+        plugin = plugin_module.SkillProofPlugin(self.context())
+        plugin.on_pre_llm_call(
+            session_id="s1", task_id="task1", turn_id="turn4",
+            user_message="keep using python-tdd",
+        )
+        fallback = plugin.on_pre_llm_call(
+            session_id="s1", task_id="task2", turn_id="turn5",
+            user_message="book a flight to Chiang Mai",
+        )
+        self.assertIn("score is 0", fallback["context"])
+
     def test_register_declares_complete_runtime_surface(self):
         ctx = self.context()
 

@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import cli
 import core
 import models
 from core import Catalog, SkillRecord, VectorIndex, select_skill
@@ -57,6 +58,57 @@ class ModelRegistryTests(unittest.TestCase):
                 )
                 self.assertFalse(ok)
                 self.assertFalse(target.exists())
+
+    def test_all_registered_model_sha256_checksums_are_valid_64_hex_digits(self):
+        for key, spec in models.MODEL_REGISTRY.items():
+            for relpath, meta in spec["files"].items():
+                self.assertRegex(
+                    meta["sha256"], r"^[0-9a-f]{64}$",
+                    f"{key}:{relpath} must carry a 64-hex-digit SHA-256 digest",
+                )
+
+    def test_check_model_status_and_prefetch_detect_corrupted_same_size_file(self):
+        payload = b"good-model-payload"
+        good_sha = hashlib.sha256(payload).hexdigest()
+        spec = {
+            "repo_id": "test/corrupt-model",
+            "name": "Test model",
+            "license": "MIT",
+            "credit": "test",
+            "source_url": "https://huggingface.co/test/corrupt-model",
+            "dim": 384,
+            "prefix_query": "query: ",
+            "prefix_passage": "passage: ",
+            "files": {"weights.bin": {"size": len(payload), "sha256": good_sha}},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            with mock.patch.dict(models.MODEL_REGISTRY, {"test/corrupt-model": spec}):
+                model_dir = models.get_model_dir("test/corrupt-model", root)
+                model_dir.mkdir(parents=True)
+                corrupted = b"evil-model-payload"  # same byte length, different content
+                self.assertEqual(len(corrupted), len(payload))
+                (model_dir / "weights.bin").write_bytes(corrupted)
+
+                status = models.check_model_status("test/corrupt-model", root)
+                self.assertFalse(status["installed"])
+                self.assertFalse(status["valid"])
+                self.assertTrue(any("sha256 mismatch" in item for item in status["missing_files"]))
+
+                calls = []
+
+                def fake_download(url, target_path, expected_size, expected_sha256, timeout=120.0, callback=None):
+                    calls.append((str(target_path), expected_sha256))
+                    target_path.write_bytes(payload)
+                    return True
+
+                with mock.patch.object(models, "download_file_verified", side_effect=fake_download):
+                    ok = models.download_model("test/corrupt-model", root)
+                self.assertTrue(ok)
+                self.assertEqual(len(calls), 1, "a same-size but corrupted file must be re-downloaded")
+                self.assertEqual((model_dir / "weights.bin").read_bytes(), payload)
+                after = models.check_model_status("test/corrupt-model", root)
+                self.assertTrue(after["installed"])
 
 
 class ProviderAbstractionTests(unittest.TestCase):
@@ -201,6 +253,50 @@ class TokenCutContextTests(unittest.TestCase):
                 session_id="s1", task_id="tk1", turn_id="t2", user_message="something completely unrelated xyz12345",
             )
             self.assertIsNone(res_no)
+
+
+class CliVectorWiringTests(unittest.TestCase):
+    def test_cli_select_and_eval_use_configured_vector_index_when_active(self):
+        class FakeIndex:
+            _memory_vectors = []
+
+            def __init__(self):
+                self.synced = []
+
+            def sync_catalog(self, skills):
+                self.synced = list(skills)
+
+            def rank(self, query, top_k=20):
+                return []
+
+            def trace_snapshot(self):
+                return {}
+
+            def reset_trace(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            skill_dir = root / "python-tdd"
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_bytes(
+                b"---\nname: python-tdd\ndescription: Write Python tests before implementation\n---\nBody.\n"
+            )
+            index = FakeIndex()
+            with mock.patch.object(core, "vector_index_from_env", return_value=index) as provider:
+                with mock.patch.object(core, "select_skill", wraps=core.select_skill) as select:
+                    catalog, _, _ = cli._resolve_selection({"local": root}, "write tests first", 0.28, 0.05, 5)
+
+            provider.assert_called_once_with()
+            self.assertEqual([s.name for s in index.synced], ["python-tdd"])
+            self.assertIs(select.call_args.kwargs["vector_index"], index)
+            self.assertEqual(catalog.skills[0].name, "python-tdd")
+
+            with mock.patch.object(core, "vector_index_from_env", return_value=index) as provider2:
+                with mock.patch.object(core, "select_skill", wraps=core.select_skill) as select2:
+                    cli._resolve_selection({"local": root}, "Use $python-tdd", 0.28, 0.05, 5)
+            provider2.assert_not_called()
+            self.assertIsNone(select2.call_args.kwargs["vector_index"])
 
 
 if __name__ == "__main__":

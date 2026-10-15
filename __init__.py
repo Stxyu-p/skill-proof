@@ -308,11 +308,6 @@ class SkillProofPlugin:
                 self._policy_errors.add(key)
             return None
         self._policy_errors.discard(key)
-        if turn.selection.status == "selected" and turn.selection.selected is not None:
-            return {"context": f'Use skill_view for "{turn.selection.selected.skill.name}" first.'}
-        if turn.selection.status == "ambiguous" and turn.selection.candidates:
-            cands = ", ".join(c.skill.name for c in turn.selection.candidates[:3])
-            return {"context": f"Ambiguous match: choose between {cands}."}
         return {"context": turn.context} if turn.context else None
 
     def on_llm_request(self, request: Any = None, turn_id: str = "", **_: Any) -> Optional[dict[str, Any]]:
