@@ -382,9 +382,13 @@ class SkillProofPlugin:
         reuse_after_patch: Optional[bool] = None,
         **_: Any,
     ) -> None:
-        if normalize_identifier(action) != "loaded":
+        clean_action = normalize_identifier(action)
+        if clean_action in {"created", "updated", "deleted", "enabled", "disabled"}:
+            # The host listing actually changed; loading a skill does not.
+            self._skills_cache = (0.0, set())
             return
-        self._skills_cache = (0.0, set())
+        if clean_action != "loaded":
+            return
         try:
             self.engine.observe_skill_loaded(
                 session_id=str(session_id or ""),

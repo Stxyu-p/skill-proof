@@ -1001,6 +1001,46 @@ def _tokens(value: str) -> tuple[str, ...]:
     )
 
 
+def _normalize_morph(token: str) -> str:
+    """Collapse common English plural/past/gerund suffixes without an external stemmer.
+
+    Only ASCII alphabetic tokens longer than four characters are touched; the
+    callers keep both the full token and this base form, so an imperfect base
+    can never remove the original exact match.
+    """
+    if len(token) <= 4 or not token.isascii() or not token.isalpha():
+        return token
+    if token.endswith("ies") and len(token) > 5:
+        return token[:-3] + "y"  # categories -> category
+    if token.endswith("ing") and len(token) > 5:
+        base = token[:-3]
+        return base if len(base) >= 4 else token  # crashing -> crash
+    if token.endswith("eed"):
+        return token  # speed/feed are not past-tense -ed forms
+    if token.endswith("ed") and len(token) > 4:
+        base = token[:-2]
+        return base if len(base) >= 4 else token  # failed -> fail
+    if token.endswith("es"):
+        stem = token[:-2]
+        if stem.endswith(("sh", "ch", "ss", "x")):
+            return stem if len(stem) >= 4 else token  # crashes -> crash
+        base = token[:-1]
+        return base if len(base) >= 4 else token  # tables -> table
+    if token.endswith("ss"):
+        return token
+    if token.endswith("s"):
+        base = token[:-1]
+        return base if len(base) >= 4 else token  # keeps -> keep
+    return token
+
+
+def _add_morph_bases(tokens: set[str]) -> None:
+    for token in tuple(tokens):
+        base = _normalize_morph(token)
+        if base != token:
+            tokens.add(base)
+
+
 @lru_cache(maxsize=2048)
 def _identifier_pattern(normalized_identifier: str) -> "re.Pattern[str]":
     # Hyphen is a boundary too: "frontend-design" must not match inside
@@ -1827,6 +1867,16 @@ class VectorIndex:
         self._trace(vector_used=bool(scores), fallback_reason=None if scores else "skill_vectors_missing")
         return scores[:top_k]
 
+    def record_lexical_fastpath(self) -> None:
+        """Trace a turn where a decisive lexical winner skipped the vector path."""
+        self._trace(
+            provider_used="lexical_fastpath",
+            fallback_reason=None,
+            embedding_latency_ms=0.0,
+            query_cache_hit=False,
+            vector_used=False,
+        )
+
 
 def vector_index_from_env(
     db_path: Optional[os.PathLike[str] | str] = None,
@@ -1955,11 +2005,19 @@ def _rank_table(ranked: Sequence[RankedCandidate]) -> tuple[RankRow, ...]:
 def _skill_tokens_cache(
     name: str, tags: tuple[str, ...], description: str, aliases: tuple[str, ...] = ()
 ) -> tuple[frozenset[str], frozenset[str], frozenset[str], frozenset[str]]:
+    def _field(value: str, morph: bool = True) -> frozenset[str]:
+        tokens = set(_tokens(value))
+        if morph:
+            _add_morph_bases(tokens)
+        return frozenset(tokens)
+
     return (
-        frozenset(_tokens(name.replace("-", " ").replace("_", " "))),
-        frozenset(_tokens(" ".join(tags))),
-        frozenset(_tokens(description)),
-        frozenset(_tokens(" ".join(aliases))),
+        # Names stay exact: a base form in a short structured name widens the
+        # 0.58-weight field too aggressively (measured false-selection drift).
+        _field(name.replace("-", " ").replace("_", " "), morph=False),
+        _field(" ".join(tags)),
+        _field(description),
+        _field(" ".join(aliases)),
     )
 
 
@@ -2000,6 +2058,7 @@ def _rank(
     preferred_normalized = normalize_identifier(preferred) if preferred else ""
     bonus = max(0.0, float(preferred_bonus))
     query_tokens = set(_tokens(query))
+    _add_morph_bases(query_tokens)
     query_ngrams = _char_ngrams(query)
     normalized_query = normalize_identifier(query)
     duplicate_names = _catalog_duplicate_names(tuple(catalog.skills))
@@ -2111,6 +2170,10 @@ def _resolve_companions(skill: SkillRecord, catalog: Catalog) -> tuple[str, ...]
     return tuple(valid)
 
 
+_VECTOR_BYPASS_SCORE = 0.55
+_VECTOR_BYPASS_MARGIN = 0.18
+
+
 def select_skill(
     catalog: Catalog,
     query: str,
@@ -2179,7 +2242,18 @@ def select_skill(
     )
 
     if vector_index and vector_index._memory_vectors:
-        vec_ranked = vector_index.rank(query, top_k=20)
+        if (
+            ranked
+            and ranked[0].score >= _VECTOR_BYPASS_SCORE
+            and (len(ranked) == 1 or (ranked[0].score - ranked[1].score) >= _VECTOR_BYPASS_MARGIN)
+        ):
+            # Lexical scoring is already decisive: skip the embedding work entirely.
+            recorder = getattr(vector_index, "record_lexical_fastpath", None)
+            if callable(recorder):
+                recorder()
+            vec_ranked = []
+        else:
+            vec_ranked = vector_index.rank(query, top_k=20)
         if vec_ranked:
             k_rrf = 60.0
             has_negation = _query_might_contain_negation(query)
@@ -2348,6 +2422,7 @@ class SkillProofEngine:
     _MODE_ALIASES = {"enforce": "enforce-tools"}
     _SESSION_LIMIT = 64
     _STACK_LIMIT = 10
+    _FILTERED_VIEW_LIMIT = 64
     # Focus is a bounded, decaying boost that only applies to a skill that
     # already has lexical signal: it decides close calls, never unrelated turns.
     _FOCUS_BONUS = 0.20
@@ -2443,6 +2518,7 @@ class SkillProofEngine:
         self.focus_turns = focus_turns
         self._sessions: dict[str, _SessionMemory] = {}
         self._catalog_cache: dict = {}
+        self._filtered_view_cache: dict[tuple[str, frozenset[str]], tuple[Catalog, tuple[str, ...]]] = {}
         self._turns: dict[str, _TurnState] = {}
         self._latest_by_task: dict[tuple[str, str], str] = {}
         self._latest_by_session: dict[str, str] = {}
@@ -2888,17 +2964,26 @@ class SkillProofEngine:
         selection_started = time.perf_counter()
         if available_names is not None:
             names = normalize_identifiers(available_names)
-            local_indexed = {skill.normalized_name for skill in catalog.skills}
-            host_unindexed = tuple(
-                sorted(str(name) for name in available_names if normalize_identifier(name) not in local_indexed)
-            )
-            eligible = tuple(skill for skill in catalog.skills if skill.normalized_name in names)
-            filtered_hash = hashlib.sha256(json.dumps(
-                [(s.skill_id, s.source_sha256) for s in eligible], separators=(",", ":")
-            ).encode()).hexdigest()
-            exclusions = tuple(Diagnostic('not_in_hermes_list', skill.root_id, skill.relative_path)
-                               for skill in catalog.skills if skill.normalized_name not in names)
-            catalog = Catalog(eligible, catalog.diagnostics + exclusions, filtered_hash)
+            view_key = (catalog.catalog_hash, frozenset(available_names))
+            cached_view = self._filtered_view_cache.get(view_key)
+            if cached_view is not None:
+                catalog, host_unindexed = cached_view
+            else:
+                local_indexed = {skill.normalized_name for skill in catalog.skills}
+                host_unindexed = tuple(
+                    sorted(str(name) for name in available_names if normalize_identifier(name) not in local_indexed)
+                )
+                eligible = tuple(skill for skill in catalog.skills if skill.normalized_name in names)
+                filtered_hash = hashlib.sha256(json.dumps(
+                    [(s.skill_id, s.source_sha256) for s in eligible], separators=(",", ":")
+                ).encode()).hexdigest()
+                exclusions = tuple(Diagnostic('not_in_hermes_list', skill.root_id, skill.relative_path)
+                                   for skill in catalog.skills if skill.normalized_name not in names)
+                catalog = Catalog(eligible, catalog.diagnostics + exclusions, filtered_hash)
+                # ponytail: coarse flush bound; switch to an LRU if view sets churn
+                if len(self._filtered_view_cache) >= self._FILTERED_VIEW_LIMIT:
+                    self._filtered_view_cache.clear()
+                self._filtered_view_cache[view_key] = (catalog, host_unindexed)
         known_names = tuple(skill.name for skill in catalog.skills)
         explicit_names = extract_explicit_skill_names(query_text, known_names=known_names)
         if self.vector_index is not None and not explicit_names:
@@ -3452,6 +3537,7 @@ class SkillProofEngine:
         """Force a content reread next turn; existing turn evidence stays unchanged."""
         with self._lock:
             self._catalog_cache.clear()
+            self._filtered_view_cache.clear()
 
     def _hub_entries(self) -> Mapping[str, Mapping[str, Any]]:
         """Read-only hub lock entries keyed by normalized skill name (mtime-cached)."""

@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Lightweight English morphology normalizer (v0.16 plan item 5.2c)**: description, tags, and alias token sets now carry common plural/gerund/past base forms (`crashing`/`crashes` → `crash`, `tables` → `table`, `migrations` → `migration`); skill names stay exact (expanding name tokens caused measured false-selection drift). The shipped stretch case "convert this PDF into a table" now selects `pdf-extraction` in `off` mode.
+- **Filtered-view catalog cache (v0.16 plan item 5.2a)**: `begin_turn` reuses the host-filtered catalog for an identical `(catalog_hash, host name set)` instead of rebuilding diagnostics and re-hashing every turn; cleared by `refresh_catalog`.
+- **Confidence-gated vector cascade (v0.16 plan item 5.2d)**: when the lexical winner scores at least 0.55 with a 0.18 margin, the embedding work is skipped entirely and the trace records `provider_used="lexical_fastpath"`.
+
+### Changed
+- `on_skill_lifecycle` keeps the host-listing cache across `loaded` events and clears it only for `created`/`updated`/`deleted`/`enabled`/`disabled` (weakness W5), removing the `skills_list` refetch after every skill load.
+
+### Note
+- The remaining stretch cases (`the build keeps crashing`, `review my pull request`, `our pages are slow…`, and the Thai `สรุป` synonym case) are still documented gaps: measured scores rose but remain below the 0.28 threshold. Closing them needs the thin-overlap scoring work from the truncated section of the audit plan.
+
 ### Fixed
 - `_explain_skill` no longer raises `IndexError` when `/skill-proof why <name>` runs in a turn whose rank table is empty; in-catalog skills report `no_signal` instead.
 - `Xenova/multilingual-e5-small-fp32` registry entries now carry real SHA-256 checksums (config.json, tokenizer_config.json, tokenizer.json previously held SHA-1 digests, which made `prefetch` fail for this model). Values verified against the HuggingFace files themselves.

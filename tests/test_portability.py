@@ -17,6 +17,7 @@ import mcp_server
 class FakeVectorIndex:
     def __init__(self):
         self.sync_calls = 0
+        self.fastpath = False
         self._memory_vectors = {"demo-skill": (1.0, 0.0)}
 
     def sync_catalog(self, skills):
@@ -24,6 +25,9 @@ class FakeVectorIndex:
 
     def rank(self, query, top_k=20):
         return []
+
+    def record_lexical_fastpath(self):
+        self.fastpath = True
 
 
 
