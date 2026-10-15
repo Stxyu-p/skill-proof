@@ -6,6 +6,7 @@ from unittest import mock
 
 import core
 import mcp_server
+import _vector
 
 
 class MCPVectorConfigurationTests(unittest.TestCase):
@@ -20,7 +21,7 @@ class MCPVectorConfigurationTests(unittest.TestCase):
                 "SKILL_PROOF_VECTOR_DB": os.path.join(tmp, "vectors.db"),
             }
             with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
-                core, "VectorIndex", return_value=object()
+                _vector, "VectorIndex", return_value=object()
             ) as factory:
                 index = mcp_server._vector_index()
 

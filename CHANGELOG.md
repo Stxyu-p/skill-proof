@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `on_skill_lifecycle` keeps the host-listing cache across `loaded` events and clears it only for `created`/`updated`/`deleted`/`enabled`/`disabled` (weakness W5), removing the `skills_list` refetch after every skill load.
+- `core.py` split into focused modules (v0.16 plan item 5.1) — `_catalog.py` (types, scanning, frontmatter), `_vector.py` (SQLite vector index), `_dialogue.py` (negation, session memory, references), `_ranking.py` (tokenizer, morphology, IDF ranking, candidate index), `_compliance.py` (guard results and the turn-policy store) — with `core.py` as a facade re-exporting every moved name. Pure code movement: `import core` callers are unchanged; test mock targets now patch the owning module.
 
 ### Note
 - The remaining stretch cases (`the build keeps crashing`, `review my pull request`, `our pages are slow…`, and the Thai `สรุป` synonym case) are still documented gaps: measured scores rose but remain below the 0.28 threshold. Closing them needs the thin-overlap scoring work from the truncated section of the audit plan.

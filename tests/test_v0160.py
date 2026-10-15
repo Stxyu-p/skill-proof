@@ -16,6 +16,7 @@ import core
 from core import Catalog, SkillRecord, VectorIndex, select_skill
 
 import routing_benchmark
+import _ranking
 
 from tests.test_plugin import FakeContext, plugin_module
 
@@ -179,7 +180,7 @@ class CandidatePruningTests(unittest.TestCase):
                     for query in queries
                 ]
 
-            with mock.patch.object(core, "_candidate_indices", side_effect=lambda *a, **k: set(full)):
+            with mock.patch.object(_ranking, "_candidate_indices", side_effect=lambda *a, **k: set(full)):
                 baseline = run()
             pruned = run()
         self.assertEqual(len(baseline), len(queries))

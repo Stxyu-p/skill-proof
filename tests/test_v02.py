@@ -23,7 +23,7 @@ class V02Tests(unittest.TestCase):
 
     def test_cache_reuses_parse_but_detects_edit(self):
         self.begin()
-        with patch('core._parse_skill', side_effect=AssertionError('reparsed')):
+        with patch('_catalog._parse_skill', side_effect=AssertionError('reparsed')):
             self.assertEqual(self.begin().selection.status, 'selected')
         self.write('beta')
         self.assertEqual(self.begin().selection.status, 'blocked')
@@ -54,7 +54,7 @@ class V02Tests(unittest.TestCase):
         self.begin()
         self.engine.refresh_catalog()
         import core
-        with patch('core._parse_skill', wraps=core._parse_skill) as parse:
+        with patch('_catalog._parse_skill', wraps=core._parse_skill) as parse:
             self.begin()
         self.assertEqual(parse.call_count, 1)
 
