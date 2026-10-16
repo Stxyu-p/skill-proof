@@ -280,6 +280,7 @@ class SkillProofPlugin:
             vector_index=vector_index,
             clock=clock,
             block_modified_hub_skills=_bool_setting(ctx.get_config("block_modified_hub_skills", False), False),
+            catalog_cache_ttl_ms=float(ctx.get_config("catalog_cache_ttl_ms", 1000.0) or 0.0),
         )
         self.visible_receipt = _bool_setting(ctx.get_config("visible_receipt", True), True)
         self.receipt_style = ctx.get_config("receipt_style", "compact")
@@ -430,6 +431,11 @@ class SkillProofPlugin:
         if clean_action in {"created", "updated", "deleted", "enabled", "disabled"}:
             # The host listing actually changed; loading a skill does not.
             self._skills_cache = (0.0, set())
+            try:
+                # Disk content may have changed too: reset the catalog TTL window.
+                self.engine.refresh_catalog()
+            except Exception:
+                logger.exception("Skill Proof could not refresh the catalog")
             return
         if clean_action != "loaded":
             return

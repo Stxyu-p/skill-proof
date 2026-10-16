@@ -16,6 +16,7 @@ from _catalog import (
     Catalog,
     SkillRecord,
     _identifier_in_query,
+    _identifier_pattern,
     _is_sea_spaceless_character,
     _is_spaceless_character,
     _phrase_present,
@@ -34,14 +35,20 @@ from _dialogue import (
 
 # ponytail: default synonym bridges for high-frequency natural-language routing
 DEFAULT_SYNONYMS: dict[str, tuple[str, ...]] = {
+    # Common capability names: natural-language problem statements that carry
+    # no literal skill-name tokens (plan 5.2.3 stretch cases).
+    "debugging": ("keeps crashing", "crashing", "failing build"),
+    "code-review": ("pull request", "pr review", "review my pr"),
+    "performance-optimization": ("pages are slow", "slow pages", "speed up"),
+    "thai-docs": ("สรุปเอกสาร", "เอกสาร ภาษาไทย"),
     "ui-ux-pro-max": ("dashboard", "หน้าเว็บ", "ออกแบบเว็บ", "frontend", "ui", "ux", "interface", "web design"),
     "github-pr-workflow": ("pull request", "pr", "review pr", "pull", "merge", "เปิด pr"),
-    "github-code-review": ("รีวิว pull request", "ตรวจ pr", "github review", "code review github", "ตรวจ pull request"),
+    "github-code-review": ("รีวิว pull request", "ตรวจ pr", "github review", "code review github", "ตรวจ pull request", "pull request", "pr review", "review my pr"),
     "hermes-context-budget": ("compress", "context", "token", "budget", "บีบอัด", "ย่อบทสนทนา", "context เต็ม"),
     "slides": ("presentation", "pitch", "สไลด์", "deck", "pitch deck"),
     "test-driven-development": ("tdd", "เขียนเทสต์", "red-green-refactor", "unit test"),
     "python-debugpy": ("แก้บั๊ก python", "debug python", "pdb", "debugpy", "โค้ดไพธอน", "traceback", "ส่องที"),
-    "systematic-debugging": ("แก้บั๊ก", "debugging", "root cause", "โค้ดพัง", "หาสาเหตุบั๊ก"),
+    "systematic-debugging": ("แก้บั๊ก", "debugging", "root cause", "โค้ดพัง", "หาสาเหตุบั๊ก", "keeps crashing", "crashing", "failing build"),
     "impeccable": ("ใส่สี", "spacing", "polish ui", "design polish"),
     "banner-design": ("แบนเนอร์", "promotion banner", "social media banner"),
     "imagegen": ("สร้าง logo", "โลโก้", "generate logo"),
@@ -590,11 +597,14 @@ def _rank(
                 score += _NGRAM_WEIGHT * dice
                 reasons.append("spaceless_script_overlap")
 
-        if _identifier_in_query(skill.name, query, normalized_query):
+        norm_name = catalog.index.name_norms[position]
+        if norm_name and norm_name in normalized_query and _identifier_pattern(norm_name).search(normalized_query):
             score += 0.92
             reasons.append("exact_name_in_query")
 
-        normalized_description = normalize_identifier(skill.description)
+        # Precomputed at index build: avoids re-normalizing every description
+        # on every turn (the dominant cost of the all-match loop).
+        normalized_description = catalog.index.desc_norms[position]
         if _phrase_present(normalized_description, normalized_query) or _phrase_present(
             normalized_query, normalized_description
         ):

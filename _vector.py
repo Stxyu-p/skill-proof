@@ -123,6 +123,8 @@ class VectorIndex:
     def _connect(self):
         conn = sqlite3.connect(str(self.db_path))
         try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             yield conn
         finally:
             conn.close()
@@ -242,16 +244,14 @@ class VectorIndex:
     def sync_catalog(self, catalog_skills: Sequence[SkillRecord]) -> int:
         if not self.db_path or self.provider == "off":
             return 0
-        missing: list[SkillRecord] = []
         with self._connect() as conn:
-            cur = conn.cursor()
-            for s in catalog_skills:
-                row = cur.execute(
-                    "SELECT source_sha256 FROM skill_embeddings WHERE skill_name = ? AND model = ?",
-                    (s.name, self.model),
-                ).fetchone()
-                if not row or row[0] != s.source_sha256:
-                    missing.append(s)
+            known = dict(
+                conn.execute(
+                    "SELECT skill_name, source_sha256 FROM skill_embeddings WHERE model = ?",
+                    (self.model,),
+                ).fetchall()
+            )
+        missing = [skill for skill in catalog_skills if known.get(skill.name) != skill.source_sha256]
 
         if not missing:
             return 0

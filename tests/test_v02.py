@@ -13,7 +13,9 @@ class V02Tests(unittest.TestCase):
         self.path = self.root / 'alpha' / 'SKILL.md'
         self.path.parent.mkdir()
         self.write('alpha')
-        self.engine = SkillProofEngine({'test': self.root})
+        # These tests edit files between turns and expect immediate detection;
+        # the catalog TTL cache is exercised separately in test_v0160.
+        self.engine = SkillProofEngine({'test': self.root}, catalog_cache_ttl_ms=0.0)
 
     def write(self, name):
         self.path.write_text(f'---\nname: {name}\ndescription: Testing workflow\n---\nInstructions.\n', encoding='utf-8')

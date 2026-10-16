@@ -108,6 +108,13 @@ class DeterministicMockEmbedder:
 class EmbedderSeamTests(unittest.TestCase):
     """v0.16 plan item 5.1: the EmbedderProtocol seam on VectorIndex."""
 
+    def test_sqlite_uses_wal_journal_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            idx = VectorIndex(pathlib.Path(tmp) / "v.db")
+            with idx._connect() as conn:
+                mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            self.assertEqual(str(mode).lower(), "wal")
+
     def test_injected_embedder_replaces_provider_and_is_traced(self):
         with tempfile.TemporaryDirectory() as tmp:
             idx = VectorIndex(

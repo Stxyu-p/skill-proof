@@ -585,5 +585,85 @@ class AuditChainCalibrateTests(unittest.TestCase):
         self.assertIn("calibration", text)
 
 
+class CatalogTtlTests(unittest.TestCase):
+    """v0.16 Phase 2: O(1) catalog reuse inside the TTL window (plan 5.2.1)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name) / "skills"
+        folder = self.root / "alpha"
+        folder.mkdir(parents=True)
+        self.skill_file = folder / "SKILL.md"
+        self.skill_file.write_text(
+            "---\nname: alpha\ndescription: Testing workflow\n---\nInstructions.\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_ttl_reuses_catalog_within_window_and_rescans_after(self):
+        clock = _FakeClock()
+        engine = SkillProofEngine(
+            {"test": self.root},
+            clock=clock,
+            catalog_cache_ttl_ms=1000.0,
+            policy_store=InMemoryPolicyStore(),
+        )
+        engine.begin_turn(turn_id="1", session_id="s", task_id="t", query="Use $alpha")
+        first_catalog = engine._catalog_cache["__catalog__"]
+
+        self.skill_file.write_text(
+            "---\nname: alpha\ndescription: Spreadsheet automation\n---\nInstructions.\n",
+            encoding="utf-8",
+        )
+        warm = engine.begin_turn(turn_id="2", session_id="s", task_id="t", query="spreadsheet automation")
+        self.assertIs(engine._catalog_cache["__catalog__"], first_catalog, "within the TTL the catalog must be reused")
+        self.assertTrue(engine._state(turn_id="2").performance.get("catalog_ttl_reuse"))
+        self.assertEqual(warm.selection.status, "no_match", "the stale description must not match yet")
+
+        clock.advance(2.0)
+        cool = engine.begin_turn(turn_id="3", session_id="s", task_id="t", query="spreadsheet automation")
+        self.assertIsNot(engine._catalog_cache["__catalog__"], first_catalog)
+        self.assertEqual(cool.selection.selected.skill.name, "alpha", "after the TTL the edit must be picked up")
+
+    def test_refresh_catalog_resets_the_window(self):
+        clock = _FakeClock()
+        engine = SkillProofEngine(
+            {"test": self.root},
+            clock=clock,
+            catalog_cache_ttl_ms=1000.0,
+            policy_store=InMemoryPolicyStore(),
+        )
+        engine.begin_turn(turn_id="1", session_id="s", task_id="t", query="Use $alpha")
+        first_catalog = engine._catalog_cache["__catalog__"]
+        self.skill_file.write_text(
+            "---\nname: alpha\ndescription: Spreadsheet automation\n---\nInstructions.\n",
+            encoding="utf-8",
+        )
+        engine.refresh_catalog()
+        refreshed = engine.begin_turn(turn_id="2", session_id="s", task_id="t", query="spreadsheet automation")
+        self.assertIsNot(engine._catalog_cache["__catalog__"], first_catalog)
+        self.assertEqual(refreshed.selection.selected.skill.name, "alpha")
+
+
+class StretchTierTests(unittest.TestCase):
+    """v0.16 Phase 2 gate: every stretch case resolves in off mode (plan 5.2.3)."""
+
+    def test_all_stretch_cases_select_their_expected_skill(self):
+        data = routing_benchmark.load_fixture(pathlib.Path("routing_cases.json"))
+        with routing_benchmark.fixture_catalog(data) as catalog:
+            misses = []
+            for case in data["cases"]:
+                if case.get("tier") != "stretch":
+                    continue
+                selection = select_skill(catalog, case["query"])
+                got = selection.selected.skill.name if selection.selected else None
+                expected = case.get("expect") or case.get("expected")
+                if got != expected:
+                    misses.append((case["query"], got, expected))
+        self.assertEqual(misses, [], "every stretch case must select its expected skill")
+
+
 if __name__ == "__main__":
     unittest.main()

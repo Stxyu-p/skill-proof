@@ -277,6 +277,7 @@ class SkillProofEngine:
         clock: Optional[Callable[[], float]] = None,
         policy_store: Optional[Any] = None,
         block_modified_hub_skills: bool = False,
+        catalog_cache_ttl_ms: float = 1000.0,
     ) -> None:
         normalized_mode = normalize_identifier(mode)
         normalized_mode = self._MODE_ALIASES.get(normalized_mode, normalized_mode)
@@ -359,6 +360,10 @@ class SkillProofEngine:
         if not isinstance(block_modified_hub_skills, bool):
             raise ValueError("block_modified_hub_skills must be a boolean")
         self.block_modified_hub_skills = block_modified_hub_skills
+        if catalog_cache_ttl_ms is None or float(catalog_cache_ttl_ms) < 0:
+            raise ValueError("catalog_cache_ttl_ms must be >= 0")
+        self.catalog_cache_ttl_ms = float(catalog_cache_ttl_ms)
+        self._catalog_scan_at = float("-inf")
 
     @staticmethod
     def _text_id(value: object) -> str:
@@ -803,13 +808,33 @@ class SkillProofEngine:
         if self.vector_index is not None:
             self.vector_index.reset_trace()
         with self._lock:
-            catalog = scan_catalog(
-                self._roots,
-                max_skill_bytes=self.max_skill_bytes,
-                cache=self._catalog_cache,
-                metrics=metrics,
-                disabled=self.disabled,
+            now = self._clock()
+            fresh = (
+                self.catalog_cache_ttl_ms > 0
+                and "__catalog__" in self._catalog_cache
+                and (now - self._catalog_scan_at) * 1000.0 < self.catalog_cache_ttl_ms
             )
+            if fresh:
+                # Plan 5.2.1: an unchanged tree within the TTL window is an O(1)
+                # reuse. The scandir fingerprint itself costs ~30-40 ms per 300
+                # skills, so it runs at most once per window; refresh_catalog and
+                # skill lifecycle events reset the window deterministically.
+                catalog = self._catalog_cache["__catalog__"]
+                metrics.update(
+                    cache_hits=len(self._catalog_cache.get("__live_keys__", ())),
+                    cache_misses=0,
+                    tree_cache_hit=True,
+                    catalog_ttl_reuse=True,
+                )
+            else:
+                catalog = scan_catalog(
+                    self._roots,
+                    max_skill_bytes=self.max_skill_bytes,
+                    cache=self._catalog_cache,
+                    metrics=metrics,
+                    disabled=self.disabled,
+                )
+                self._catalog_scan_at = self._clock()
         metrics['scan_ms'] = round((self._clock() - core_started) * 1000, 3)
         local_count = len(catalog.skills)
         indexed_names = frozenset(skill.normalized_name for skill in catalog.skills)
@@ -1444,6 +1469,7 @@ class SkillProofEngine:
         with self._lock:
             self._catalog_cache.clear()
             self._filtered_view_cache.clear()
+            self._catalog_scan_at = float("-inf")
 
     def _hub_entries(self) -> Mapping[str, Mapping[str, Any]]:
         """Read-only hub lock entries keyed by normalized skill name (mtime-cached)."""

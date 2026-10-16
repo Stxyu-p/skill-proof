@@ -17,13 +17,18 @@ def run():
             (folder / "SKILL.md").write_text(
                 f"---\nname: workflow-{i}\ndescription: Handle domain {i} maintenance\n---\n"
                 + "Instruction content.\n" * 200, encoding="utf-8")
-        engine = SkillProofEngine({"benchmark": root})
+        engine = SkillProofEngine({"benchmark": root}, catalog_cache_ttl_ms=1000.0)
         times = []
+        scan_times = []
+        routing_times = []
         for i in range(21):
             started = time.perf_counter()
             engine.begin_turn(turn_id=str(i), session_id="bench", task_id="bench",
                               query="Use workflow-42 for maintenance")
             times.append((time.perf_counter() - started) * 1000)
+            performance = engine._state(turn_id=str(i)).performance
+            scan_times.append(performance.get("scan_ms", 0.0))
+            routing_times.append(performance.get("selection_ms", 0.0))
         cases = [
             ("Use $workflow-42", "workflow-42"),
             ("ใช้สกิล workflow-42", "workflow-42"),
@@ -39,6 +44,9 @@ def run():
         print(json.dumps({"skills": 300, "cold_ms": round(times[0], 3),
                           "warm_median_ms": round(statistics.median(times[1:]), 3),
                           "warm_p95_ms": round(sorted(times[1:])[18], 3),
+                          "warm_scan_median_ms": round(statistics.median(scan_times[1:]), 3),
+                          "warm_routing_median_ms": round(statistics.median(routing_times[1:]), 3),
+                          "warm_routing_p95_ms": round(sorted(routing_times[1:])[18], 3),
                           "synthetic_routing_correct": correct, "synthetic_routing_total": len(cases)}, indent=2))
 
 
