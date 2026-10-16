@@ -54,7 +54,7 @@
   <path class="wire-blue" d="M234 78 H 274"/>
 
   <!-- ==================== STAGE 2: TIER 1 ENGINE ==================== -->
-  <text class="t-lane" x="280" y="26">2. TIER 1: DETERMINISTIC IN-PROCESS ENGINE (0 TOKENS · &lt; 2 MS)</text>
+  <text class="t-lane" x="280" y="26">2. TIER 1: DETERMINISTIC IN-PROCESS ENGINE (0 MODEL CALLS)</text>
   <rect class="zone" x="274" y="38" width="430" height="418"/>
 
   <!-- Step 2A: Catalog Scan & Host Guard -->
@@ -80,8 +80,8 @@
   <rect class="card-blue" x="290" y="238" width="398" height="102"/>
   <text class="t-badge" x="306" y="258">NEUTRAL PROVIDER LAYER</text>
   <text class="t-title" x="306" y="276">off | local | gateway (Hybrid RRF)</text>
-  <text class="t-sub" x="306" y="294">• off: Zero-dependency stdlib lexical ranker (default 1.3 ms)</text>
-  <text class="t-sub" x="306" y="310">• local: CPU ONNX multilingual-e5-small (19 ms warm cache)</text>
+  <text class="t-sub" x="306" y="294">• off: zero-dependency stdlib lexical ranker (default mode)</text>
+  <text class="t-sub" x="306" y="310">• local: CPU ONNX multilingual-e5-small, fully offline</text>
   <text class="t-sub" x="306" y="326">• gateway: OpenAI-compatible embeddings REST with automatic fail-open</text>
 
   <!-- Wire 2C -> 2D -->
@@ -92,7 +92,7 @@
   <text class="t-badge" x="306" y="378">DECISION GATE</text>
   <text class="t-title" x="306" y="396">Threshold Evaluation</text>
   <text class="t-sub" x="306" y="414">min_score = 0.28 · min_margin = 0.05</text>
-  <text class="t-sub" x="306" y="428">Clear winner passes · Close candidates marked ambiguous</text>
+  <text class="t-sub" x="306" y="428">Clear winner skips embedding work · Ties marked ambiguous</text>
 
   <!-- ==================== STAGE 3: OUTCOMES ==================== -->
   <text class="t-lane" x="740" y="26">3. EXECUTION OUTCOME</text>
@@ -111,8 +111,8 @@
   <rect class="card-green" x="740" y="342" width="256" height="96"/>
   <text class="t-badge-green" x="756" y="362">FAST-PATH ROUTE</text>
   <text class="t-title" x="756" y="382">Selected: 1-Line Prompt Nudge</text>
-  <text class="t-sub" x="756" y="400">Replaces 4,000 token dump with:</text>
+  <text class="t-sub" x="756" y="400">Replaces the prompt index (opt-in) with:</text>
   <text class="t-title" x="756" y="418" font-size="11px">"Use skill_view for 'X' first."</text>
-  <text class="t-sub" x="756" y="432">+ Emits SHA256 verifiable audit receipt</text>
+  <text class="t-sub" x="756" y="432">+ Emits SHA256 audit receipt (hash-chained)</text>
 
 </svg>

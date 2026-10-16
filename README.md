@@ -1,126 +1,140 @@
 <div align="center">
 
-  <h1>🛡️ Skill Proof</h1>
-  <p><strong>Deterministic in-process skill selection for autonomous AI agents</strong></p>
-  <p><em>No separate model call for routing · Optional local prompt reduction · Multi-agent via Stdio MCP</em></p>
+  <h1>Skill Proof</h1>
+  <p><strong>Deterministic, in-process skill routing for AI coding agents</strong></p>
+  <p><em>Zero routing model calls. Optional local embeddings. Stdio MCP for any agent.</em></p>
 
   <p>
-    <a href="https://github.com/Stxyu-p/skill-proof"><img src="https://img.shields.io/badge/Repository-Stxyu--p%2Fskill--proof-0284c7?style=flat-square&logo=github" alt="Repository" /></a>
-    <a href="#-quick-start"><img src="https://img.shields.io/badge/Architecture-Deterministic_Lexical_+_ONNX-0284c7?style=flat-square" alt="Architecture" /></a>
-    <a href="#-key-capabilities-what-you-get"><img src="https://img.shields.io/badge/Routing-Local-blue?style=flat-square" alt="Local routing" /></a>
-    <a href="#-multi-agent-mcp-integration"><img src="https://img.shields.io/badge/Protocol-Stdio_MCP-10b981?style=flat-square" alt="Stdio MCP" /></a>
-    <img src="https://img.shields.io/badge/Dependencies-Stdlib_Default-success?style=flat-square" alt="Dependencies" />
-    <img src="https://img.shields.io/badge/License-MIT-slate?style=flat-square" alt="License" />
-    <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square" alt="Python" />
+    <a href=https://github.com/Stxyu-p/skill-proof><img src="docs/badges/release.svg" alt="Release" /></a>
+    <a href="#license"><img src="docs/badges/license.svg" alt="License" /></a>
+    <img src="docs/badges/python.svg" alt="Python" />
+  </p>
+  <p>
+    <a href="#quick-start"><img src="docs/badges/quickstart.svg" alt="Quick Start" /></a>
+    <a href="#installation"><img src="docs/badges/install.svg" alt="Install" /></a>
+    <a href="#mcp-server"><img src="docs/badges/mcp.svg" alt="MCP" /></a>
   </p>
 
 </div>
 
----
+## Overview
 
-## 🌟 What is Skill Proof?
+**Skill Proof** is an in-process, deterministic skill routing engine for autonomous AI coding agents: Hermes Agent, Claude Code, OpenAI Codex, Antigravity, and Cursor.
 
-**Skill Proof** is an in-process, deterministic skill routing engine designed for autonomous AI coding agents—including **Hermes Agent, Claude Code, OpenAI Codex, Antigravity, and Cursor**.
+A large skill catalog has two costs. The full index makes the system prompt heavy, and delegating routing to a separate model call adds latency and uncertainty on top. Skill Proof resolves both in-process. It scores every installed skill deterministically against the current request (token overlap, alias phrases, a synonym graph, character n-grams for spaceless languages, and optional embeddings) and returns one of three decisions: **selected**, **ambiguous**, or **no_match**. No model call is made to choose a skill, and routing never leaves the machine.
 
-In agent environments with large catalogs of specialized skills (`SKILL.md`), the full skill index can make the system prompt large. Delegating routing to a separate LLM call adds another model request.
+When `reduce_skill_prompt` is enabled, a confident selection replaces the full available-skills index for that request. Ambiguous and no-match turns leave the host index untouched.
 
-Skill Proof offers **in-process deterministic candidate selection** using token overlap, alias-aware negation analysis, and optional local ONNX vectors. When `reduce_skill_prompt` is enabled, a confident selection replaces the full `<available_skills>` index for that provider request. No-match and ambiguous decisions leave the host index intact.
+Real output, captured from the current build:
 
 ```bash
 $ python cli.py select --query "Review this pull request for syntax bugs, but do not use TDD"
 decision: selected (lexical_match)
-selected: code-review (reasons: phrase_match, tag_terms)
-vetoed: test-driven-development (matched negation: 'do not use TDD')
+suggested fleet agent: altima
+selected: github-code-review score=0.940715 reasons=alias_phrase,name_terms,tag_terms,alias_terms,description_terms companions=github-pr-workflow
+candidate: github-code-review score=0.940715 reasons=alias_phrase,name_terms,tag_terms,alias_terms,description_terms
+candidate: code-review score=0.876008 reasons=alias_phrase,name_terms,alias_terms,description_terms
+candidate: github-pr-workflow score=0.852364 reasons=alias_phrase,tag_terms,alias_terms
 ```
 
----
-
-## 📐 Architecture
-
-![Skill Proof Two-Tier In-Process Routing Architecture](docs/architecture.svg)
-
-<sub>Two-tier architecture: Tier 1 resolves high-confidence skills in-process and injects a single-line instruction into the current user message. Ambiguous turns receive up to three candidates; no-match turns rely on the host's normal skill index. Plain SVG, zero external assets.</sub>
-
----
-
-## 🎯 Why Use Skill Proof? (What It Solves)
-
-| Challenge in LLM-Based Routing | How Skill Proof Solves It | Practical Benefit |
-| :--- | :--- | :--- |
-| **Prompt Bloat** | Optional Hermes `llm_request` middleware replaces `<available_skills>` with the confidently selected skill; ambiguous and no-match turns keep Hermes' full index. | Character reduction is recorded in the turn receipt; model-token savings still need live measurement. |
-| **Extra Routing Calls** | Scores candidates in-process before the normal provider request. | No separate model call is made just to choose a skill. |
-| **Disabled Skills** | Reads host configuration and excludes disabled skills from its local catalog. | Disabled skills are omitted from Skill Proof candidates. |
-| **Ignoring Negative Constraints** | Probes negation patterns across canonical names and aliases (*"do not use TDD"*). | **Strictly vetoes unwanted workflows** |
-| **Wild Guesses on Weak Prompts** | Enforces conservative decision thresholds (`min_score=0.28`, `min_margin=0.05`); marks ties as `ambiguous`. | **Eliminates false-positive tool activation** |
-| **Unverifiable Selection** | Emits SHA256 audit receipts with selection rationale and observed tool evidence. | Selection evidence can be inspected after the turn. |
-
----
-
-## 🚀 Key Capabilities (What You Get)
-
-### 1. Three Neutral Provider Modes
-
-Skill Proof provides three interchangeable provider modes to suit any deployment scenario:
-
-| Provider | Mechanism | Best Used For | Requirements |
-| :--- | :--- | :--- | :--- |
-| **`off` (Default)** | Python Standard Library lexical matching, character n-grams, and synonym graph. | Production fleets, local development, lightweight containers. | **None (0 dependencies)**, 100% offline. |
-| **`local`** | Local CPU ONNX embedding engine with verified registry models. | Multilingual semantic matching without external API keys. | `onnxruntime`, `tokenizers`, and `numpy` are optional runtime dependencies; if missing, routing falls back to lexical. |
-| **`gateway`** | OpenAI-compatible embeddings REST endpoint with automatic fail-open fallback. | Centralized enterprise gateways and existing embedding proxies. | API key + Endpoint URL. |
-
-### 2. Multi-Agent Ecosystem Support (MCP)
-
-Skill Proof embeds a standard **Model Context Protocol (MCP)** server. External agents connect via Stdio to search and read skills without modifying their harness:
-
-- `skill_search`: Hybrid RRF top-k search returning matching skill names, descriptions, and file paths.
-- `skill_read`: Direct retrieval of full `SKILL.md` markdown content.
-- `skill_select`: Single-skill deterministic routing decision.
-- `skill_scan`: Multi-root catalog diagnostics and status.
-
-### 4. Official Model Registry with Verified Checksums
-
-When running with `embedding_provider: local`, Skill Proof downloads official, verified models directly from HuggingFace with streaming SHA256 checksum verification:
-
-- **`Xenova/multilingual-e5-small`** (Quantized ONNX, 384 dims, MIT license) — *Primary recommended*
-- **`Xenova/multilingual-e5-small-fp32`** (FP32 ONNX fallback, 384 dims, MIT license)
-- **`Xenova/paraphrase-multilingual-MiniLM-L12-v2`** (Quantized ONNX backup, 384 dims, Apache-2.0)
-
----
-
-## 💻 Quick Start
-
-### Option A: Install as Hermes Agent Plugin
-
-Clone directly into your Hermes plugins directory and activate:
+The same command on a vague report-style prompt:
 
 ```bash
+$ python cli.py select --query "my page keeps crashing after login"
+decision: selected (lexical_match)
+suggested fleet agent: sora
+selected: systematic-debugging score=0.796145 reasons=alias_phrase,alias_terms companions=test-driven-development
+candidate: systematic-debugging score=0.796145 reasons=alias_phrase,alias_terms
+candidate: planning-with-files score=0.076061 reasons=description_terms
+candidate: caveman score=0.035353 reasons=description_terms
+```
+
+## Why In-Process Routing
+
+| Cost of a large skill catalog | Without in-process routing | With Skill Proof |
+| :--- | :--- | :--- |
+| **Routing itself** | An extra model call, or the host model reasons over the full index | Zero model calls. Scoring runs in-process before the provider request |
+| **Prompt size** | Every skill name and description stays in the system prompt | A confident selection can replace the index for that request (opt-in, per turn) |
+| **Negative constraints** | "do not use X" is just more text | Negation probes veto named skills before scoring (English, Thai, Chinese, Hindi, Japanese, Korean patterns) |
+| **Disabled or shadowed skills** | Host-dependent filtering, if any | Reads host configuration. Disabled skills never enter the candidate set |
+| **Weak or vague prompts** | The model guesses, or activates the wrong tool | Conservative thresholds mark close candidates ambiguous and return a shortlist instead of a guess |
+| **Verification** | No record of why a skill was chosen | SHA-256 audit receipts with selection rationale and observed tool evidence, hash-chained across restarts |
+| **Privacy and offline** | Routing data leaves the process | `off` mode is 100% standard library and offline. `local` embeddings stay on disk |
+
+## Architecture
+
+![Skill Proof two-tier in-process routing architecture](docs/architecture.svg)
+
+<sub>Two-tier routing: Tier 1 resolves high-confidence skills in-process and injects a one-line instruction into the current user message. Low-confidence turns fall back to the host with a shortlist of at most three candidates. Plain SVG, zero external assets.</sub>
+
+Decision rules:
+
+- **Clear winner** (score >= `min_score`, margin >= `min_margin`): selected. One-line nudge, optional index replacement, and the embedding layer is skipped entirely on the lexical fast path.
+- **Close candidates** (margin below `min_margin`) or weak top score: ambiguous. Up to `max_candidates` names are offered to the host model, which keeps its full skill index.
+- **Nothing above threshold**: no_match. The host is unchanged, so Skill Proof cannot force an unrelated skill onto a turn.
+
+## Key Modules
+
+| Module | What It Does | Technical Advantage |
+| :--- | :--- | :--- |
+| `core.py` | Engine facade: turn lifecycle, session memory, receipts, audit | Stable imports while internals stay split into focused modules |
+| `_catalog.py` | Multi-root discovery, host guard, catalog cache, bundle hashing | TTL-cached scans, symlink-safe walking, host-disabled skills filtered |
+| `_ranking.py` | Tokenizer, morphology, IDF lexical ranker, candidate pruning | Pre-computed inverted index. Non-matching queries rank in about 0.2 to 0.3 ms on a 300-skill catalog |
+| `_dialogue.py` | Session focus, reference resolution ("same skill as before"), negation patterns | Conversational routing that survives multi-turn work |
+| `_vector.py` | Optional embedding providers (`off` / `local` / `gateway`), RRF fusion | Confidence-gated: embeddings run only when lexical ranking is borderline |
+| `_compliance.py` | Policy store, tool gates, audit records | Enforce mode blocks tools until the skill loads. Stores derived numbers only |
+| `bridge.py` | Host hook bridge (PreToolUse / Stop) | One call turns any harness into a guarded agent |
+| `cli.py`, `mcp_server.py` | Standalone CLI and MCP server | Same engine pipeline as the plugin, one construction seam (`from_config`) |
+| `benchmark.py`, `routing_benchmark.py`, `phase3_gates.py` | Benchmarks and gates | Reproducible numbers. The routing gate exits non-zero on recall regression |
+
+## System Footprint
+
+| Property | Value |
+| :--- | :--- |
+| Primary dependency (`off` mode) | Python standard library only |
+| Routing cost | Zero model calls, pure in-process scoring |
+| Network use (`off` / `local`) | None. Routing and embeddings stay offline |
+| Embedding work | Skipped on confident lexical winners (`lexical_fastpath` trace) |
+| Warm catalog scan (300 skills) | About 0.02 ms per turn |
+| Full routing median (300-skill synthetic catalog) | About 6 ms, single Python process |
+
+## Quick Start
+
+### Installation
+
+| Option | Best For | How |
+| :--- | :--- | :--- |
+| **Hermes Agent plugin** | In-session routing, nudges, tool gates | Clone into your Hermes plugins directory, then `hermes plugins enable skill-proof` |
+| **Standalone CLI** | Inspection, scripting, CI | Clone the repository and run `python cli.py` commands |
+| **Stdio MCP server** | Claude Code, Codex, Cursor, any MCP client | Point your client at `mcp_server.py` (config below) |
+
+```bash
+# 1. Clone into your Hermes plugins directory:
+#    macOS / Linux:  ~/.hermes/plugins/skill-proof
+#    Windows:        %LOCALAPPDATA%\hermes\plugins\skill-proof
 git clone https://github.com/Stxyu-p/skill-proof.git ~/.hermes/plugins/skill-proof
+
+# 2. Enable the plugin
 hermes plugins enable skill-proof
 ```
 
-Verify in your next session:
+3. Verify in your next session:
+
 ```text
 /skill-proof status
-/skill-proof health
+/skill-proof why <skill name>
 ```
 
-### Option B: Standalone CLI / Local Python
+4. Or use it standalone:
 
 ```bash
-# 1. Clone repository
-git clone https://github.com/Stxyu-p/skill-proof.git
-cd skill-proof
-
-# 2. Inspect active skills and system status
 python cli.py status
-
-# 3. Route an instruction
-python cli.py select --query "Review this pull request for syntax bugs, but do not use TDD"
+python cli.py scan
 ```
 
-### Option C: Connect External Agents via Stdio MCP
+### MCP server
 
-Add Skill Proof to your agent configuration (`~/.codex/config.toml`, Claude Code, or Cursor settings):
+Skill Proof embeds a standard Model Context Protocol (MCP) server. External agents connect over stdio and share the same catalog:
 
 ```json
 {
@@ -133,43 +147,57 @@ Add Skill Proof to your agent configuration (`~/.codex/config.toml`, Claude Code
 }
 ```
 
-MCP vector search defaults to lexical-only. To enable `local` or `gateway` embeddings, set these environment variables on the MCP server process: `SKILL_PROOF_EMBEDDING_PROVIDER`, `SKILL_PROOF_EMBEDDING_MODEL`, `SKILL_PROOF_VECTOR_DB`, and `SKILL_PROOF_MODELS_DIR`. For `gateway`, also set `SKILL_PROOF_GATEWAY_URL` and `SKILL_PROOF_GATEWAY_KEY_ENV`; the latter names the environment variable that holds the key. The key itself is never passed as an MCP setting or written to the audit log. The Hermes plugin continues to use its normal `config.yaml` settings.
+The MCP server exposes four tools:
 
----
+| Tool | Purpose |
+| :--- | :--- |
+| `skill_select` | Single-skill deterministic routing decision for a query |
+| `skill_search` | Hybrid RRF top-k search: matching names, descriptions, and paths |
+| `skill_read` | Full `SKILL.md` markdown content for one skill |
+| `skill_scan` | Multi-root catalog diagnostics and status |
 
-## 🛠️ Command-Line Reference
+MCP vector search defaults to lexical-only. To enable `local` or `gateway` embeddings, set these environment variables on the MCP server process: `SKILL_PROOF_EMBEDDING_PROVIDER`, `SKILL_PROOF_EMBEDDING_MODEL`, `SKILL_PROOF_VECTOR_DB`, and `SKILL_PROOF_MODELS_DIR`. For `gateway`, also set `SKILL_PROOF_GATEWAY_URL` and `SKILL_PROOF_GATEWAY_KEY_ENV`. The last one names the environment variable that holds the key. The key itself is never passed as an MCP setting or written to the audit log. The Hermes plugin uses its normal `config.yaml` settings instead.
+
+## Commands
+
+### CLI
 
 ```bash
-# Display catalog skills, installed models, and provider status
-python cli.py status
-
-# Choose a provider and update Hermes config.yaml
-python cli.py setup
-
-# Route a user instruction to the best matching skill
 python cli.py select --query "Analyze and optimize database SQL query performance"
-
-# List available HuggingFace models, download sizes, and installation state
-python cli.py models
-
-# Prefetch and verify an embedding model (optional)
-python cli.py prefetch --model Xenova/multilingual-e5-small
-
-# Scan catalog roots and view diagnostics
-python cli.py scan
-
-# Evaluate scoring breakdown and char n-gram weights for a query
-python cli.py eval "Design a clean responsive web dashboard"
-
-# Detect near-duplicate or overlapping skills across roots
-python cli.py overlap --min-similarity 0.4
+python cli.py eval "Design a clean responsive web dashboard"    # scoring breakdown
+python cli.py calibrate --json                                  # audit-driven tuning report
 ```
 
----
+| Command | Purpose |
+| :--- | :--- |
+| `roots` | List detected skill roots |
+| `scan` | Scan roots and report catalog state |
+| `select` | Choose one skill for a query |
+| `eval` | Interactive query diagnostics and ranking matrix |
+| `overlap` | Detect near-duplicate or overlapping skills across roots |
+| `models` | List embedding models, download sizes, and installation state |
+| `setup` | Configure an embedding provider (`off` / `local` / `gateway`) |
+| `prefetch` | Download and checksum-verify an embedding model |
+| `remove` | Remove an installed embedding model |
+| `status` | Report system, catalog, and provider status |
+| `calibrate` | Threshold and weight suggestions derived from the audit history |
+| `bridge` | Connect or inspect host agent workspaces |
 
-## ⚙️ Configuration
+### In-session (Hermes plugin)
 
-Configure Skill Proof in your host configuration file (`config.yaml`):
+| Command | Purpose |
+| :--- | :--- |
+| `/skill-proof status` | Catalog, models, and provider status |
+| `/skill-proof why <name>` | Full scoring explanation for the last query, or for a named skill |
+| `/skill-proof stats` | Turn statistics from the audit log (`--json`) |
+| `/skill-proof calibrate` | Calibration suggestions from audit history (`--json`) |
+| `/skill-proof audit-verify` | Verify the audit log hash chain (`--json`) |
+| `/skill-proof trace` | The current turn's selection trace |
+| `/skill-proof overlap` | Near-duplicate detection across roots (`--json`) |
+| `/skill-proof refresh` | Rescan skill roots |
+| `/skill-proof health` | Self-check across catalog, provider, and storage |
+
+## Configuration
 
 ```yaml
 plugins:
@@ -179,63 +207,109 @@ plugins:
     skill-proof:
       settings:
         mode: nudge                       # nudge (default), observe, or enforce-tools
-        reduce_skill_prompt: false        # opt-in; selected skill replaces the full system-prompt index
-        embedding_provider: off           # off (default zero-dep), local, or gateway
+        reduce_skill_prompt: false        # opt-in; confident selection replaces the full index
+        embedding_provider: off           # off (default, zero-dep), local, or gateway
         embedding_model: Xenova/multilingual-e5-small
         min_score: 0.28
         min_margin: 0.05
+        catalog_cache_ttl_ms: 1000        # reuse the host-filtered catalog within a session
+        agent_routing: {}                 # optional: replace the built-in agent hint patterns
         skill_roots:
           - ~/.agents/skills
           - ~/.hermes/skills
 ```
 
-| Parameter | Default | Description |
+| Setting | Default | Description |
 | :--- | :--- | :--- |
-| `mode` | `nudge` | `nudge` (injects a 1-line instruction), `observe` (silent observation), or `enforce-tools` (blocks tool use until skill loads). |
-| `reduce_skill_prompt` | `false` | When true, a confident Skill Proof selection replaces Hermes' full available-skills index with the selected skill for that provider request. Ambiguous/no-match turns are unchanged. Character savings are recorded; token savings depend on the provider/model tokenizer. |
-| `embedding_provider` | `off` | Vector backend: `off` (stdlib lexical), `local` (CPU ONNX), or `gateway` (REST). |
-| `embedding_model` | `Xenova/multilingual-e5-small` | Model repository identifier from the verified registry. |
-| `min_score` | `0.28` | Minimum score threshold required for auto-selection. |
-| `min_margin` | `0.05` | Minimum score margin over the runner-up candidate to avoid ambiguity. |
-| `skill_roots` | `[]` | Explicit skill search directories (merges project, user, and agent roots). |
+| `mode` | `nudge` | `nudge` (injects a one-line instruction), `observe` (silent), or `enforce-tools` (blocks tool use until the skill loads). `enforce` is an alias |
+| `reduce_skill_prompt` | `false` | When true, a confident selection replaces the host skills index for that provider request. Ambiguous and no-match turns are unchanged |
+| `embedding_provider` | `off` | Vector backend: `off` (stdlib lexical), `local` (CPU ONNX), or `gateway` (REST) |
+| `embedding_model` | `Xenova/multilingual-e5-small` | Registry model key or HuggingFace repository id |
+| `min_score` | `0.28` | Minimum score required for auto-selection |
+| `min_margin` | `0.05` | Minimum margin over the runner-up to avoid ambiguity |
+| `catalog_cache_ttl_ms` | `1000` | Reuse the host-filtered catalog within a session instead of re-hashing every turn |
+| `agent_routing` | `{}` | Optional mapping of agent name to keyword list, replacing the built-in fleet-agent hint patterns |
+| `block_modified_hub_skills` | `false` | When true, skills whose bundle hash differs from the hub lock are excluded (hub installs only) |
+| `skill_roots` | `[]` | Explicit skill search directories, merged with project, user, and agent roots |
+| `session_memory` | `true` | Remember the session's skill history so "use the same skill" resolves |
+| `audit_log` | `true` | Append one derived-numbers JSON line per turn. Never prompts or skill bodies |
 
-`setup` prompts for `off`, `local`, or `gateway` and updates only `plugins.entries.skill-proof.settings` in the active Hermes profile's `config.yaml`. Use `--prefetch` to explicitly download and checksum-verify a selected local model; downloads do not start automatically.
+Three interchangeable provider modes ship with the plugin:
 
-For local inference, install its optional dependencies into the **Hermes runtime environment**. On Windows, run this from the Skill Proof checkout:
+| Provider | Mechanism | Best Used For | Requirements |
+| :--- | :--- | :--- | :--- |
+| **`off` (default)** | Standard library lexical matching, character n-grams, and the synonym graph | Production fleets, local development, lightweight containers | None. 100% offline |
+| **`local`** | CPU ONNX embedding engine with verified registry models | Multilingual semantic matching without external API keys | `onnxruntime`, `tokenizers`, and `numpy` (optional). Falls back to lexical when missing |
+| **`gateway`** | OpenAI-compatible embeddings endpoint with automatic fail-open | Centralized gateways and existing embedding proxies | Endpoint URL and API key |
+
+For local inference, install the optional dependencies into the Hermes runtime environment. On Windows, from this checkout:
 
 ```powershell
 & "$env:LOCALAPPDATA\hermes\hermes-agent\venv\Scripts\python.exe" -m pip install -r requirements-local.txt
 ```
 
-On macOS or Linux, use the Hermes virtual environment's Python instead:
+On macOS or Linux, use the Hermes virtual environment's Python:
 
 ```bash
 ~/.hermes/hermes-agent/venv/bin/python -m pip install -r requirements-local.txt
 ```
 
-If Hermes uses a custom installation path, set `HERMES_PYTHON` to its Python executable; `setup --provider local` checks that runtime before writing local mode.
+If Hermes uses a custom installation path, set `HERMES_PYTHON` to its Python executable. `setup --provider local` checks that runtime before writing local mode. Then run `python cli.py setup --provider local --prefetch` to configure and download the model. The default `off` provider needs no third-party packages.
 
-Then configure local mode and prefetch the model with `python cli.py setup --provider local --prefetch`. To check real inference, run `python -m unittest tests.test_v0150.ProviderAbstractionTests.test_local_embedder_real_inference_if_installed -v` with the Hermes virtual environment's Python from this checkout. The default `off` provider still has no third-party dependencies.
+## What Is New in 0.16.0
 
----
+- **Confidence-gated embeddings**: a lexical winner at 0.55 or higher with a 0.18 margin skips embedding work entirely, and the trace records `provider_used=lexical_fastpath`.
+- **Faster at scale**: the pre-computed catalog index and candidate pruning cut non-matching queries to roughly 0.2 to 0.3 ms on a 300-skill catalog, and warm scans to about 0.02 ms.
+- **Better spaceless-language matching** (Thai, CJK): character n-gram scoring joined with an English morphology normalizer for descriptions and tags.
+- **Tamper-evident audit log**: each audit line chains the SHA-256 of the previous line, across restarts. Verify any time with `/skill-proof audit-verify`.
+- **New `calibrate` command**: threshold and weight suggestions derived from real audit history, not guesses.
+- **One pipeline everywhere**: the CLI and MCP server now build their engines through `SkillProofEngine.from_config`, the same path as the plugin, so decisions match across surfaces.
+- **New settings**: `agent_routing`, `catalog_cache_ttl_ms`, and `block_modified_hub_skills`.
+- **Hardened routing**: contrastive clauses ("use X instead of Y"), companion handoff between follow-up turns, and an optional hub integrity gate.
 
-## 🤝 Contributing
+## Evidence and Limitations
 
-Contributions and feedback are welcome! Please open an issue first to discuss architectural changes or proposed feature additions.
+- Benchmarks quoted above are synthetic-catalog runs. Real numbers vary with catalog size and query mix.
+- Skill Proof selects or abstains. It never edits your skills, never changes prompts beyond the documented nudge or the opt-in index replacement, and never blocks tools unless `enforce-tools` mode is on.
+- Receipts and the audit log store derived numbers: scores, reasons, and hashes. They never contain prompts, skill bodies, or API keys.
+- Character reduction is recorded per turn. Token savings depend on the host provider's tokenizer, so Skill Proof reports characters and leaves token math to you.
+- Embedding downloads happen only through `prefetch` or `setup --prefetch`. Nothing downloads silently.
 
-To run the offline test suite:
+## Project Structure
+
+| Path | Role |
+| :--- | :--- |
+| `core.py` | Engine facade re-exporting the stable public surface |
+| `_catalog.py`, `_ranking.py`, `_dialogue.py`, `_vector.py`, `_compliance.py` | Focused internals: scanning, ranking, dialogue, embeddings, policy |
+| `bridge.py` | Generic host hook bridge for other harnesses |
+| `cli.py` | Standalone CLI (`status`, `select`, `eval`, `calibrate`, `setup`, `bridge`, and more) |
+| `mcp_server.py` | Stdio MCP server for external agents |
+| `routing_cases.json` | Labeled routing fixtures used by tests and the gate |
+| `benchmark.py`, `routing_benchmark.py`, `phase3_gates.py` | Performance and gate scripts |
+| `tests/` | Offline unit suite |
+| `docs/` | Architecture diagram and badges |
+
+## Verification
+
 ```bash
+# Offline unit suite (no network, no model downloads)
 python -m unittest discover -s tests -q
+
+# Labeled routing gate: recall, abstain accuracy, false selections
+python routing_benchmark.py --gate
+
+# Phase-3 gates: embedding bypass rate and hook latency
+python phase3_gates.py
 ```
 
----
+All checks above run with the standard library alone. The local-embedding tests skip themselves when the optional dependencies are absent, so the suite stays green on minimal machines.
 
-## 📄 License
+## License
 
 [MIT](LICENSE) © Stxyu-p
 
 <div align="center">
 
-**Skill Proof** <sub>v0.15.0</sub> · Deterministic · Local-first · Offline-capable
+**Skill Proof** v0.16.0. Deterministic, local-first, offline-capable.
 
 </div>
