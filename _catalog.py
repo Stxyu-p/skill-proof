@@ -367,15 +367,42 @@ _HUB_BUNDLE_FILE_MAX_BYTES = 4 * 1024 * 1024
 _HUB_BUNDLE_TOTAL_MAX_BYTES = 16 * 1024 * 1024
 
 
+_BUNDLE_SHA_CACHE: dict[tuple[str, tuple[str, ...], int], Optional[str]] = {}
+
+
+def _bundle_mtime_signature(folder: pathlib.Path, files: Sequence[str]) -> Optional[int]:
+    """Newest mtime (ns) across the bundle files; None when any stat fails."""
+    newest = 0
+    try:
+        for name in files:
+            clean = str(name).replace("\\", "/")
+            parts = pathlib.PurePosixPath(clean).parts
+            if not clean or clean.startswith("/") or ".." in parts:
+                return None
+            candidate = folder.joinpath(*parts)
+            if candidate.is_symlink() or not candidate.is_file():
+                return None
+            newest = max(newest, candidate.stat().st_mtime_ns)
+    except OSError:
+        return None
+    return newest
+
+
 def _bundle_sha256(folder: pathlib.Path, files: Sequence[str]) -> Optional[str]:
     """Hub-compatible bundle hash: sha256 over sorted ``name\\0content`` pairs.
 
     Mirrors the Hermes hub's skills-guard bundle hash (verified against live
     lock entries) so local bytes can be compared with recorded provenance.
+    An unchanged newest-mtime signature reuses the previous digest (plan 3.7).
     """
+    names = tuple(sorted(str(item) for item in files))
+    signature = _bundle_mtime_signature(folder, names) if names else None
+    cache_key = (str(folder), names, signature if signature is not None else -1)
+    if signature is not None and cache_key in _BUNDLE_SHA_CACHE:
+        return _BUNDLE_SHA_CACHE[cache_key]
     digest = hashlib.sha256()
     total = 0
-    for name in sorted(str(item) for item in files):
+    for name in names:
         clean = name.replace("\\", "/")
         parts = pathlib.PurePosixPath(clean).parts
         if not clean or clean.startswith("/") or ".." in parts:
@@ -394,7 +421,10 @@ def _bundle_sha256(folder: pathlib.Path, files: Sequence[str]) -> Optional[str]:
         if total > _HUB_BUNDLE_TOTAL_MAX_BYTES:
             return None
         digest.update(clean.encode("utf-8") + b"\0" + raw)
-    return digest.hexdigest()
+    result = digest.hexdigest()
+    if signature is not None:
+        _BUNDLE_SHA_CACHE[cache_key] = result
+    return result
 
 
 def default_hermes_home(base_home: Optional[pathlib.Path] = None) -> pathlib.Path:

@@ -15,7 +15,9 @@ import pathlib
 import re
 import time
 import threading
+from collections import Counter
 from datetime import datetime, timezone
+from statistics import median
 from functools import wraps
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -59,6 +61,44 @@ mean the model followed the skill, and it does not verify the task result.
 """
 
 _AVAILABLE_SKILLS_BLOCK = re.compile(r"<available_skills>.*?</available_skills>", re.DOTALL)
+
+
+def _audit_line_sha(line: str) -> str:
+    """First 8 bytes (16 hex chars) of the sha256 of one audit line."""
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()[:16]
+
+
+def verify_audit_chain(path) -> dict[str, Any]:
+    """Verify the tamper-evident ``prev_sha256`` links of an audit log.
+
+    The first line anchors the chain (its own link is unverifiable); every
+    later line must carry the 16-hex sha256 prefix of the raw line before it.
+    A rotated log keeps a suffix of intact lines, so only the anchor moves.
+    """
+    path = pathlib.Path(path)
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError:
+        return {"ok": False, "error": f"could not read {path}", "path": str(path)}
+    checked = 0
+    broken = 0
+    previous: Optional[str] = None
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            return {
+                "ok": False,
+                "error": "corrupt line",
+                "lines_checked": checked,
+                "path": str(path),
+            }
+        link = record.get("prev_sha256") if isinstance(record, dict) else None
+        if previous is not None and link != previous:
+            broken += 1
+        previous = _audit_line_sha(line)
+        checked += 1
+    return {"ok": broken == 0, "lines_checked": checked, "broken_links": broken, "path": str(path)}
 
 
 def _replace_available_skills_text(text: Any, skill_name: str) -> tuple[Any, int]:
@@ -239,6 +279,7 @@ class SkillProofPlugin:
             disabled=ctx.get_config("disabled", None),
             vector_index=vector_index,
             clock=clock,
+            block_modified_hub_skills=_bool_setting(ctx.get_config("block_modified_hub_skills", False), False),
         )
         self.visible_receipt = _bool_setting(ctx.get_config("visible_receipt", True), True)
         self.receipt_style = ctx.get_config("receipt_style", "compact")
@@ -258,6 +299,7 @@ class SkillProofPlugin:
         )
         self._audit_writes = 0
         self._audit_broken = False
+        self._audit_chain: Optional[str] = self._audit_tail_sha()
 
     @staticmethod
     def _key(session_id: Any, task_id: Any, turn_id: Any) -> tuple[str, str, str]:
@@ -631,14 +673,29 @@ class SkillProofPlugin:
             "total_ms": performance.get("total_ms"),
         }
 
+    def _audit_tail_sha(self) -> Optional[str]:
+        """16-hex sha256 prefix of the last written audit line (chain resume)."""
+        try:
+            if not self.audit_path.is_file():
+                return None
+            for line in reversed(self.audit_path.read_text(encoding="utf-8").splitlines()):
+                if line.strip():
+                    return _audit_line_sha(line)
+        except OSError:
+            return None
+        return None
+
     def _write_audit(self, receipt: Mapping[str, Any], session_id: str) -> None:
         if not receipt or not self.audit_enabled or self._audit_broken:
             return
         try:
             self.audit_path.parent.mkdir(parents=True, exist_ok=True)
-            line = json.dumps(self._audit_record(receipt, session_id), ensure_ascii=False)
+            record = self._audit_record(receipt, session_id)
+            record["prev_sha256"] = self._audit_chain
+            line = json.dumps(record, ensure_ascii=False)
             with self.audit_path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
+            self._audit_chain = _audit_line_sha(line)
             self._audit_writes += 1
             if self._audit_writes % 50 == 0:
                 self._rotate_audit()
@@ -754,6 +811,129 @@ class SkillProofPlugin:
             if isinstance(item, dict) and item.get("schema") == "skill-proof.audit.v1":
                 records.append(item)
         return self._aggregate_audit(records, corrupt=corrupt, path=str(self.audit_path))
+
+    def _read_audit_records(self) -> tuple[list[dict[str, Any]], int, Optional[str]]:
+        """Shared audit reader: (records, corrupt_count, error)."""
+        if not self.audit_enabled:
+            return [], 0, "audit_log is disabled, so there are no outcomes to aggregate."
+        if not self.audit_path.is_file():
+            return [], 0, f"No audit log at {self.audit_path} yet."
+        try:
+            raw = self.audit_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return [], 0, f"Could not read {self.audit_path}."
+        records: list[dict[str, Any]] = []
+        corrupt = 0
+        for line in raw:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                corrupt += 1
+                continue
+            if isinstance(item, dict) and item.get("schema") == "skill-proof.audit.v1":
+                records.append(item)
+        return records, corrupt, None
+
+    def stats(self) -> dict[str, Any]:
+        records, corrupt, error = self._read_audit_records()
+        if error:
+            return {"error": error}
+        return self._aggregate_audit(records, corrupt=corrupt, path=str(self.audit_path))
+
+    def calibrate(self) -> dict[str, Any]:
+        """Suggest threshold/synonym adjustments from recorded outcomes (advisory).
+
+        Deterministic rules over the audit log only: it never mutates config
+        and never writes the log. Suggestions carry their reasons so a human
+        can accept or reject each one.
+        """
+        records, corrupt, error = self._read_audit_records()
+        if error:
+            return {"error": error}
+        if not records:
+            return {"error": f"No audit rows to calibrate on yet ({self.audit_path})."}
+        total = len(records)
+        by_status = Counter(str(row.get("status") or "unknown") for row in records)
+        overrides = [row for row in records if row.get("override_loaded")]
+        scores = [
+            float(row["score"])
+            for row in records
+            if isinstance(row.get("score"), (int, float)) and not isinstance(row.get("score"), bool)
+        ]
+        min_score = float(self.engine.min_score)
+        min_margin = float(self.engine.min_margin)
+        suggestions: list[dict[str, Any]] = []
+        miss_ratio = by_status.get("no_match", 0) / total
+        if miss_ratio >= 0.35 and min_score > 0.10:
+            suggestions.append(
+                {
+                    "setting": "min_score",
+                    "current": min_score,
+                    "suggested": round(max(0.10, min_score - 0.04), 2),
+                    "reason": (
+                        f"{miss_ratio:.0%} of audited turns ended no_match; "
+                        "a lower threshold recovers near-threshold hits."
+                    ),
+                }
+            )
+        ambiguous_ratio = by_status.get("ambiguous", 0) / total
+        if ambiguous_ratio >= 0.20 and min_margin > 0.0:
+            suggestions.append(
+                {
+                    "setting": "min_margin",
+                    "current": min_margin,
+                    "suggested": round(max(0.0, min_margin - 0.02), 2),
+                    "reason": (
+                        f"{ambiguous_ratio:.0%} of audited turns were ambiguous; a smaller "
+                        "margin lets the lexical winner through after candidate review."
+                    ),
+                }
+            )
+        if len(overrides) >= 3:
+            top = [
+                name
+                for name, _ in Counter(str(row.get("override_loaded")) for row in overrides).most_common(5)
+            ]
+            suggestions.append(
+                {
+                    "setting": "synonyms",
+                    "current": None,
+                    "suggested": top,
+                    "reason": (
+                        f"{len(overrides)} turns loaded a different skill than was selected; "
+                        "map those names as synonyms or aliases."
+                    ),
+                }
+            )
+        return {
+            "path": str(self.audit_path),
+            "turns": total,
+            "corrupt": corrupt,
+            "by_status": dict(sorted(by_status.items())),
+            "median_selected_score": round(median(scores), 3) if scores else None,
+            "overrides": len(overrides),
+            "suggestions": suggestions,
+        }
+
+    @staticmethod
+    def _format_calibrate(payload: Mapping[str, Any]) -> str:
+        lines = [f"Skill Proof calibration over {payload.get('turns', 0)} audited turns"]
+        by_status = payload.get("by_status") or {}
+        if by_status:
+            lines.append("  status: " + ", ".join(f"{key}={value}" for key, value in by_status.items()))
+        if payload.get("median_selected_score") is not None:
+            lines.append(f"  median selected score: {payload['median_selected_score']}")
+        lines.append(f"  host loaded something else: {payload.get('overrides', 0)} turns")
+        suggestions = payload.get("suggestions") or []
+        if not suggestions:
+            lines.append("  no threshold changes suggested - settings match the recorded outcomes.")
+        for item in suggestions:
+            current = item.get("current")
+            current_text = f" (current {current})" if current is not None else ""
+            lines.append(f"  -> {item['setting']}: {item['suggested']}{current_text}: {item['reason']}")
+        return "\n".join(lines)
 
     @staticmethod
     def _aggregate_audit(
@@ -919,6 +1099,24 @@ class SkillProofPlugin:
             if "--json" in str(argument):
                 return json.dumps(payload, ensure_ascii=False, indent=2)
             return self._format_stats(payload)
+        if command == "calibrate":
+            payload = self.calibrate()
+            if payload.get("error"):
+                return str(payload["error"])
+            if "--json" in str(argument):
+                return json.dumps(payload, ensure_ascii=False, indent=2)
+            return self._format_calibrate(payload)
+        if command == "audit-verify":
+            report = verify_audit_chain(self.audit_path)
+            if "--json" in str(argument):
+                return json.dumps(report, ensure_ascii=False, indent=2)
+            if report.get("error"):
+                return f"Audit chain: {report['error']} ({report.get('path', self.audit_path)})"
+            state = "intact" if report.get("ok") else "BROKEN"
+            return (
+                f"Audit chain {state}: {report.get('lines_checked', 0)} lines checked, "
+                f"{report.get('broken_links', 0)} broken link(s) ({self.audit_path})"
+            )
         if command == "health":
             receipt = self._latest_receipt()
             with self._health_lock:
@@ -1026,7 +1224,7 @@ class SkillProofPlugin:
             "skill-proof",
             handler=self.handle_command,
             description="Inspect skill selection, load evidence, and proof limits.",
-            args_hint="status|explain|why <name>|stats [--json]|overlap [--json]|trace|refresh|health",
+            args_hint="status|explain|why <name>|stats [--json]|calibrate [--json]|audit-verify [--json]|overlap [--json]|trace|refresh|health",
             argument_mode="options",
         )
 

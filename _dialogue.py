@@ -229,6 +229,57 @@ def _skill_is_negated(
 # Closed vocabularies for requests that point at the *ongoing* skill instead of
 # describing a task.  Only these phrasings are accepted: an ordinary sentence
 # that happens to contain "again" or "เดิม" must keep routing lexically.
+# "X instead of Y" keeps X; Thai "อย่าใช้ A แต่ให้ใช้ B" keeps B (plan item 3.2).
+# "auto" picks the requested side as the one WITHOUT the negation marker;
+# both-sides or neither-side negation stays on the unchanged path.
+_CONTRASTIVE_PATTERNS = (
+    (re.compile(r"\binstead\s+of\b", re.IGNORECASE), "left", False),
+    (re.compile(r"\brather\s+than\b", re.IGNORECASE), "left", False),
+    (re.compile(r"\binstead\b", re.IGNORECASE), "auto", False),
+    (re.compile(r"\bbut\b", re.IGNORECASE), "auto", False),
+    (re.compile("แต่ให้"), "right", False),
+    (re.compile("แทนที่จะ"), "right", True),
+    (re.compile("เปลี่ยนไปใช้"), "right", False),
+)
+
+
+def _contrastive_split(query: str, is_named: Callable[[str], bool]) -> Optional[tuple[str, str]]:
+    """Split "<rejected clause> <connective> <requested clause>" queries (plan 3.2).
+
+    Returns (positive_text, negative_text) only when the rejected clause
+    actually names a known skill, so ordinary prose containing "but" stays on
+    the unchanged path. ``is_named`` decides whether a side names a skill.
+    """
+    text = str(query or "")
+    if not text:
+        return None
+    for pattern, direction, require_rejected_negation in _CONTRASTIVE_PATTERNS:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        left, right = text[: match.start()].strip(), text[match.end():].strip()
+        if direction == "auto":
+            left_neg = _query_might_contain_negation(left)
+            right_neg = _query_might_contain_negation(right)
+            if left_neg and not right_neg:
+                positive, negative = right, left
+            elif right_neg and not left_neg:
+                positive, negative = left, right
+            else:
+                continue
+        elif direction == "left":
+            positive, negative = left, right
+        else:
+            positive, negative = right, left
+        if not positive or not negative:
+            continue
+        if require_rejected_negation and not _query_might_contain_negation(negative):
+            continue
+        if is_named(negative):
+            return positive, negative
+    return None
+
+
 _DIALOGUE_RELEASE_PHRASES = (
     "stop using",
     "stop focusing",

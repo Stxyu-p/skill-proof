@@ -26,6 +26,7 @@ from _vector import (
     VectorIndex,
 )
 from _dialogue import (
+    _contrastive_split,
     _query_might_contain_negation,
     _skill_is_negated,
 )
@@ -656,6 +657,24 @@ _VECTOR_BYPASS_SCORE = 0.55
 
 
 _VECTOR_BYPASS_MARGIN = 0.18
+# Pilot bonus for ``related_skills`` companions of the previous turn's skill (plan 3.6).
+_COMPANION_BONUS = 0.04
+
+
+def _text_names_skill(catalog: Catalog, text: str) -> bool:
+    """True when some catalog skill name or alias appears verbatim in ``text``."""
+    for skill in catalog.skills:
+        if _identifier_in_query(skill.name, text):
+            return True
+        if any(_identifier_in_query(alias, text) for alias in skill.aliases):
+            return True
+    return False
+
+
+def _skill_mentioned(skill: SkillRecord, text: str) -> bool:
+    return _identifier_in_query(skill.name, text) or any(
+        _identifier_in_query(alias, text) for alias in skill.aliases
+    )
 
 
 def select_skill(
@@ -670,6 +689,7 @@ def select_skill(
     exclude: Sequence[str] = (),
     preferred: Optional[str] = None,
     preferred_bonus: float = 0.0,
+    companion_bonus: Optional[Mapping[str, float]] = None,
     vector_index: Optional[VectorIndex] = None,
 ) -> Selection:
     """Choose one skill conservatively or return a reason for not choosing."""
@@ -681,6 +701,9 @@ def select_skill(
         raise ValueError("limit must be a positive integer")
 
     query = str(query or "")
+    contrastive = _contrastive_split(query, lambda side: _text_names_skill(catalog, side))
+    scoring_query = contrastive[0] if contrastive else query
+    negative_text = contrastive[1] if contrastive else ""
     unique_explicit: list[str] = []
     seen_explicit: set[str] = set()
     for name in explicit_names:
@@ -693,6 +716,9 @@ def select_skill(
     # A vetoed explicit name ("don't use $X") is not a request: drop it and
     # fall through to lexical ranking instead of selecting it.
     requested = [name for name in unique_explicit if not _skill_is_negated(name, query)]
+    if contrastive is not None:
+        # A name mentioned only in the rejected clause is not a request.
+        requested = [name for name in requested if _identifier_in_query(name, scoring_query)]
     if len(requested) > 1:
         return Selection("blocked", "multiple_explicit_skills", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None))
     if requested:
@@ -708,7 +734,7 @@ def select_skill(
         # Every explicit name was vetoed: lexical ranking (which also skips
         # vetoed skills) decides; an explicit-only veto must not select.
         ranked_vetoed = _rank(
-            catalog, query, effective_synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
+            catalog, scoring_query, effective_synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
         )
         return Selection(
             "no_match",
@@ -722,7 +748,7 @@ def select_skill(
         )
 
     ranked = _rank(
-        catalog, query, effective_synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
+        catalog, scoring_query, effective_synonyms, exclude=exclude, preferred=preferred, preferred_bonus=preferred_bonus
     )
 
     if vector_index and vector_index._memory_vectors:
@@ -786,6 +812,31 @@ def select_skill(
                     new_ranked.append(RankedCandidate(sk, round(score * 30.0, 4), tuple(reasons), companions=companions))
                 ranked = new_ranked
 
+    if negative_text:
+        # Plan 3.2: skills named only in the rejected clause never win the turn.
+        ranked = [
+            candidate
+            for candidate in ranked
+            if not (
+                _skill_mentioned(candidate.skill, negative_text)
+                and not _skill_mentioned(candidate.skill, scoring_query)
+            )
+        ]
+    if companion_bonus:
+        boosted: list[RankedCandidate] = []
+        for candidate in ranked:
+            bonus = max(0.0, float(companion_bonus.get(candidate.skill.normalized_name, 0.0)))
+            if bonus > 0.0 and candidate.score > 0.0:
+                boosted.append(
+                    replace(
+                        candidate,
+                        score=round(candidate.score + bonus, 4),
+                        reasons=(*candidate.reasons, "companion_handoff"),
+                    )
+                )
+            else:
+                boosted.append(candidate)
+        ranked = sorted(boosted, key=lambda item: (-item.score, item.skill.skill_id, item.skill.relative_path))
     table = _rank_table(ranked)
     if not ranked or ranked[0].score < float(min_score):
         if _query_might_contain_negation(query) and any(

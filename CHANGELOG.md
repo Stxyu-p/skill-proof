@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `on_skill_lifecycle` keeps the host-listing cache across `loaded` events and clears it only for `created`/`updated`/`deleted`/`enabled`/`disabled` (weakness W5), removing the `skills_list` refetch after every skill load.
 - `core.py` split into focused modules (v0.16 plan item 5.1) — `_catalog.py` (types, scanning, frontmatter), `_vector.py` (SQLite vector index), `_dialogue.py` (negation, session memory, references), `_ranking.py` (tokenizer, morphology, IDF ranking, candidate index), `_compliance.py` (guard results and the turn-policy store) — with `core.py` as a facade re-exporting every moved name. Pure code movement: `import core` callers are unchanged; test mock targets now patch the owning module.
+- **Stat-signature proof cache (plan item 3.5)**: `_prove_selected_source` reuses a prior proof while `(mtime_ns, size, ino)` of the source file is unchanged — no disk read and no frontmatter re-parse; any change falls through to the full verification path.
+- **Mtime-cached bundle hashing (plan item 3.7)**: `_bundle_sha256` reuses its digest until the newest bundle-file mtime changes, so hub provenance checks stop re-reading unchanged bundles.
 
 ### Note
 - `SkillProofEngine` publishes `active_turn.json` under `<hermes home>/plugin-data/skill-proof/` on every turn (cleared when no skill is selected). The policy gates tool calls only in `enforce-tools` mode; host bridges read it through `bridge.py::run_hook`.

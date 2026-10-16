@@ -117,6 +117,7 @@ from _ranking import (  # v0.16 facade re-exports
     RankRow,
     RankedCandidate,
     Selection,
+    _COMPANION_BONUS,
     _FLEET_AGENT_PATTERNS,
     _NGRAM_MINIMUM_DICE,
     _NGRAM_SIZE,
@@ -275,6 +276,7 @@ class SkillProofEngine:
         vector_index: Optional[VectorIndex] = None,
         clock: Optional[Callable[[], float]] = None,
         policy_store: Optional[Any] = None,
+        block_modified_hub_skills: bool = False,
     ) -> None:
         normalized_mode = normalize_identifier(mode)
         normalized_mode = self._MODE_ALIASES.get(normalized_mode, normalized_mode)
@@ -344,6 +346,7 @@ class SkillProofEngine:
         self.focus_turns = focus_turns
         self._sessions: dict[str, _SessionMemory] = {}
         self._catalog_cache: dict = {}
+        self._proof_cache: dict[str, tuple[tuple[int, int, int], tuple[Optional[str], Optional[int], Optional[str]]]] = {}
         self._filtered_view_cache: dict[tuple[str, frozenset[str]], tuple[Catalog, tuple[str, ...]]] = {}
         self._turns: dict[str, _TurnState] = {}
         self._latest_by_task: dict[tuple[str, str], str] = {}
@@ -353,6 +356,9 @@ class SkillProofEngine:
         self.vector_index = vector_index
         self._clock: Callable[[], float] = clock or time.perf_counter
         self._policy_store = policy_store if policy_store is not None else default_policy_store()
+        if not isinstance(block_modified_hub_skills, bool):
+            raise ValueError("block_modified_hub_skills must be a boolean")
+        self.block_modified_hub_skills = block_modified_hub_skills
 
     @staticmethod
     def _text_id(value: object) -> str:
@@ -624,6 +630,25 @@ class SkillProofEngine:
         bonus = self._FOCUS_BONUS - self._FOCUS_BONUS_STEP * used
         return round(max(self._FOCUS_BONUS_FLOOR, bonus), 4)
 
+    def _companion_handoff(self, memory: Optional[_SessionMemory], catalog: Catalog) -> dict[str, float]:
+        """Pilot bonus for ``related_skills`` of the last loaded skill (plan 3.6).
+
+        Deterministic warm handoff: after turns that used skill A, the skills
+        A declares as related get a small head start on the next turn, and
+        only while they already carry lexical signal.
+        """
+        if memory is None or not memory.stack:
+            return {}
+        matches = catalog.by_name(memory.stack[-1])
+        if len(matches) != 1 or not matches[0].related_skills:
+            return {}
+        bonus: dict[str, float] = {}
+        for name in matches[0].related_skills:
+            normalized = normalize_identifier(name)
+            if normalized:
+                bonus[normalized] = _COMPANION_BONUS
+        return bonus
+
     def _dialogue_selection(
         self,
         memory: _SessionMemory,
@@ -887,6 +912,7 @@ class SkillProofEngine:
                 synonyms=self.synonyms,
                 preferred=focus,
                 preferred_bonus=self._focus_bonus(memory) if (memory and focus) else 0.0,
+                companion_bonus=self._companion_handoff(memory, catalog),
                 vector_index=self.vector_index,
             )
             selection = self._focus_fallback(selection, catalog, focus, query_text)
@@ -924,6 +950,12 @@ class SkillProofEngine:
             # configured roots could be indexed for it: say that instead of
             # claiming the skill is unknown.
             selection = Selection("blocked", "listed_but_unindexed", None, (), True, True)
+        if self.block_modified_hub_skills and selection.selected is not None:
+            hub = self._hub_provenance(selection.selected.skill)
+            if hub.get("bundle") == "modified":
+                # Plan 3.7: optionally refuse hub skills whose local bytes no
+                # longer match the recorded bundle when the option is enabled.
+                selection = replace(selection, status="blocked", reason="hub_modified", selected=None)
         metrics['selection_ms'] = round((self._clock() - selection_started) * 1000, 3)
         metrics['core_ms'] = round((self._clock() - core_started) * 1000, 3)
         context = self._selection_context(selection)
@@ -1006,6 +1038,20 @@ class SkillProofEngine:
     def _prove_selected_source(self, selected: SkillRecord) -> tuple[Optional[str], Optional[int], Optional[str]]:
         root = selected.root_path
         source = root.joinpath(*pathlib.PurePosixPath(selected.relative_path).parts)
+        cache_key = str(source)
+        signature: Optional[tuple[int, int, int]] = None
+        try:
+            stat = source.stat()
+            signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+        except OSError:
+            signature = None
+        if signature is not None:
+            # Plan 3.5: an unchanged stat signature reuses the previous proof
+            # (skip disk read and YAML parse); any change falls through to the
+            # full verification path.
+            cached = self._proof_cache.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
         try:
             if self._has_symlink_component(root, selected.relative_path):
                 return None, None, "unsafe_symlink"
@@ -1020,25 +1066,31 @@ class SkillProofEngine:
         except (OSError, RuntimeError):
             return None, None, "source_unavailable"
         if len(raw) > self.max_skill_bytes:
-            return None, None, "skill_too_large"
-        try:
-            reparsed = _parse_skill(
-                raw,
-                root_id=selected.root_id,
-                relative_path=selected.relative_path,
-                root_path=resolved_root,
-                source_path=source,
-            )
-        except _FrontmatterError:
-            return None, None, "skill_changed"
-        digest = hashlib.sha256(raw).hexdigest()
-        if (
-            reparsed.normalized_name != selected.normalized_name
-            or digest != selected.source_sha256
-            or len(raw) != selected.source_bytes
-        ):
-            return None, None, "skill_changed"
-        return digest, len(raw), None
+            result = (None, None, "skill_too_large")
+        else:
+            try:
+                reparsed = _parse_skill(
+                    raw,
+                    root_id=selected.root_id,
+                    relative_path=selected.relative_path,
+                    root_path=resolved_root,
+                    source_path=source,
+                )
+            except _FrontmatterError:
+                result = (None, None, "skill_changed")
+            else:
+                digest = hashlib.sha256(raw).hexdigest()
+                if (
+                    reparsed.normalized_name != selected.normalized_name
+                    or digest != selected.source_sha256
+                    or len(raw) != selected.source_bytes
+                ):
+                    result = (None, None, "skill_changed")
+                else:
+                    result = (digest, len(raw), None)
+        if signature is not None:
+            self._proof_cache[cache_key] = (signature, result)
+        return result
 
     def observe_skill_loaded(
         self,
