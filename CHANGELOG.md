@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Filtered-view catalog cache (v0.16 plan item 5.2a)**: `begin_turn` reuses the host-filtered catalog for an identical `(catalog_hash, host name set)` instead of rebuilding diagnostics and re-hashing every turn; cleared by `refresh_catalog`.
 - **Confidence-gated vector cascade (v0.16 plan item 5.2d)**: when the lexical winner scores at least 0.55 with a 0.18 margin, the embedding work is skipped entirely and the trace records `provider_used="lexical_fastpath"`.
 - **Pre-indexed candidate pruning (v0.16 plan item 5.2b)**: every `Catalog` now carries an immutable inverted index (token/n-gram postings, alias phrases, normalized names/descriptions), and `_rank` scores only skills with at least one matching posting or substring signal. The candidate set is kept a strict superset of positive scorers (verified by a differential test over all 63 shipped cases). Measured on the 300-skill synthetic catalog: non-matching queries rank in ~0.2–0.3 ms instead of ~1.4–3.1 ms; the 14-skill shipped fixture prunes to 0–3 candidates per case (median 1); the all-match worst case is unchanged.
+- **Config-driven fleet-agent routing (plan item 1.2)**: `SkillProofEngine(agent_routing={agent: [terms]})` — exposed as the plugin's `agent_routing` config — replaces the built-in `suggested_agent` patterns entirely; the built-in defaults stay when the key is absent.
+- **Phase-3 gate script (`phase3_gates.py`)**: reports the confidence-cascade bypass rate on `routing_cases.json` (28/40 = 70.0% on cases that expect a selection; 28/63 = 44.4% counting abstain rescue cases) next to a recall-equality check with and without the vector index, plus `bridge.py` hook latency (median 0.8–1.4 ms, p95 ≤ 4.0 ms against the 15 ms gate).
 
 ### Changed
 - `on_skill_lifecycle` keeps the host-listing cache across `loaded` events and clears it only for `created`/`updated`/`deleted`/`enabled`/`disabled` (weakness W5), removing the `skills_list` refetch after every skill load.
@@ -26,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stat-signature proof cache (plan item 3.5)**: `_prove_selected_source` reuses a prior proof while `(mtime_ns, size, ino)` of the source file is unchanged — no disk read and no frontmatter re-parse; any change falls through to the full verification path.
 - **Mtime-cached bundle hashing (plan item 3.7)**: `_bundle_sha256` reuses its digest until the newest bundle-file mtime changes, so hub provenance checks stop re-reading unchanged bundles.
 - The ranking loop reads precomputed `name_norms` / `desc_norms` from the catalog index instead of re-normalizing every skill description on every turn, and `benchmark.py` now reports warm scan/routing medians separately (`warm_scan_median_ms`, `warm_routing_median_ms`, `warm_routing_p95_ms`).
+- **Unified engine factory for CLI and MCP (plan item 1.2)**: `SkillProofEngine.from_config(roots, config=…, vector_index="auto")` is the single construction seam for `cli.py` and `mcp_server.py`, so both surfaces run the same `begin_turn`/`select_skill` pipeline as the plugin; `"auto"` resolves the configured provider through `vector_index_from_env()`, and explicit `$name` turns still skip the embedding sync and the vector ranking path. `SkillProofEngine.latest_catalog()` returns the last scanned catalogue.
+- **Neutral host naming (plan item 1.2)**: receipt evidence now carries `host_loaded_event` (the old `hermes_loaded_event` key remains as a legacy alias) and the catalog diagnostic code is `not_in_host_list`.
 
 ### Note
 - `SkillProofEngine` publishes `active_turn.json` under `<hermes home>/plugin-data/skill-proof/` on every turn (cleared when no skill is selected). The policy gates tool calls only in `enforce-tools` mode; host bridges read it through `bridge.py::run_hook`.
@@ -40,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `on_pre_llm_call` returns the engine-composed context, so `mode: observe`, `focus_fallback` warnings, and `context_budget_bytes` apply again; the selected-skill nudge remains the terse `Use skill_view for "<name>" first.` message.
 - `cli.py` settings writer rewrites a `settings: {}` header to a block and replaces multi-line YAML values when updating, instead of emitting invalid YAML.
 - `cli.py select` and `cli.py eval` now route through the configured vector index when one is active; the duplicated `ai-setup` block in `bridge.py::main` is removed.
+- Duck-typed vector indexes only need `sync_catalog`/`rank` now: `reset_trace`/`trace_snapshot` are optional, and the emitted `vector_trace` falls back to the provider-`off` shape when the index does not expose them.
 
 ## [0.15.0] - 2026-10-11
 

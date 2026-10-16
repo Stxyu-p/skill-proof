@@ -69,26 +69,26 @@ def _candidate_dict(item):
 
 
 def _resolve_selection(roots, query, min_score, min_margin, limit):
-    catalog = core.scan_catalog(roots)
+    """Route one query through the shared engine seam (plan Part 1.2 item 2).
+
+    The engine resolves the env-configured vector index, syncs it, and applies
+    the same selection pipeline as the Hermes plugin, so CLI/MCP selections
+    match the plugin on the same machine.
+    """
+    engine = core.SkillProofEngine.from_config(
+        roots,
+        min_score=min_score,
+        min_margin=min_margin,
+        max_candidates=limit,
+    )
+    turn = engine.begin_turn(turn_id="cli", session_id="cli", task_id="cli", query=query)
+    catalog = engine.latest_catalog()
+    if catalog is None:  # pragma: no cover - begin_turn always scans
+        catalog = core.Catalog((), (), "")
     explicit = core.extract_explicit_skill_names(
         query, known_names=(skill.name for skill in catalog.skills)
     )
-    vector_index = None if explicit else core.vector_index_from_env()
-    if vector_index is not None:
-        try:
-            vector_index.sync_catalog(catalog.skills)
-        except Exception:
-            vector_index = None
-    selection = core.select_skill(
-        catalog,
-        query,
-        explicit_names=explicit,
-        min_score=min_score,
-        min_margin=min_margin,
-        limit=limit,
-        vector_index=vector_index,
-    )
-    return catalog, explicit, selection
+    return catalog, explicit, turn.selection
 
 
 def _select_payload(roots, query, min_score, min_margin, limit):
@@ -392,6 +392,12 @@ def main(argv=None) -> int:
     remove_parser = subparsers.add_parser("remove", parents=[common], help="remove an installed embedding model")
     remove_parser.add_argument("--model", default="Xenova/multilingual-e5-small", help="model key or alias to remove")
     status_parser = subparsers.add_parser("status", parents=[common], help="report Skill Proof system, catalog, and provider status")
+    calibrate_parser = subparsers.add_parser(
+        "calibrate", parents=[common], help="suggest threshold/synonym tuning from the audit log"
+    )
+    calibrate_parser.add_argument("--audit-path", default="", help="audit.jsonl path (default: hermes plugin-data)")
+    calibrate_parser.add_argument("--min-score", type=float, default=0.28)
+    calibrate_parser.add_argument("--min-margin", type=float, default=0.05)
     bridge_parser = subparsers.add_parser("bridge", parents=[common], help="connect or inspect host agent workspaces")
     bridge_parser.add_argument("bridge_action", nargs="?", default="status", choices=("status", "init", "install", "remove", "ai-setup"))
     bridge_parser.add_argument("--host", default="auto")
@@ -596,6 +602,28 @@ def main(argv=None) -> int:
             print(f"  Vector Active:      {st_data['vector_index_status']['active']}")
         return 0
 
+    if args.command == "calibrate":
+        audit_path = (
+            pathlib.Path(args.audit_path).expanduser()
+            if args.audit_path
+            else core.default_hermes_home() / "plugin-data" / "skill-proof" / "audit.jsonl"
+        )
+        records, corrupt = core.read_audit_records(audit_path)
+        if not records:
+            print(f"No audit rows to calibrate on yet ({audit_path}).", file=sys.stderr)
+            return 1
+        payload = core.calibrate_audit(
+            records,
+            min_score=float(args.min_score),
+            min_margin=float(args.min_margin),
+            path=str(audit_path),
+            corrupt=corrupt,
+        )
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(core.format_calibrate(payload))
+        return 0
     if args.command == "overlap":
         try:
             payload = _overlap_payload(roots, args.min_similarity, args.limit)

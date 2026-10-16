@@ -26,18 +26,24 @@ try:  # Hermes loads directory plugins as packages; direct unit tests do not.
         SkillProofEngine,
         VectorIndex,
         __version__ as CORE_VERSION,
-        normalize_identifier,
+        calibrate_audit,
         default_hermes_home,
         detect_agent_roots,
+        format_calibrate,
+        normalize_identifier,
+        read_audit_records,
     )
 except ImportError:  # pragma: no cover - exercised by direct adapter tests
     from core import (
         SkillProofEngine,
         VectorIndex,
         __version__ as CORE_VERSION,
-        normalize_identifier,
+        calibrate_audit,
         default_hermes_home,
         detect_agent_roots,
+        format_calibrate,
+        normalize_identifier,
+        read_audit_records,
     )
 
 
@@ -281,6 +287,7 @@ class SkillProofPlugin:
             clock=clock,
             block_modified_hub_skills=_bool_setting(ctx.get_config("block_modified_hub_skills", False), False),
             catalog_cache_ttl_ms=float(ctx.get_config("catalog_cache_ttl_ms", 1000.0) or 0.0),
+            agent_routing=ctx.get_config("agent_routing", None),
         )
         self.visible_receipt = _bool_setting(ctx.get_config("visible_receipt", True), True)
         self.receipt_style = ctx.get_config("receipt_style", "compact")
@@ -499,7 +506,7 @@ class SkillProofPlugin:
             selected = receipt.get("selected") or {}
             evidence = receipt.get("evidence") or {}
             compliance_val = receipt.get("compliance", "unassessed")
-            detail = f"{selected.get('name', 'none')} | {'loaded' if evidence.get('hermes_loaded_event') else 'not loaded'} | compliance {compliance_val}"
+            detail = f"{selected.get('name', 'none')} | {'loaded' if evidence.get('host_loaded_event', evidence.get('hermes_loaded_event')) else 'not loaded'} | compliance {compliance_val}"
         problems = list(receipt.get("errors") or [])
         if decision.get("status") == "blocked":
             problems.append(decision.get("reason", "blocked"))
@@ -584,7 +591,7 @@ class SkillProofPlugin:
         session = evidence.get("session") if isinstance(evidence.get("session"), Mapping) else {}
         summary = (
             f"Skill Proof: selected={selected_name} "
-            f"loaded={'yes' if evidence.get('hermes_loaded_event') else 'no'} "
+            f"loaded={'yes' if evidence.get('host_loaded_event', evidence.get('hermes_loaded_event')) else 'no'} "
             f"active={'yes' if runtime.get('active') else 'no'} "
             f"compliance={receipt.get('compliance', 'unassessed')} "
             f"verification={receipt.get('verification', 'unverified')}"
@@ -664,7 +671,7 @@ class SkillProofPlugin:
             "explicit": bool(decision.get("explicit")),
             "override_loaded": evidence.get("override_loaded") or None,
             "focus": session.get("focus"),
-            "loaded": bool(evidence.get("hermes_loaded_event")),
+            "loaded": bool(evidence.get("host_loaded_event", evidence.get("hermes_loaded_event"))),
             "compliance": receipt.get("compliance"),
             "provider": receipt.get("provider", "off"),
             "provider_used": receipt.get("provider_used", "off"),
@@ -824,22 +831,7 @@ class SkillProofPlugin:
             return [], 0, "audit_log is disabled, so there are no outcomes to aggregate."
         if not self.audit_path.is_file():
             return [], 0, f"No audit log at {self.audit_path} yet."
-        try:
-            raw = self.audit_path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            return [], 0, f"Could not read {self.audit_path}."
-        records: list[dict[str, Any]] = []
-        corrupt = 0
-        for line in raw:
-            if not line.strip():
-                continue
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                corrupt += 1
-                continue
-            if isinstance(item, dict) and item.get("schema") == "skill-proof.audit.v1":
-                records.append(item)
+        records, corrupt = read_audit_records(self.audit_path)
         return records, corrupt, None
 
     def stats(self) -> dict[str, Any]:
@@ -860,86 +852,17 @@ class SkillProofPlugin:
             return {"error": error}
         if not records:
             return {"error": f"No audit rows to calibrate on yet ({self.audit_path})."}
-        total = len(records)
-        by_status = Counter(str(row.get("status") or "unknown") for row in records)
-        overrides = [row for row in records if row.get("override_loaded")]
-        scores = [
-            float(row["score"])
-            for row in records
-            if isinstance(row.get("score"), (int, float)) and not isinstance(row.get("score"), bool)
-        ]
-        min_score = float(self.engine.min_score)
-        min_margin = float(self.engine.min_margin)
-        suggestions: list[dict[str, Any]] = []
-        miss_ratio = by_status.get("no_match", 0) / total
-        if miss_ratio >= 0.35 and min_score > 0.10:
-            suggestions.append(
-                {
-                    "setting": "min_score",
-                    "current": min_score,
-                    "suggested": round(max(0.10, min_score - 0.04), 2),
-                    "reason": (
-                        f"{miss_ratio:.0%} of audited turns ended no_match; "
-                        "a lower threshold recovers near-threshold hits."
-                    ),
-                }
-            )
-        ambiguous_ratio = by_status.get("ambiguous", 0) / total
-        if ambiguous_ratio >= 0.20 and min_margin > 0.0:
-            suggestions.append(
-                {
-                    "setting": "min_margin",
-                    "current": min_margin,
-                    "suggested": round(max(0.0, min_margin - 0.02), 2),
-                    "reason": (
-                        f"{ambiguous_ratio:.0%} of audited turns were ambiguous; a smaller "
-                        "margin lets the lexical winner through after candidate review."
-                    ),
-                }
-            )
-        if len(overrides) >= 3:
-            top = [
-                name
-                for name, _ in Counter(str(row.get("override_loaded")) for row in overrides).most_common(5)
-            ]
-            suggestions.append(
-                {
-                    "setting": "synonyms",
-                    "current": None,
-                    "suggested": top,
-                    "reason": (
-                        f"{len(overrides)} turns loaded a different skill than was selected; "
-                        "map those names as synonyms or aliases."
-                    ),
-                }
-            )
-        return {
-            "path": str(self.audit_path),
-            "turns": total,
-            "corrupt": corrupt,
-            "by_status": dict(sorted(by_status.items())),
-            "median_selected_score": round(median(scores), 3) if scores else None,
-            "overrides": len(overrides),
-            "suggestions": suggestions,
-        }
+        return calibrate_audit(
+            records,
+            min_score=float(self.engine.min_score),
+            min_margin=float(self.engine.min_margin),
+            path=str(self.audit_path),
+            corrupt=corrupt,
+        )
 
     @staticmethod
     def _format_calibrate(payload: Mapping[str, Any]) -> str:
-        lines = [f"Skill Proof calibration over {payload.get('turns', 0)} audited turns"]
-        by_status = payload.get("by_status") or {}
-        if by_status:
-            lines.append("  status: " + ", ".join(f"{key}={value}" for key, value in by_status.items()))
-        if payload.get("median_selected_score") is not None:
-            lines.append(f"  median selected score: {payload['median_selected_score']}")
-        lines.append(f"  host loaded something else: {payload.get('overrides', 0)} turns")
-        suggestions = payload.get("suggestions") or []
-        if not suggestions:
-            lines.append("  no threshold changes suggested - settings match the recorded outcomes.")
-        for item in suggestions:
-            current = item.get("current")
-            current_text = f" (current {current})" if current is not None else ""
-            lines.append(f"  -> {item['setting']}: {item['suggested']}{current_text}: {item['reason']}")
-        return "\n".join(lines)
+        return format_calibrate(payload)
 
     @staticmethod
     def _aggregate_audit(

@@ -126,18 +126,6 @@ def _vector_index():
     return core.vector_index_from_env()
 
 
-def _selection_vector_index(query, catalog):
-    explicit = core.extract_explicit_skill_names(
-        query, known_names=(skill.name for skill in catalog.skills)
-    )
-    if explicit:
-        return explicit, None
-    vector_index = _vector_index()
-    if vector_index is not None:
-        vector_index.sync_catalog(catalog.skills)
-    return explicit, vector_index
-
-
 def _tool_scan(parameters):
     roots = _roots(parameters)
     catalog = core.scan_catalog(roots)
@@ -155,17 +143,18 @@ def _tool_select(parameters):
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
     roots = _roots(parameters)
-    catalog = core.scan_catalog(roots)
-    explicit, vector_index = _selection_vector_index(query, catalog)
-    selection = core.select_skill(
-        catalog,
-        query,
-        explicit_names=explicit,
+    engine = core.SkillProofEngine.from_config(
+        roots,
         min_score=float(parameters.get("min_score", 0.28)),
         min_margin=float(parameters.get("min_margin", 0.05)),
-        limit=int(parameters.get("limit", 3)),
-        vector_index=vector_index,
+        max_candidates=int(parameters.get("limit", 3)),
     )
+    selection = engine.begin_turn(
+        turn_id="mcp", session_id="mcp", task_id="mcp", query=query
+    ).selection
+    catalog = engine.latest_catalog()
+    if catalog is None:  # pragma: no cover - begin_turn always scans
+        catalog = core.Catalog((), (), "")
     selected = selection.selected
     return {
         "decision": {
@@ -202,15 +191,13 @@ def _tool_search(parameters):
         raise ValueError("query must be a non-empty string")
     limit = int(parameters.get("limit", 5))
     roots = _roots(parameters)
-    catalog = core.scan_catalog(roots)
-    explicit, vector_index = _selection_vector_index(query, catalog)
-    selection = core.select_skill(
-        catalog,
-        query,
-        explicit_names=explicit,
-        limit=max(limit, 5),
-        vector_index=vector_index,
-    )
+    engine = core.SkillProofEngine.from_config(roots, max_candidates=max(limit, 5))
+    selection = engine.begin_turn(
+        turn_id="mcp-search", session_id="mcp", task_id="mcp-search", query=query
+    ).selection
+    catalog = engine.latest_catalog()
+    if catalog is None:  # pragma: no cover - begin_turn always scans
+        catalog = core.Catalog((), (), "")
     skills_found = []
     seen = set()
     if selection.selected and selection.selected.skill.name not in seen:

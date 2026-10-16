@@ -294,9 +294,17 @@ class CliVectorWiringTests(unittest.TestCase):
 
             with mock.patch.object(core, "vector_index_from_env", return_value=index) as provider2:
                 with mock.patch.object(core, "select_skill", wraps=core.select_skill) as select2:
-                    cli._resolve_selection({"local": root}, "Use $python-tdd", 0.28, 0.05, 5)
-            provider2.assert_not_called()
-            self.assertIsNone(select2.call_args.kwargs["vector_index"])
+                    _, _, explicit_selection = cli._resolve_selection(
+                        {"local": root}, "Use $python-tdd", 0.28, 0.05, 5
+                    )
+            # Unified pipeline (plan Part 1.2): the engine always carries the
+            # configured index; explicit turns skip the embedding sync and the
+            # vector ranking path instead of skipping construction.
+            provider2.assert_called_once_with()
+            self.assertEqual(explicit_selection.status, "selected")
+            self.assertEqual(explicit_selection.reason, "explicit_skill")
+            self.assertIs(select2.call_args.kwargs["vector_index"], index)
+            self.assertEqual([s.name for s in index.synced], ["python-tdd"])
 
 
 if __name__ == "__main__":

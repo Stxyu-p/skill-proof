@@ -245,7 +245,10 @@ class McpServerTests(unittest.TestCase):
         ):
             with self.subTest(handler=handler.__name__):
                 vector_index = FakeVectorIndex()
-                with patch.object(mcp_server, "_vector_index", return_value=vector_index):
+                # The engines resolve the index through the shared factory's
+                # env resolver (core.vector_index_from_env), not a module-local
+                # helper, since the unified-pipeline migration.
+                with patch.object(core, "vector_index_from_env", return_value=vector_index):
                     handler({"query": query, "roots": [str(self.root)]})
                 self.assertEqual(vector_index.sync_calls, 1)
 

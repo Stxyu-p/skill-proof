@@ -153,7 +153,10 @@ from _compliance import (  # v0.16 facade re-exports
     GuardResult,
     InMemoryPolicyStore,
     PolicyStoreProtocol,
+    calibrate_audit,
     default_policy_store,
+    format_calibrate,
+    read_audit_records,
 )
 
 
@@ -178,7 +181,7 @@ class _TurnState:
     selection: Selection
     context: str
     errors: list[str] = field(default_factory=list)
-    hermes_loaded_event: bool = False
+    host_loaded_event: bool = False
     loaded_provenance: Optional[str] = None
     loaded_use_count: Optional[int] = None
     loaded_reused: Optional[bool] = None
@@ -200,7 +203,7 @@ class _TurnState:
     session: dict = field(default_factory=dict)
     vetoed: tuple[str, ...] = ()
     # A skill the host loaded that we did not select (or had nothing selected):
-    # the override signal telemetry needs. It never sets hermes_loaded_event.
+    # the override signal telemetry needs. It never sets host_loaded_event.
     override_loaded: str = ""
     # Normalized names of the *unfiltered* local catalog, kept so "why" can
     # tell "not indexed" apart from "excluded by the host listing".
@@ -278,6 +281,7 @@ class SkillProofEngine:
         policy_store: Optional[Any] = None,
         block_modified_hub_skills: bool = False,
         catalog_cache_ttl_ms: float = 1000.0,
+        agent_routing: Optional[Mapping[str, Any]] = None,
     ) -> None:
         normalized_mode = normalize_identifier(mode)
         normalized_mode = self._MODE_ALIASES.get(normalized_mode, normalized_mode)
@@ -364,6 +368,15 @@ class SkillProofEngine:
             raise ValueError("catalog_cache_ttl_ms must be >= 0")
         self.catalog_cache_ttl_ms = float(catalog_cache_ttl_ms)
         self._catalog_scan_at = float("-inf")
+        # Plan Part 1.2 item 4: fleet-agent routing is data; a custom mapping
+        # replaces the built-in patterns entirely (None keeps the defaults).
+        self.agent_routing: Optional[dict[str, list[str]]] = None
+        if isinstance(agent_routing, Mapping):
+            self.agent_routing = {
+                str(name).strip(): [str(term) for term in terms]
+                for name, terms in agent_routing.items()
+                if str(name or "").strip() and isinstance(terms, (list, tuple, set))
+            }
 
     @staticmethod
     def _text_id(value: object) -> str:
@@ -806,7 +819,11 @@ class SkillProofEngine:
         query_text = str(query or "")
         metrics = {}
         if self.vector_index is not None:
-            self.vector_index.reset_trace()
+            # Duck-typed indexes must not need the optional trace surface.
+            try:
+                self.vector_index.reset_trace()
+            except AttributeError:
+                pass
         with self._lock:
             now = self._clock()
             fresh = (
@@ -855,7 +872,7 @@ class SkillProofEngine:
                 filtered_hash = hashlib.sha256(json.dumps(
                     [(s.skill_id, s.source_sha256) for s in eligible], separators=(",", ":")
                 ).encode()).hexdigest()
-                exclusions = tuple(Diagnostic('not_in_hermes_list', skill.root_id, skill.relative_path)
+                exclusions = tuple(Diagnostic('not_in_host_list', skill.root_id, skill.relative_path)
                                    for skill in catalog.skills if skill.normalized_name not in names)
                 catalog = Catalog(eligible, catalog.diagnostics + exclusions, filtered_hash)
                 # ponytail: coarse flush bound; switch to an LRU if view sets churn
@@ -909,6 +926,7 @@ class SkillProofEngine:
                         limit=self.max_candidates,
                         synonyms=self.synonyms,
                         exclude=(released,) if released else (),
+                        agent_manifest=self.agent_routing,
                         vector_index=self.vector_index,
                     )
                     if selection.status == "no_match":
@@ -938,12 +956,13 @@ class SkillProofEngine:
                 preferred=focus,
                 preferred_bonus=self._focus_bonus(memory) if (memory and focus) else 0.0,
                 companion_bonus=self._companion_handoff(memory, catalog),
+                agent_manifest=self.agent_routing,
                 vector_index=self.vector_index,
             )
             selection = self._focus_fallback(selection, catalog, focus, query_text)
         vector_trace = (
             self.vector_index.trace_snapshot()
-            if self.vector_index is not None
+            if self.vector_index is not None and hasattr(self.vector_index, "trace_snapshot")
             else {
                 "provider_configured": "off",
                 "provider_used": "off",
@@ -953,10 +972,13 @@ class SkillProofEngine:
                 "vector_used": False,
             }
         )
+        if not isinstance(vector_trace, Mapping):
+            # Duck-typed / test indexes may not expose a trace; stay fail-open.
+            vector_trace = {}
         metrics.update({
-            "embedding_latency_ms": vector_trace["embedding_latency_ms"],
-            "query_cache_hit": vector_trace["query_cache_hit"],
-            "vector_used": vector_trace["vector_used"],
+            "embedding_latency_ms": vector_trace.get("embedding_latency_ms", 0.0),
+            "query_cache_hit": vector_trace.get("query_cache_hit", False),
+            "vector_used": vector_trace.get("vector_used", False),
         })
         session_evidence: dict[str, Any] = {}
         if memory is not None:
@@ -1142,7 +1164,7 @@ class SkillProofEngine:
                 # The host loaded something other than the selected skill.
                 state.override_loaded = str(skill_name)
                 return False
-            state.hermes_loaded_event = True
+            state.host_loaded_event = True
             state.loaded_provenance = None if provenance is None else str(provenance)
             state.loaded_use_count = use_count if isinstance(use_count, int) and not isinstance(use_count, bool) else None
             state.loaded_reused = reused if isinstance(reused, bool) else None
@@ -1199,14 +1221,14 @@ class SkillProofEngine:
             if selection.selected is None:
                 self._remember_tool(state, tool_name)
                 return GuardResult(True, "no_required_skill")
-            if self.mode == "enforce-tools" and not state.hermes_loaded_event:
+            if self.mode == "enforce-tools" and not state.host_loaded_event:
                 name = selection.selected.skill.name
                 return GuardResult(
                     False,
                     "selected_skill_not_loaded",
                     f'Call skill_view for "{name}" before operational tools.',
                 )
-            if state.hermes_loaded_event:
+            if state.host_loaded_event:
                 state.active = True
                 state.active_evidence = "post_load_tool_call"
 
@@ -1241,7 +1263,7 @@ class SkillProofEngine:
                             )
 
             self._remember_tool(state, tool_name)
-            if state.hermes_loaded_event:
+            if state.host_loaded_event:
                 return GuardResult(True, "selected_skill_loaded")
             return GuardResult(True, "mode_not_enforcing")
 
@@ -1319,7 +1341,7 @@ class SkillProofEngine:
             return
         if state.compliance == "failed":
             return
-        if not state.hermes_loaded_event:
+        if not state.host_loaded_event:
             state.compliance = "failed"
             if "skill_not_loaded" not in state.compliance_reasons:
                 state.compliance_reasons.append("skill_not_loaded")
@@ -1366,7 +1388,8 @@ class SkillProofEngine:
             "selected": None if selected is None else self._candidate_payload(selected),
             "candidates": [self._candidate_payload(item) for item in state.selection.candidates],
             "evidence": {
-                "hermes_loaded_event": state.hermes_loaded_event,
+                "host_loaded_event": state.host_loaded_event,
+                "hermes_loaded_event": state.host_loaded_event,  # legacy alias (plan Part 1.2 item 4)
                 "override_loaded": state.override_loaded,
                 "provenance": state.loaded_provenance,
                 "use_count": state.loaded_use_count,
@@ -1471,6 +1494,51 @@ class SkillProofEngine:
             self._filtered_view_cache.clear()
             self._catalog_scan_at = float("-inf")
 
+    def latest_catalog(self) -> Optional[Catalog]:
+        """The most recently scanned catalog for this engine, if any."""
+        with self._lock:
+            return self._catalog_cache.get("__catalog__")
+
+    @classmethod
+    def from_config(
+        cls,
+        roots: Mapping[str, os.PathLike[str] | str],
+        *,
+        config: Optional[Mapping[str, Any]] = None,
+        vector_index: Any = "auto",
+        policy_store: Optional[Any] = None,
+        **overrides: Any,
+    ) -> "SkillProofEngine":
+        """Standard construction seam for standalone surfaces (CLI, MCP, bridges).
+
+        ``vector_index="auto"`` resolves the env-configured index exactly like
+        ``vector_index_from_env()``; pass an instance to force one or ``None``
+        to stay lexical-only. ``config`` maps engine settings by their
+        constructor names (unknown keys are ignored); ``overrides`` win over
+        both. The default policy store is in-memory, so standalone calls never
+        write turn state to disk.
+        """
+        settings: dict[str, Any] = {}
+        if isinstance(config, Mapping):
+            for key, value in config.items():
+                if key in {
+                    "mode", "min_score", "min_margin", "max_candidates", "max_skill_bytes",
+                    "context_budget_bytes", "observed_tool_limit", "retained_turn_limit",
+                    "invariants", "hub_lock_path", "synonyms", "session_memory", "focus_turns",
+                    "disabled", "block_modified_hub_skills", "catalog_cache_ttl_ms", "agent_routing",
+                }:
+                    settings[str(key)] = value
+        if isinstance(vector_index, str) and vector_index.lower() == "auto":
+            settings["vector_index"] = vector_index_from_env()
+        elif vector_index is None or vector_index is False:
+            settings["vector_index"] = None
+        else:
+            settings["vector_index"] = vector_index
+        settings.update(overrides)
+        if "policy_store" not in settings:
+            settings["policy_store"] = policy_store if policy_store is not None else InMemoryPolicyStore()
+        return cls(roots, **settings)
+
     def _hub_entries(self) -> Mapping[str, Mapping[str, Any]]:
         """Read-only hub lock entries keyed by normalized skill name (mtime-cached)."""
         if self.hub_lock_path is None:
@@ -1549,7 +1617,7 @@ class SkillProofEngine:
             self._evaluate_compliance(state)
             selected = state.selection.selected
             name = selected.skill.name if selected is not None else "none"
-            loaded = "yes" if state.hermes_loaded_event else "no"
+            loaded = "yes" if state.host_loaded_event else "no"
             active = "yes" if state.active else "no"
             return (
                 f"Skill Proof: selected={name} loaded={loaded} active={active} "

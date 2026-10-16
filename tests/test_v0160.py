@@ -665,5 +665,116 @@ class StretchTierTests(unittest.TestCase):
         self.assertEqual(misses, [], "every stretch case must select its expected skill")
 
 
+class FromConfigTests(unittest.TestCase):
+    """v0.16 Part 1.2: one construction seam for the standalone surfaces."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name) / "skills"
+        folder = self.root / "alpha"
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(
+            "---\nname: alpha\ndescription: Testing workflow\n---\nInstructions.\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_auto_vector_resolves_env_index_and_ignores_unknown_config_keys(self):
+        with mock.patch.object(core, "vector_index_from_env", return_value=None) as resolver:
+            engine = core.SkillProofEngine.from_config(
+                {"test": self.root}, config={"min_score": 0.33, "bogus": 1}
+            )
+        resolver.assert_called_once_with()
+        self.assertEqual(engine.min_score, 0.33)
+        self.assertIsInstance(engine._policy_store, core.InMemoryPolicyStore)
+
+    def test_explicit_vector_instance_wins_over_auto(self):
+        sentinel = object()
+        engine = core.SkillProofEngine.from_config({"test": self.root}, vector_index=sentinel)
+        self.assertIs(engine.vector_index, sentinel)
+
+    def test_cli_selection_uses_the_shared_factory(self):
+        import cli
+
+        with mock.patch.object(
+            core.SkillProofEngine, "from_config", wraps=core.SkillProofEngine.from_config
+        ) as factory:
+            catalog, explicit, selection = cli._resolve_selection(
+                {"test": self.root}, "Use $alpha", 0.28, 0.05, 3
+            )
+        factory.assert_called_once()
+        self.assertEqual(selection.status, "selected")
+        self.assertEqual(selection.selected.skill.name, "alpha")
+        self.assertEqual(catalog.skills[0].name, "alpha")
+
+
+class AgentRoutingTests(unittest.TestCase):
+    """v0.16 Part 1.2 item 4: fleet-agent routing is data, not hardcoded."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name) / "skills"
+        folder = self.root / "alpha"
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(
+            "---\nname: alpha\ndescription: Testing workflow\n---\nInstructions.\n",
+            encoding="utf-8",
+        )
+        # Neutral HOME so a host manifest file cannot interfere with defaults.
+        self.home = pathlib.Path(self.tmp.name) / "home"
+        self.home.mkdir()
+        self._env = mock.patch.dict(os.environ, {"HERMES_HOME": str(self.home)})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_custom_agent_routing_replaces_builtin_patterns(self):
+        engine = core.SkillProofEngine(
+            {"test": self.root},
+            agent_routing={"sora": ["spreadsheet"]},
+            policy_store=core.InMemoryPolicyStore(),
+        )
+        turn = engine.begin_turn(
+            turn_id="1", session_id="s", task_id="t", query="please handle the spreadsheet import"
+        )
+        self.assertEqual(turn.selection.suggested_agent, "sora")
+
+    def test_default_patterns_stay_when_no_config_is_given(self):
+        engine = core.SkillProofEngine({"test": self.root}, policy_store=core.InMemoryPolicyStore())
+        turn = engine.begin_turn(
+            turn_id="1", session_id="s", task_id="t", query="please handle the spreadsheet import"
+        )
+        self.assertNotEqual(turn.selection.suggested_agent, "sora")
+
+
+class HostNamingTests(unittest.TestCase):
+    """v0.16 Part 1.2 item 4: neutral field names, legacy receipt alias kept."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name) / "skills"
+        folder = self.root / "alpha"
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(
+            "---\nname: alpha\ndescription: Testing workflow\n---\nInstructions.\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_receipt_exposes_host_loaded_event_with_legacy_alias(self):
+        engine = core.SkillProofEngine({"test": self.root}, policy_store=core.InMemoryPolicyStore())
+        engine.begin_turn(turn_id="1", session_id="s", task_id="t", query="Use $alpha")
+        engine.observe_skill_loaded(session_id="s", task_id="t", skill_name="alpha")
+        evidence = engine.receipt(turn_id="1")["evidence"]
+        self.assertTrue(evidence["host_loaded_event"])
+        self.assertEqual(evidence["host_loaded_event"], evidence["hermes_loaded_event"])
+
+
 if __name__ == "__main__":
     unittest.main()

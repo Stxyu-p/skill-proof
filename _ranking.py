@@ -700,6 +700,7 @@ def select_skill(
     preferred: Optional[str] = None,
     preferred_bonus: float = 0.0,
     companion_bonus: Optional[Mapping[str, float]] = None,
+    agent_manifest: Optional[Mapping[str, Sequence[str]]] = None,
     vector_index: Optional[VectorIndex] = None,
 ) -> Selection:
     """Choose one skill conservatively or return a reason for not choosing."""
@@ -730,16 +731,16 @@ def select_skill(
         # A name mentioned only in the rejected clause is not a request.
         requested = [name for name in requested if _identifier_in_query(name, scoring_query)]
     if len(requested) > 1:
-        return Selection("blocked", "multiple_explicit_skills", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None))
+        return Selection("blocked", "multiple_explicit_skills", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None, agent_manifest))
     if requested:
         matches = catalog.by_name(requested[0])
         if not matches:
-            return Selection("blocked", "unknown_explicit_skill", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None))
+            return Selection("blocked", "unknown_explicit_skill", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None, agent_manifest))
         if len(matches) > 1:
-            return Selection("blocked", "ambiguous_explicit_skill", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None))
+            return Selection("blocked", "ambiguous_explicit_skill", None, (), True, True, suggested_agent=suggest_fleet_agent(query, None, agent_manifest))
         companions = _resolve_companions(matches[0], catalog)
         candidate = RankedCandidate(matches[0], 1.0, ("explicit_name",), companions=companions)
-        return Selection("selected", "explicit_skill", candidate, (candidate,), True, True, suggested_agent=suggest_fleet_agent(query, matches[0]))
+        return Selection("selected", "explicit_skill", candidate, (candidate,), True, True, suggested_agent=suggest_fleet_agent(query, matches[0], agent_manifest))
     if unique_explicit and not requested:
         # Every explicit name was vetoed: lexical ranking (which also skips
         # vetoed skills) decides; an explicit-only veto must not select.
@@ -754,7 +755,7 @@ def select_skill(
             False,
             False,
             _rank_table(ranked_vetoed),
-            suggested_agent=suggest_fleet_agent(query, None),
+            suggested_agent=suggest_fleet_agent(query, None, agent_manifest),
         )
 
     ranked = _rank(
@@ -784,7 +785,7 @@ def select_skill(
 
             if max_vec_sim < 0.145 and (not ranked or ranked[0].score < float(min_score)):
                 table = _rank_table(ranked)
-                return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
+                return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None, agent_manifest))
 
             rrf_scores: dict[str, float] = {}
             skill_by_name = {s.name: s for s in catalog.skills}
@@ -853,12 +854,12 @@ def select_skill(
             _skill_is_negated(skill.name, query, tuple(skill.aliases) + tuple(effective_synonyms.get(skill.normalized_name, ())))
             for skill in catalog.skills
         ):
-            return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
-        return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
+            return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None, agent_manifest))
+        return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None, agent_manifest))
     if len(ranked) > 1 and ranked[0].score - ranked[1].score < float(min_margin):
-        return Selection("ambiguous", "insufficient_margin", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None))
+        return Selection("ambiguous", "insufficient_margin", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None, agent_manifest))
     top = ranked[0]
     companions = _resolve_companions(top.skill, catalog)
     top_with_companions = replace(top, companions=companions)
     candidates = (top_with_companions,) + tuple(ranked[1:limit])
-    return Selection("selected", "lexical_match", top_with_companions, candidates, False, False, table, suggested_agent=suggest_fleet_agent(query, top.skill))
+    return Selection("selected", "lexical_match", top_with_companions, candidates, False, False, table, suggested_agent=suggest_fleet_agent(query, top.skill, agent_manifest))

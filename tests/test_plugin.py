@@ -388,14 +388,14 @@ class PluginAdapterTests(unittest.TestCase):
     def test_host_filter_excludes_lexical_match_for_disabled_skill(self):
         # A disabled skill is absent from skills_list: even a lexical query
         # that would otherwise select it must not select anything, and the
-        # receipt must record the exclusion (not_in_hermes_list), not a pass.
+        # receipt must record the exclusion (not_in_host_list), not a pass.
         ctx = self.context()
         instance = plugin_module.register(ctx)
         with mock.patch.object(ctx, 'dispatch_tool', return_value='{"success": true, "skills": []}'):
             instance.on_pre_llm_call(session_id='s', task_id='t', turn_id='1', user_message='Write Python tests before implementation')
         receipt = instance.engine.receipt(turn_id='1')
         self.assertIsNone(receipt['selected'])
-        self.assertIn('not_in_hermes_list', receipt['catalog']['diagnostic_counts'])
+        self.assertIn('not_in_host_list', receipt['catalog']['diagnostic_counts'])
 
     def test_host_error_visible_and_enforcement_closed(self):
         ctx = self.context(mode='enforce-tools')
