@@ -60,17 +60,17 @@
   <!-- Step 2A: Catalog Scan & Host Guard -->
   <rect class="card" x="290" y="52" width="398" height="68"/>
   <text class="t-badge" x="306" y="72">DISCOVERY &amp; ISOLATION</text>
-  <text class="t-title" x="306" y="90">Multi-Root Catalog &amp; Host Guard</text>
-  <text class="t-sub" x="306" y="106">Scans .agents/skills &amp; host roots · Strictly filters disabled skills</text>
+  <text class="t-title" x="306" y="90">Global Skill Vault &amp; Multi-Root Catalog</text>
+  <text class="t-sub" x="306" y="106">Scans ~/.skill-proof/skills &amp; host roots · Strictly filters disabled skills</text>
 
   <!-- Wire 2A -> 2B -->
   <path class="wire" d="M489 120 V 138"/>
 
   <!-- Step 2B: Lexical & Negative Veto -->
   <rect class="card" x="290" y="138" width="398" height="82"/>
-  <text class="t-badge" x="306" y="158">STDLIB FAST-PATH</text>
-  <text class="t-title" x="306" y="176">Lexical Ranker + Negative Veto</text>
-  <text class="t-sub" x="306" y="194">Token overlap (+0.92) · Phrase (+0.76) · Synonym graph · Char n-grams</text>
+  <text class="t-badge" x="306" y="158">INVERTED INDEX &amp; FUZZY FAST-PATH</text>
+  <text class="t-title" x="306" y="176">Lexical + RapidFuzz Ranker &amp; Negative Veto</text>
+  <text class="t-sub" x="306" y="194">Inverted index · RapidFuzz token align · Synonym graph · Char n-grams</text>
   <text class="t-sub" x="306" y="208">Strict negation probe: "do not use TDD" immediately vetoes target</text>
 
   <!-- Wire 2B -> 2C -->
@@ -80,8 +80,8 @@
   <rect class="card-blue" x="290" y="238" width="398" height="102"/>
   <text class="t-badge" x="306" y="258">NEUTRAL PROVIDER LAYER</text>
   <text class="t-title" x="306" y="276">off | local | gateway (Hybrid RRF)</text>
-  <text class="t-sub" x="306" y="294">• off: zero-dependency stdlib lexical ranker (default mode)</text>
-  <text class="t-sub" x="306" y="310">• local: CPU ONNX multilingual-e5-small, fully offline</text>
+  <text class="t-sub" x="306" y="294">• off: deterministic lexical &amp; fuzzy ranker (sub-millisecond)</text>
+  <text class="t-sub" x="306" y="310">• local: model2vec / CPU ONNX embeddings, 100% offline</text>
   <text class="t-sub" x="306" y="326">• gateway: OpenAI-compatible embeddings REST with automatic fail-open</text>
 
   <!-- Wire 2C -> 2D -->
