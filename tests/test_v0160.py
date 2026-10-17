@@ -651,7 +651,8 @@ class StretchTierTests(unittest.TestCase):
     """v0.16 Phase 2 gate: every stretch case resolves in off mode (plan 5.2.3)."""
 
     def test_all_stretch_cases_select_their_expected_skill(self):
-        data = routing_benchmark.load_fixture(pathlib.Path("routing_cases.json"))
+        fixture_path = pathlib.Path(__file__).resolve().parent.parent / "routing_cases.json"
+        data = routing_benchmark.load_fixture(fixture_path if fixture_path.exists() else pathlib.Path("routing_cases.json"))
         with routing_benchmark.fixture_catalog(data) as catalog:
             misses = []
             for case in data["cases"]:
