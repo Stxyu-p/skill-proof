@@ -209,6 +209,65 @@ def _existing_section(text: str) -> tuple[str, str]:
     return body, "present"
 
 
+TRINITY_MARKER_START = "<!-- trinity:habit:start -->"
+TRINITY_MARKER_END = "<!-- trinity:habit:end -->"
+
+TRINITY_HABIT_SECTION = """## Global Agent Trinity — Zero-Willpower Habit Protocol
+
+Three local-first MCP engines are active across all coding agents on this machine. Use them by default:
+
+1. **Skill Routing (`skill-proof` MCP):**
+   - At the start of a specialized coding, architecture, debugging, design, or research task, call `skill_select` (`query`, optional `include_content: true`) or `skill_search` to route from the Global Skill Vault (`~/.skill-proof/skills`).
+2. **Governed Memory (`memcore` MCP):**
+   - **Before guessing project history:** Call `memory_search` (`query`) to recall verified project facts, architectural decisions, and user preferences.
+   - **After verifying a durable truth:** Call `memory_remember` (`content`, `memory_type`, optional `source_file`) or `memory_supersede` when a prior decision changes.
+3. **Context Compression (`trimtok` MCP):**
+   - **For noisy shell/test logs (>2 KB):** Call `trimtok_compress_terminal` (`output` or `file_path`) to preserve 100% of errors, tracebacks, and git diffs while compressing boilerplate.
+   - **For large JSON/tool outputs or source files (>2 KB):** Call `trimtok_compress_tool` (`result` or `file_path`) for lossless TOON v2 tabular encoding or AST code skeletonization, and `trimtok_retrieve` (`hash`, `section`) to inspect omitted lines on demand."""
+
+
+def _replace_trinity_section(text: str, body: str = TRINITY_HABIT_SECTION) -> tuple[str, str]:
+    start, end = text.find(TRINITY_MARKER_START), text.find(TRINITY_MARKER_END)
+    if start != -1 and end != -1 and end > start:
+        closing = end + len(TRINITY_MARKER_END)
+        return text[:start] + f"{TRINITY_MARKER_START}\n{body}\n{TRINITY_MARKER_END}" + text[closing:], "updated"
+    separator = "" if not text or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
+    addition = f"{separator}{TRINITY_MARKER_START}\n{body}\n{TRINITY_MARKER_END}\n"
+    return text + addition, "added"
+
+
+def sync_global_trinity_habits(*, workspace_dir: Optional[pathlib.Path] = None, dry_run: bool = False) -> list[str]:
+    """Non-destructively inject/update the Global Agent Trinity Habit section in global instruction files."""
+    home = pathlib.Path.home()
+    targets: list[pathlib.Path] = [
+        home / ".gemini" / "GEMINI.md",
+        home / ".claude" / "CLAUDE.md",
+        home / ".codex" / "AGENTS.md",
+    ]
+    if workspace_dir and workspace_dir.is_dir():
+        targets.append(workspace_dir / "AGENTS.md")
+    actions: list[str] = []
+    for path in targets:
+        try:
+            # Only write into global client directories that exist (or create ~/.claude/CLAUDE.md if ~/.claude exists or Claude is used)
+            if not path.parent.exists() and path.parent.name == ".claude":
+                if not dry_run:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+            elif not path.parent.exists():
+                continue
+            existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+            updated, action = _replace_trinity_section(existing)
+            if updated == existing:
+                actions.append(f"{path}: already up to date")
+            else:
+                if not dry_run:
+                    path.write_text(updated, encoding="utf-8")
+                actions.append(f"{path}: {action}" + (" (dry run)" if dry_run else ""))
+        except OSError as exc:
+            actions.append(f"{path}: skipped ({exc})")
+    return actions
+
+
 def detect_host_environments(target: pathlib.Path) -> list[str]:
     """Inspect target folder and system environment to detect active agent hosts."""
     detected = []

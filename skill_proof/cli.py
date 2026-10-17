@@ -28,6 +28,62 @@ except (ImportError, ValueError):
     import core
 
 
+def _sync_skill_proof_antigravity_schema() -> None:
+    try:
+        try:
+            from . import mcp_server as _mcp_mod
+        except (ImportError, ValueError):
+            import mcp_server as _mcp_mod
+        ag_mcp = pathlib.Path.home() / ".gemini" / "antigravity-cli" / "mcp"
+        if not ag_mcp.parent.is_dir():
+            return
+        target = ag_mcp / "skill-proof"
+        target.mkdir(parents=True, exist_ok=True)
+        for tool in _mcp_mod.TOOLS:
+            schema = {
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": tool["inputSchema"],
+            }
+            (target / f"{tool['name']}.json").write_text(
+                json.dumps(schema, ensure_ascii=False), encoding="utf-8"
+            )
+        if getattr(_mcp_mod, "SERVER_INSTRUCTIONS", None):
+            (target / "instructions.md").write_text(
+                _mcp_mod.SERVER_INSTRUCTIONS.strip() + "\n", encoding="utf-8"
+            )
+    except Exception:
+        pass
+
+
+def _sync_skill_proof_global_skill() -> None:
+    skill_md = (
+        "---\n"
+        "name: skill-proof\n"
+        "description: >-\n"
+        "  Deterministic, offline SKILL.md router, cryptographic provenance engine, and Global Skill Vault\n"
+        "  manager across all agent ecosystems.\n"
+        "---\n\n"
+        "# Skill Proof — Deterministic Skill Router & Global Vault\n\n"
+        "Use `skill_select` (with optional `include_content: true`), `skill_search`, `skill_read`, `skill_scan`, "
+        "and `skill_roots` to route and inspect skills across the Global Skill Vault (`~/.skill-proof/skills`).\n"
+    )
+    for root in (
+        pathlib.Path.home() / ".skill-proof" / "skills",
+        pathlib.Path.home() / ".agents" / "skills",
+        pathlib.Path.home() / ".gemini" / "config" / "skills",
+    ):
+        try:
+            if root.is_dir():
+                d = root / "skill-proof"
+                d.mkdir(parents=True, exist_ok=True)
+                target = d / "SKILL.md"
+                if not target.exists():
+                    target.write_text(skill_md, encoding="utf-8")
+        except Exception:
+            pass
+
+
 def _collect_roots(paths, profile=None):
     if paths:
         return {
@@ -430,7 +486,20 @@ def main(argv=None) -> int:
         spec = mcp_install.ServerSpec(name="skill-proof", module="skill_proof.mcp_server")
         if args.command == "clients":
             return mcp_install.run_clients(spec)
-        return mcp_install.run_install(spec, args, remove=(args.command == "uninstall"))
+        rc = mcp_install.run_install(spec, args, remove=(args.command == "uninstall"))
+        if args.command == "install" and not getattr(args, "dry_run", False) and not getattr(args, "print_only", False):
+            _sync_skill_proof_antigravity_schema()
+            _sync_skill_proof_global_skill()
+            try:
+                try:
+                    from . import bridge as _bridge_mod
+                except (ImportError, ValueError):
+                    import bridge as _bridge_mod
+                ws = pathlib.Path(__file__).resolve().parent.parent.parent
+                _bridge_mod.sync_global_trinity_habits(workspace_dir=ws if ws.is_dir() else None)
+            except Exception:
+                pass
+        return rc
 
     if args.command == "vault":
         from skill_proof import vault

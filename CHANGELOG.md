@@ -4,6 +4,22 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-10-18
+
+### Added
+- **Canonical Global Skill Vault (`skill_proof/vault.py`, `skill-proof vault`)**:
+  - Unifies `SKILL.md` bundles across all agent ecosystems into `~/.skill-proof/skills` (`vault status | migrate | pin | unpin | sync | link-all`) using cross-platform directory links (NTFS junctions on Windows, symlinks on POSIX) with SHA-256 `vault-lock.json` provenance and zero local file duplication.
+- **Universal Multi-Client MCP Installer (`skill_proof/mcp_install.py`, `skill-proof install`)**:
+  - One-command `skill-proof install | clients | uninstall` auto-registers `skill_proof.mcp_server` across Claude Code, Claude Desktop, Gemini CLI, Antigravity, Antigravity IDE, OpenAI Codex CLI, OpenCode, and VS Code (GitHub Copilot).
+- **Single-Round-Trip `include_content` & Warm Engine Cache (`skill_proof/mcp_server.py`)**:
+  - `skill_select` now supports `include_content: true` to inline the winning `SKILL.md` content and `source_path` in a single MCP tool call.
+  - Added module-level `_ENGINE_CACHE` in `mcp_server.py` to preserve catalog mtime fingerprints and companion warm-handoff across stdio MCP turns.
+- **Zero-Willpower Global Agent Trinity Habit Protocol (`skill_proof/bridge.py`, `skill_proof/cli.py`)**:
+  - `sync_global_trinity_habits()` non-destructively injects/updates `<!-- trinity:habit:start --> ... <!-- trinity:habit:end -->` in `~/.gemini/GEMINI.md`, `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and `Workspace/AGENTS.md`, alongside `~/.gemini/antigravity-cli/mcp/skill-proof/instructions.md` and MCP `initialize` `instructions`.
+
+### Fixed
+- Added missing `Counter` import in `skill_proof/mcp_server.py` (`_tool_scan`) and resolved `routing_cases.json` relative to `__file__` in `tests/test_v0160.py` so pytest succeeds from any working directory.
+
 ## [0.16.0] - 2026-10-15
 
 ### Added

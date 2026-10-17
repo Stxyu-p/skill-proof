@@ -13,6 +13,7 @@ a command like:  python /path/to/skill-proof/mcp_server.py
 
 from __future__ import annotations
 
+from collections import Counter
 import json
 import pathlib
 import sys
@@ -23,6 +24,17 @@ except (ImportError, ValueError):
 
 SERVER_INFO = {"name": "skill-proof", "version": "1.0.0"}
 FALLBACK_PROTOCOL = "2024-11-05"
+SERVER_INSTRUCTIONS = (
+    "Skill Proof — Deterministic Skill Router, Cryptographic Provenance & Global Skill Vault.\n\n"
+    "## Mandatory Agent Habit (When to Use Skill Proof)\n"
+    "1. **Route Before Acting (`skill_select`):** Before starting a specialized engineering, research, design, or domain workflow, "
+    "call `skill_select` with `query` set to the user's intent (pass `include_content: true` to inline the winning `SKILL.md` in one round-trip).\n"
+    "2. **Read or Search When Needed (`skill_read` / `skill_search`):** Call `skill_read` with the selected skill `name` to load its full instructions, "
+    "or `skill_search` to discover top-K matching skills across the Global Skill Vault (`~/.skill-proof/skills`)."
+)
+
+_ENGINE_CACHE: dict[tuple, core.SkillProofEngine] = {}
+_TURN_SEQ = 0
 
 _ROOTS_SCHEMA = {
     "type": "array",
@@ -55,8 +67,8 @@ TOOLS = [
         "name": "skill_select",
         "description": (
             "Select one SKILL.md for a query and return the evidence: decision status "
-            "and reason, selected skill, ranked candidates. Lexical-only by default; "
-            "configured embeddings may sync for non-explicit queries."
+            "and reason, selected skill, ranked candidates. Pass include_content=true to "
+            "inline the winning SKILL.md body in a single call."
         ),
         "inputSchema": {
             "type": "object",
@@ -66,6 +78,10 @@ TOOLS = [
                 "min_score": {"type": "number"},
                 "min_margin": {"type": "number"},
                 "limit": {"type": "integer"},
+                "include_content": {
+                    "type": "boolean",
+                    "description": "Inline the full SKILL.md content of the selected skill in one round-trip (default: false)",
+                },
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -118,6 +134,33 @@ def _roots(parameters):
     return core.detect_agent_roots()
 
 
+def _get_engine(roots, *, min_score: float = 0.28, min_margin: float = 0.05, max_candidates: int = 3):
+    key = (
+        tuple((k, str(v)) for k, v in sorted(roots.items())),
+        round(float(min_score), 4),
+        round(float(min_margin), 4),
+        int(max_candidates),
+    )
+    engine = _ENGINE_CACHE.get(key)
+    if engine is None:
+        engine = core.SkillProofEngine.from_config(
+            roots,
+            min_score=min_score,
+            min_margin=min_margin,
+            max_candidates=max_candidates,
+        )
+        if len(_ENGINE_CACHE) >= 16:
+            _ENGINE_CACHE.clear()
+        _ENGINE_CACHE[key] = engine
+    return engine
+
+
+def _next_turn_id(prefix: str = "mcp") -> str:
+    global _TURN_SEQ
+    _TURN_SEQ += 1
+    return f"{prefix}-{_TURN_SEQ}"
+
+
 def _tool_roots(parameters):
     return {"roots": {root_id: str(path) for root_id, path in core.detect_agent_roots().items()}}
 
@@ -144,36 +187,41 @@ def _tool_select(parameters):
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
     roots = _roots(parameters)
-    engine = core.SkillProofEngine.from_config(
+    engine = _get_engine(
         roots,
         min_score=float(parameters.get("min_score", 0.28)),
         min_margin=float(parameters.get("min_margin", 0.05)),
         max_candidates=int(parameters.get("limit", 3)),
     )
     selection = engine.begin_turn(
-        turn_id="mcp", session_id="mcp", task_id="mcp", query=query
+        turn_id=_next_turn_id("mcp"), session_id="mcp", task_id="mcp", query=query
     ).selection
     catalog = engine.latest_catalog()
     if catalog is None:  # pragma: no cover - begin_turn always scans
         catalog = core.Catalog((), (), "")
     selected = selection.selected
+    selected_payload = None
+    if selected is not None:
+        selected_payload = {
+            "name": selected.skill.name,
+            "score": selected.score,
+            "reasons": list(selected.reasons),
+            "root_id": selected.skill.root_id,
+            "relative_path": selected.skill.relative_path,
+        }
+        if parameters.get("include_content"):
+            selected_payload["source_path"] = str(selected.skill.source_path)
+            try:
+                selected_payload["content"] = selected.skill.source_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                selected_payload["content"] = ""
     return {
         "decision": {
             "status": selection.status,
             "reason": selection.reason,
             "explicit": selection.explicit,
         },
-        "selected": (
-            None
-            if selected is None
-            else {
-                "name": selected.skill.name,
-                "score": selected.score,
-                "reasons": list(selected.reasons),
-                "root_id": selected.skill.root_id,
-                "relative_path": selected.skill.relative_path,
-            }
-        ),
+        "selected": selected_payload,
         "candidates": [
             {
                 "name": item.skill.name,
@@ -192,9 +240,9 @@ def _tool_search(parameters):
         raise ValueError("query must be a non-empty string")
     limit = int(parameters.get("limit", 5))
     roots = _roots(parameters)
-    engine = core.SkillProofEngine.from_config(roots, max_candidates=max(limit, 5))
+    engine = _get_engine(roots, max_candidates=max(limit, 5))
     selection = engine.begin_turn(
-        turn_id="mcp-search", session_id="mcp", task_id="mcp-search", query=query
+        turn_id=_next_turn_id("mcp-search"), session_id="mcp", task_id="mcp-search", query=query
     ).selection
     catalog = engine.latest_catalog()
     if catalog is None:  # pragma: no cover - begin_turn always scans
@@ -266,7 +314,12 @@ def handle(request):
     if method == "initialize":
         requested = parameters.get("protocolVersion")
         protocol = requested if isinstance(requested, str) and requested else FALLBACK_PROTOCOL
-        return {"protocolVersion": protocol, "capabilities": {"tools": {}}, "serverInfo": SERVER_INFO}
+        return {
+            "protocolVersion": protocol,
+            "capabilities": {"tools": {}},
+            "serverInfo": SERVER_INFO,
+            "instructions": SERVER_INSTRUCTIONS,
+        }
     if method == "ping":
         return {}
     if method == "tools/list":
