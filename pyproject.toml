@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skill-proof"
+version = "1.0.0"
+description = "Deterministic, offline skill router and global skill vault for autonomous AI fleets"
+readme = "README.md"
+authors = [
+    { name = "P Choke & MIKA" }
+]
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "rapidfuzz>=3.0.0",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+vectors = [
+    "model2vec>=0.10.0",
+    "tokenizers>=0.19.0",
+]
+
+[project.scripts]
+skill-proof = "skill_proof.__main__:main"
+skill-proof-mcp = "skill_proof.mcp_server:main"
+
+[tool.setuptools.packages.find]
+include = ["skill_proof*"]
+
+[tool.setuptools.package-data]
+skill_proof = ["*.yaml", "*.json"]

@@ -6,3 +6,7 @@ venv/
 .env
 *.db
 .vscode/
+*.egg-info/
+build/
+dist/
+
