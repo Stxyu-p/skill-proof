@@ -68,20 +68,26 @@ def _sync_skill_proof_global_skill() -> None:
         "Use `skill_select` (with optional `include_content: true`), `skill_search`, `skill_read`, `skill_scan`, "
         "and `skill_roots` to route and inspect skills across the Global Skill Vault (`~/.skill-proof/skills`).\n"
     )
-    for root in (
-        pathlib.Path.home() / ".skill-proof" / "skills",
-        pathlib.Path.home() / ".agents" / "skills",
-        pathlib.Path.home() / ".gemini" / "config" / "skills",
-    ):
+    try:
         try:
+            from . import vault as _vault_mod
+        except (ImportError, ValueError):
+            import vault as _vault_mod
+        vdir = _vault_mod.init_vault()
+        d = vdir / "skill-proof"
+        d.mkdir(parents=True, exist_ok=True)
+        target = d / "SKILL.md"
+        if not target.exists():
+            target.write_text(skill_md, encoding="utf-8")
+        for root in (
+            pathlib.Path.home() / ".agents" / "skills",
+            pathlib.Path.home() / ".gemini" / "config" / "skills",
+        ):
             if root.is_dir():
-                d = root / "skill-proof"
-                d.mkdir(parents=True, exist_ok=True)
-                target = d / "SKILL.md"
-                if not target.exists():
-                    target.write_text(skill_md, encoding="utf-8")
-        except Exception:
-            pass
+                _vault_mod.pin("skill-proof", root, vault_dir=vdir, force=True)
+    except Exception:
+        pass
+
 
 
 def _collect_roots(paths, profile=None):
@@ -482,8 +488,30 @@ def main(argv=None) -> int:
 
     args = parser.parse_args(argv)
 
+    # Apply configured vector provider from Hermes config.yaml if env var is not explicitly set
+    if not os.environ.get("SKILL_PROOF_EMBEDDING_PROVIDER"):
+        try:
+            cfg_file = core.default_hermes_home() / "config.yaml"
+            if cfg_file.is_file():
+                for line in cfg_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    s = line.strip()
+                    if s.startswith("embedding_provider:"):
+                        val = s.partition(":")[2].strip().strip('"\'')
+                        if val in ("local", "gateway", "off"):
+                            os.environ["SKILL_PROOF_EMBEDDING_PROVIDER"] = val
+                        break
+        except Exception:
+            pass
+
     if args.command in ("install", "uninstall", "clients"):
-        spec = mcp_install.ServerSpec(name="skill-proof", module="skill_proof.mcp_server")
+        mcp_env = {}
+        if os.environ.get("SKILL_PROOF_EMBEDDING_PROVIDER") in ("local", "gateway"):
+            mcp_env["SKILL_PROOF_EMBEDDING_PROVIDER"] = os.environ["SKILL_PROOF_EMBEDDING_PROVIDER"]
+        spec = mcp_install.ServerSpec(
+            name="skill-proof",
+            module="skill_proof.mcp_server",
+            env=mcp_env if mcp_env else None,
+        )
         if args.command == "clients":
             return mcp_install.run_clients(spec)
         rc = mcp_install.run_install(spec, args, remove=(args.command == "uninstall"))

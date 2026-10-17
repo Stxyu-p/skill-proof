@@ -349,6 +349,20 @@ def _write(payload) -> None:
 
 
 def main() -> int:
+    import os
+    if not os.environ.get("SKILL_PROOF_EMBEDDING_PROVIDER"):
+        try:
+            cfg_file = core.default_hermes_home() / "config.yaml"
+            if cfg_file.is_file():
+                for cfg_line in cfg_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    s = cfg_line.strip()
+                    if s.startswith("embedding_provider:"):
+                        val = s.partition(":")[2].strip().strip('"\'')
+                        if val in ("local", "gateway", "off"):
+                            os.environ["SKILL_PROOF_EMBEDDING_PROVIDER"] = val
+                        break
+        except Exception:
+            pass
     for line in sys.stdin:
         line = line.strip()
         if not line:

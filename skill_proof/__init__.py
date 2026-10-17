@@ -26,10 +26,6 @@ from . import core
 sys.modules.setdefault("core", core)
 from . import bridge
 sys.modules.setdefault("bridge", bridge)
-from . import cli
-sys.modules.setdefault("cli", cli)
-from . import mcp_server
-sys.modules.setdefault("mcp_server", mcp_server)
 from . import vault, mcp_install
 
 # Clean public aliases
@@ -38,6 +34,23 @@ ranking = _ranking
 dialogue = _dialogue
 vector = _vector
 guard = bridge
+
+
+def __getattr__(name: str):
+    if name == "cli":
+        import importlib
+        mod = importlib.import_module(".cli", __name__)
+        sys.modules.setdefault("cli", mod)
+        globals()["cli"] = mod
+        return mod
+    if name == "mcp_server":
+        import importlib
+        mod = importlib.import_module(".mcp_server", __name__)
+        sys.modules.setdefault("mcp_server", mod)
+        globals()["mcp_server"] = mod
+        return mod
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 from .core import (
     SkillProofEngine,

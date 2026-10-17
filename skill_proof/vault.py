@@ -152,14 +152,24 @@ def migrate_from_roots(
         if resolved_root == vdir.resolve():
             continue
 
+        # Collect both top-level skills and nested category skills (e.g. hermes/skills/<category>/<skill>/SKILL.md)
+        candidate_dirs: list[pathlib.Path] = []
         for child in sorted(rp.iterdir()):
-            if not child.is_dir():
+            if not child.is_dir() or child.name.startswith("."):
                 continue
+            if (child / "SKILL.md").is_file():
+                candidate_dirs.append(child)
+            elif not _is_reparse(child):
+                for sub_md in sorted(child.rglob("SKILL.md")):
+                    if any(part.startswith(".") for part in sub_md.relative_to(rp).parts):
+                        continue
+                    candidate_dirs.append(sub_md.parent)
+
+        for child in candidate_dirs:
             skill_md = child / "SKILL.md"
             if not skill_md.is_file():
                 continue
             if _is_reparse(child):
-                # Check where it points
                 try:
                     target = child.resolve()
                     if target.is_relative_to(vdir) or target == vdir / child.name:
@@ -170,13 +180,31 @@ def migrate_from_roots(
 
             dest = vdir / child.name
             if dest.exists():
-                skipped.append(
-                    {
-                        "skill": child.name,
-                        "source": str(child),
-                        "reason": "already_in_vault",
-                    }
-                )
+                dest_md = dest / "SKILL.md"
+                try:
+                    src_bytes = skill_md.read_bytes()
+                    dst_bytes = dest_md.read_bytes() if dest_md.is_file() else b""
+                except OSError:
+                    src_bytes, dst_bytes = b"", b""
+                # Upgrade vault copy if source has richer content
+                if len(src_bytes) > len(dst_bytes):
+                    if not dry_run:
+                        try:
+                            shutil.rmtree(dest)
+                            shutil.copytree(child, dest, symlinks=False)
+                            migrated.append({"skill": child.name, "source": str(child), "upgraded": True})
+                        except Exception as e:
+                            skipped.append({"skill": child.name, "source": str(child), "reason": str(e)})
+                    else:
+                        migrated.append({"skill": child.name, "source": str(child), "upgraded": True})
+                else:
+                    skipped.append(
+                        {
+                            "skill": child.name,
+                            "source": str(child),
+                            "reason": "already_in_vault",
+                        }
+                    )
                 continue
 
             if not dry_run:
