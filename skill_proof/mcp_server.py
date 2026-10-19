@@ -22,7 +22,7 @@ try:
 except (ImportError, ValueError):
     import core
 
-SERVER_INFO = {"name": "skill-proof", "version": "1.1.0"}
+SERVER_INFO = {"name": "skill-proof", "version": "1.2.0"}
 FALLBACK_PROTOCOL = "2024-11-05"
 SERVER_INSTRUCTIONS = (
     "Skill Proof — Deterministic Skill Router, Cryptographic Provenance & Global Skill Vault.\n\n"

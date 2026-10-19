@@ -4,6 +4,11 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-20
+
+### Added
+- **Release workflow for PyPI** (`.github/workflows/release.yml`): publishes the wheel and sdist via Trusted Publishing when a GitHub release is published, with `skip-existing` so a re-run cannot overwrite an existing version. All actions are pinned to commit SHAs, matching the verified workflow in the sibling MemCore repo.
+
 ## [1.1.0] - 2026-10-19
 
 ### Added
