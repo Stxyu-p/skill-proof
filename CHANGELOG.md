@@ -4,10 +4,14 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-10-19
+
+### Added
+- **Client-aware Trinity habit body** (`skill_proof/bridge.py`): `sync_global_trinity_habits()` now writes a different section per target. The global MCP client files (`~/.gemini/GEMINI.md`, `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`) keep the MCP tool names; the shared workspace `AGENTS.md` gets a two-column body — A) MCP clients (Codex CLI, Claude Code, Antigravity / Gemini CLI), B) Hermes (native plugins, no MCP). The single old body named MCP tools (`skill_select`, `trimtok_compress_terminal`) that do not exist in Hermes, where all three engines run as native plugins.
+- **Surface notes in the engine skill docs** (`skills/trimtok`, `skills/skill-proof`, `skills/memcore`): each doc now states which tools its own client exposes — MCP server tool names for the MCP clients, the native-plugin behaviour for Hermes. The generated skill bodies (`skill_proof/cli.py`, `memcore/__main__.py`) carry the same note so a regenerated doc keeps it.
 
 ### Fixed
-- **Trinity habit body is now client-aware** (`skill_proof/bridge.py`): the section synced into the global MCP client files (`~/.gemini/GEMINI.md`, `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`) keeps the MCP tool names, while the shared workspace `AGENTS.md` gets a two-column body (A = MCP clients, B = Hermes native plugins). The old single body pointed Hermes at tools it does not expose — Hermes runs skill-proof / memcore / trimtok as native plugins, not MCP servers — so agents read tool names that do not exist in their own runtime. `sync_global_trinity_habits()` now picks the body per target.
+- The Trinity habit section is no longer reverted by a later `skill-proof install`: the text lives in the generator, and the generator now picks the right body per client.
 
 ## [1.0.0] - 2026-10-18
 
