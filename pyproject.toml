@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "skill-proof"
-version = "1.2.0"
+name = "skill-proof-router"
+version = "1.3.0"
 description = "Deterministic, offline skill router and global skill vault for autonomous AI fleets"
 readme = "README.md"
 authors = [

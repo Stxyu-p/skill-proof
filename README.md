@@ -125,7 +125,7 @@ skill-proof vault link-all --to ~/.cursor/skills
 Install `skill-proof`, register its stdio MCP server across all detected AI coding clients, and consolidate your skills into the global vault:
 
 ```bash
-pip install skill-proof
+pip install skill-proof-router
 skill-proof install
 skill-proof vault migrate
 ```
@@ -298,7 +298,7 @@ flowchart LR
 
 ```bash
 # Install & link the complete Global Agent Trinity across all your IDEs and CLIs
-pip install skill-proof memcore trimtok
+pip install skill-proof-router memcore trimtok
 skill-proof install && memcore init && memcore install && trimtok install
 skill-proof vault migrate
 ```
