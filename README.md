@@ -7,6 +7,7 @@
 <p><em>Zero routing model calls. Unified <code>~/.skill-proof/skills</code> vault. Sub-millisecond lexical, fuzzy & local vector routing over stdio MCP.</em></p>
 
 <p>
+  <a href="https://pypi.org/project/skill-proof-router/"><img src="https://img.shields.io/pypi/v/skill-proof-router?style=flat-square&color=blue" alt="PyPI" /></a>
   <a href="https://github.com/Stxyu-p/skill-proof"><img src="docs/badges/release.svg" alt="Global Vault & MCP" /></a>
   <a href="LICENSE"><img src="docs/badges/license.svg" alt="License" /></a>
   <img src="docs/badges/python.svg" alt="Python 3.10+" />
@@ -298,7 +299,7 @@ flowchart LR
 
 ```bash
 # Install & link the complete Global Agent Trinity across all your IDEs and CLIs
-pip install skill-proof-router memcore trimtok
+pip install skill-proof-router memcore-omnix trimtok
 skill-proof install && memcore init && memcore install && trimtok install
 skill-proof vault migrate
 ```
