@@ -67,6 +67,11 @@ def _sync_skill_proof_global_skill() -> None:
         "# Skill Proof — Deterministic Skill Router & Global Vault\n\n"
         "Use `skill_select` (with optional `include_content: true`), `skill_search`, `skill_read`, `skill_scan`, "
         "and `skill_roots` to route and inspect skills across the Global Skill Vault (`~/.skill-proof/skills`).\n"
+        "\n"
+        "**Surface note:** those five are the **MCP server** tools (Codex CLI, Claude Code, Antigravity / Gemini CLI). In "
+        "**Hermes**, skill-proof runs as a native plugin with no MCP server — routing is automatic: a routing hint is "
+        "injected before each turn, so read that hint and load the named skill with `skill_view` instead of calling "
+        "`skill_select`.\n"
     )
     try:
         try:
