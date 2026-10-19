@@ -212,18 +212,39 @@ def _existing_section(text: str) -> tuple[str, str]:
 TRINITY_MARKER_START = "<!-- trinity:habit:start -->"
 TRINITY_MARKER_END = "<!-- trinity:habit:end -->"
 
-TRINITY_HABIT_SECTION = """## Global Agent Trinity — Zero-Willpower Habit Protocol
+#: Body for clients that reach the three engines as MCP servers (Codex CLI, Claude Code,
+#: Antigravity / Gemini CLI). Those clients have the stdio servers registered in their own
+#: MCP config, so the MCP tool names are real for them.
+TRINITY_HABIT_SECTION_MCP = """## Global Agent Trinity — Zero-Willpower Habit Protocol
 
-Three local-first MCP engines are active across all coding agents on this machine. Use them by default:
+Three local-first engines are installed machine-wide: **skill-proof** (skill routing), **memcore** (governed memory), **trimtok** (context compression). This client reaches them as **MCP servers** (registered in your MCP config), so call the MCP tools directly:
 
 1. **Skill Routing (`skill-proof` MCP):**
-   - At the start of a specialized coding, architecture, debugging, design, or research task, call `skill_select` (`query`, optional `include_content: true`) or `skill_search` to route from the Global Skill Vault (`~/.skill-proof/skills`).
+   - At the start of a specialized coding, architecture, debugging, design, or research task, call `skill_select` (`query`, optional `include_content: true`) or `skill_search` to route from the Global Skill Vault (`~/.skill-proof/skills`); `skill_read` loads the full body of a selected skill.
 2. **Governed Memory (`memcore` MCP):**
    - **Before guessing project history:** Call `memory_search` (`query`) to recall verified project facts, architectural decisions, and user preferences.
    - **After verifying a durable truth:** Call `memory_remember` (`content`, `memory_type`, optional `source_file`) or `memory_supersede` when a prior decision changes.
+   - `memory_get` / `memory_status` read a single memory and the store state.
 3. **Context Compression (`trimtok` MCP):**
    - **For noisy shell/test logs (>2 KB):** Call `trimtok_compress_terminal` (`output` or `file_path`) to preserve 100% of errors, tracebacks, and git diffs while compressing boilerplate.
    - **For large JSON/tool outputs or source files (>2 KB):** Call `trimtok_compress_tool` (`result` or `file_path`) for lossless TOON v2 tabular encoding or AST code skeletonization, and `trimtok_retrieve` (`hash`, `section`) to inspect omitted lines on demand."""
+
+#: Body for the shared workspace AGENTS.md. Hermes reads it while running the three engines
+#: as native plugins (no MCP), while Codex / Antigravity may read the same file as MCP
+#: clients — so one body with two labelled columns lets every reader pick its own surface.
+TRINITY_HABIT_SECTION = """## Global Agent Trinity — Zero-Willpower Habit Protocol
+
+Three local-first engines are installed machine-wide: **skill-proof** (skill routing), **memcore** (governed memory), **trimtok** (context compression). Same engines everywhere — only the **surface** differs, so check which one you have before calling tools.
+
+| Engine | A) MCP clients — Codex CLI, Claude Code, Antigravity / Gemini CLI | B) Hermes (this agent — native plugins, no MCP) |
+|---|---|---|
+| **skill-proof** | `skill_select` (`query`, optional `include_content: true`) / `skill_search` / `skill_read` — route from the Global Skill Vault (`~/.skill-proof/skills`) | **Automatic.** A routing hint is injected each turn: read it and load the skill it names. `skill_select` does not exist here. |
+| **memcore** | `memory_search` (`query`) / `memory_remember` (`content`, `memory_type`, optional `source_file`) / `memory_supersede` / `memory_reject` / `memory_feedback` / `memory_review_queue` / `memory_review_decide` / `memory_get` / `memory_status` | **Native tools, same core names** — `memory_search` / `memory_remember` / `memory_promote` / `memory_supersede` / `memory_reject` / `memory_feedback` / `memory_review_queue` / `memory_review_decide`. No `memory_get` / `memory_status` here. |
+| **trimtok** | `trimtok_compress_terminal` (`output` or `file_path`) for noisy shell/test logs; `trimtok_compress_tool` (`result` or `file_path`) for large JSON/tool output; `trimtok_retrieve` (`hash`, `section`) to inspect omitted lines | **Automatic.** Terminal and tool output is already compressed (lossless TOON, CCR `#hash` aliases). No compress tools here — use `trimtok_retrieve` when it is exposed, else re-run the command with a narrower filter. |
+
+Column A applies only where the MCP servers are registered: `~/.codex/config.toml`, `~/.claude.json`, `~/.gemini/config/mcp_config.json`. Hermes registers its own MCP servers separately (`config.yaml: mcp_servers`) and runs these three as native plugins.
+
+**Habit:** before guessing project history → `memory_search`. After verifying a durable truth → `memory_remember` / `memory_supersede`. Before any specialized task → consult the skill router (A: `skill_select`; B: read the injected hint)."""
 
 
 def _replace_trinity_section(text: str, body: str = TRINITY_HABIT_SECTION) -> tuple[str, str]:
@@ -237,17 +258,23 @@ def _replace_trinity_section(text: str, body: str = TRINITY_HABIT_SECTION) -> tu
 
 
 def sync_global_trinity_habits(*, workspace_dir: Optional[pathlib.Path] = None, dry_run: bool = False) -> list[str]:
-    """Non-destructively inject/update the Global Agent Trinity Habit section in global instruction files."""
+    """Non-destructively inject/update the Global Agent Trinity Habit section in global instruction files.
+
+    Each client gets the body that matches how it reaches the engines: the global MCP
+    client files (Codex / Claude Code / Gemini / Antigravity) get the MCP tool names,
+    while the shared workspace AGENTS.md gets the two-column body — Hermes reads it as a
+    native-plugin host, and Codex / Antigravity may read the same file as MCP clients.
+    """
     home = pathlib.Path.home()
-    targets: list[pathlib.Path] = [
-        home / ".gemini" / "GEMINI.md",
-        home / ".claude" / "CLAUDE.md",
-        home / ".codex" / "AGENTS.md",
+    targets: list[tuple[pathlib.Path, str]] = [
+        (home / ".gemini" / "GEMINI.md", TRINITY_HABIT_SECTION_MCP),
+        (home / ".claude" / "CLAUDE.md", TRINITY_HABIT_SECTION_MCP),
+        (home / ".codex" / "AGENTS.md", TRINITY_HABIT_SECTION_MCP),
     ]
     if workspace_dir and workspace_dir.is_dir():
-        targets.append(workspace_dir / "AGENTS.md")
+        targets.append((workspace_dir / "AGENTS.md", TRINITY_HABIT_SECTION))
     actions: list[str] = []
-    for path in targets:
+    for path, body in targets:
         try:
             # Only write into global client directories that exist (or create ~/.claude/CLAUDE.md if ~/.claude exists or Claude is used)
             if not path.parent.exists() and path.parent.name == ".claude":
@@ -256,7 +283,7 @@ def sync_global_trinity_habits(*, workspace_dir: Optional[pathlib.Path] = None, 
             elif not path.parent.exists():
                 continue
             existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-            updated, action = _replace_trinity_section(existing)
+            updated, action = _replace_trinity_section(existing, body)
             if updated == existing:
                 actions.append(f"{path}: already up to date")
             else:

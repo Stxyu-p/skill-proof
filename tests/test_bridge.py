@@ -118,6 +118,28 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn(bridge.MARKER_START, (self.target / "AGENTS.md").read_text(encoding="utf-8"))
         self.assertFalse((self.target / ".cursor" / "rules" / "skill-proof.mdc").exists())
 
+    def test_trinity_sync_writes_client_specific_bodies(self):
+        """Global MCP client files get the MCP body; the shared workspace file gets the two-column body."""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory(prefix="skill_proof_trinity_") as home:
+            home_path = pathlib.Path(home)
+            (home_path / ".claude").mkdir()
+            workspace = home_path / "workspace"
+            workspace.mkdir()
+
+            with mock.patch.object(pathlib.Path, "home", return_value=home_path):
+                actions = bridge.sync_global_trinity_habits(workspace_dir=workspace)
+            self.assertTrue(any("added" in a or "updated" in a for a in actions))
+
+            claude = (home_path / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+            self.assertIn(bridge.TRINITY_HABIT_SECTION_MCP, claude)
+            self.assertNotIn("| Engine |", claude)
+
+            shared = (workspace / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertIn(bridge.TRINITY_HABIT_SECTION, shared)
+            self.assertIn("| Engine |", shared)
+
     def test_run_hook_enforces_active_turn_policy_store(self):
         store = core.InMemoryPolicyStore(
             {
