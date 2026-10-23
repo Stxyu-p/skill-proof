@@ -121,10 +121,8 @@ class VectorIndex:
 
     @contextmanager
     def _connect(self):
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=5.0)
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
             yield conn
         finally:
             conn.close()
@@ -134,6 +132,9 @@ class VectorIndex:
             return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS skill_embeddings (
                     skill_name TEXT PRIMARY KEY,
@@ -164,7 +165,11 @@ class VectorIndex:
                 (self.model,),
             ).fetchall()
             for name, dim, blob in rows:
-                self._memory_vectors[name] = struct.unpack(f"{dim}f", blob)
+                if isinstance(blob, (bytes, bytearray, memoryview)) and len(blob) == dim * 4:
+                    try:
+                        self._memory_vectors[name] = struct.unpack(f"<{dim}f", blob)
+                    except struct.error:
+                        pass
 
     def _call_embeddings(self, texts: list[str], is_query: bool = False) -> list[tuple[float, ...]]:
         if not texts:
@@ -289,8 +294,13 @@ class VectorIndex:
                     (q_sha, self.model),
                 ).fetchone()
                 if row:
-                    self._trace(provider_used="cache", fallback_reason=None, query_cache_hit=True)
-                    return struct.unpack(f"{row[0]}f", row[1])
+                    dim, blob = row[0], row[1]
+                    if isinstance(blob, (bytes, bytearray, memoryview)) and len(blob) == dim * 4:
+                        try:
+                            self._trace(provider_used="cache", fallback_reason=None, query_cache_hit=True)
+                            return struct.unpack(f"<{dim}f", blob)
+                        except struct.error:
+                            pass
 
         vectors = self._call_embeddings([query], is_query=True)
         if not vectors:
