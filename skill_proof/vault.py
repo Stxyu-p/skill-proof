@@ -90,15 +90,20 @@ def _is_reparse(path: pathlib.Path) -> bool:
 
 
 def create_junction_or_link(source: pathlib.Path, target: pathlib.Path, force: bool = False) -> bool:
-    """Create an NTFS junction on Windows or a symlink on Unix."""
+    """Create an NTFS junction on Windows or a symlink on Unix (handles dangling junctions)."""
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() or _is_reparse(target):
-        if target.is_dir() and _is_reparse(target):
+    is_rep = _is_reparse(target)
+    if is_rep:
+        # Dangling or live junction/symlink dir on Windows must be removed via rmdir/unlink first
+        try:
+            target.rmdir()
+        except OSError:
             try:
-                target.rmdir()
-            except Exception:
-                pass
-        elif target.is_file() or target.is_symlink():
+                target.unlink()
+            except OSError:
+                return False
+    elif target.exists():
+        if target.is_file():
             target.unlink()
         elif force and target.is_dir():
             shutil.rmtree(target)
@@ -106,28 +111,28 @@ def create_junction_or_link(source: pathlib.Path, target: pathlib.Path, force: b
             return False
 
     if os.name == "nt":
-        # Prefer mklink /J on Windows for unprivileged junction creation
+        # 1. Prefer native standard library _winapi.CreateJunction (zero subprocess overhead)
         try:
-            cmd = f'cmd /c mklink /J "{str(target)}" "{str(source)}"'
+            import _winapi
+            _winapi.CreateJunction(str(source.resolve()), str(target))
+            return True
+        except Exception:
+            pass
+        # 2. Fallback to cmd mklink with shell=False
+        try:
             res = subprocess.run(
-                cmd, capture_output=True, text=True, check=False, shell=True
+                ["cmd", "/c", "mklink", "/J", str(target), str(source.resolve())],
+                capture_output=True, text=True, check=False, shell=False,
             )
             if res.returncode == 0:
                 return True
         except Exception:
             pass
-        # Fallback to os.symlink
-        try:
-            target.symlink_to(source, target_is_directory=True)
-            return True
-        except Exception:
-            return False
-    else:
-        try:
-            target.symlink_to(source, target_is_directory=True)
-            return True
-        except Exception:
-            return False
+    try:
+        target.symlink_to(source.resolve(), target_is_directory=True)
+        return True
+    except Exception:
+        return False
 
 
 def migrate_from_roots(
