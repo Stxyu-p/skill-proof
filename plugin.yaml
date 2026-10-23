@@ -99,13 +99,13 @@ config_schema:
     description: Registry model key or HF repo id
   gateway_url:
     type: str
-    default: http://localhost:20128/v1/embeddings
+    default: https://api.openai.com/v1/embeddings
     description: OpenAI-compatible embeddings endpoint
   gateway_key_env:
     type: str
-    default: HERMES_CUSTOM_LOCALHOST_20128_API_KEY
+    default: OPENAI_API_KEY
     description: Environment variable name holding gateway API key
   models_dir:
     type: str
     default: ""
-    description: Directory for local ONNX model downloads (empty defaults to plugin-data/skill-proof/models)
+    description: Directory for local ONNX model downloads (empty defaults to OS-standard models directory)

@@ -43,14 +43,14 @@ class VectorIndex:
         model: str = "Xenova/multilingual-e5-small",
         gateway_url: str = "",
         api_key: Optional[str] = None,
-        gateway_key_env: str = "HERMES_CUSTOM_LOCALHOST_20128_API_KEY",
+        gateway_key_env: str = "OPENAI_API_KEY",
         models_dir: Optional[os.PathLike[str] | str] = None,
         timeout: float = 3.0,
         embedder: Any = None,
     ) -> None:
         self.db_path = pathlib.Path(db_path).resolve() if db_path else None
         self.model = str(model)
-        self.gateway_url = str(gateway_url) if gateway_url else "http://localhost:20128/v1/embeddings"
+        self.gateway_url = str(gateway_url) if gateway_url else "https://api.openai.com/v1/embeddings"
         self.gateway_key_env = str(gateway_key_env)
         self.models_dir = pathlib.Path(models_dir).resolve() if models_dir else None
         self.timeout = float(timeout)
@@ -378,7 +378,7 @@ def vector_index_from_env(
         db_path=path,
         provider=provider,
         model=env("SKILL_PROOF_EMBEDDING_MODEL") or "Xenova/multilingual-e5-small",
-        gateway_url=env("SKILL_PROOF_GATEWAY_URL") or "http://localhost:20128/v1/embeddings",
-        gateway_key_env=env("SKILL_PROOF_GATEWAY_KEY_ENV") or "HERMES_CUSTOM_LOCALHOST_20128_API_KEY",
+        gateway_url=env("SKILL_PROOF_GATEWAY_URL") or "https://api.openai.com/v1/embeddings",
+        gateway_key_env=env("SKILL_PROOF_GATEWAY_KEY_ENV") or "OPENAI_API_KEY",
         models_dir=env("SKILL_PROOF_MODELS_DIR") or None,
     )

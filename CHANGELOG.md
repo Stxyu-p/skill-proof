@@ -4,6 +4,18 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-10-24
+
+### Changed
+- **OS-Standard Global Models Directory (`skill_proof/models.py`)**: `default_models_dir` now resolves models using platform-standard locations:
+  - Windows: `%LOCALAPPDATA%\hermes\models`
+  - Linux / macOS: `$XDG_DATA_HOME/hermes/models` (falling back to `~/.local/share/hermes/models`)
+  - Universal fallback: `~/.hermes/models` (overridable via `HERMES_MODELS_DIR`)
+  - Allows sharing downloaded ONNX models (`Xenova/multilingual-e5-small`) across Hermes plugins (`skill-proof`, `memcore`) with zero duplication.
+- **Decoupled Gateway Defaults (`plugin.yaml`, `skill_proof/cli.py`, `skill_proof/_vector.py`, `__init__.py`)**:
+  - Replaced hardcoded private localhost proxy settings with clean, neutral defaults (`https://api.openai.com/v1/embeddings`, `OPENAI_API_KEY`).
+  - Out-of-the-box zero-coupling experience for new users and clean installs.
+
 ## [1.3.0] - 2026-10-20
 
 ### Added

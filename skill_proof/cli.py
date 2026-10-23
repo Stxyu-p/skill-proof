@@ -611,8 +611,8 @@ def main(argv=None) -> int:
             print("error: provider must be off, local, or gateway", file=sys.stderr)
             return 2
         model = args.model or "Xenova/multilingual-e5-small"
-        gateway_url = args.gateway_url or "http://localhost:20128/v1/embeddings"
-        gateway_key_env = args.gateway_key_env or "HERMES_CUSTOM_LOCALHOST_20128_API_KEY"
+        gateway_url = args.gateway_url or "https://api.openai.com/v1/embeddings"
+        gateway_key_env = args.gateway_key_env or "OPENAI_API_KEY"
         if provider == "local" and not args.model:
             model = input(f"Model key or 'none' [{model}]: ").strip() or model
         if model.casefold() == "none":

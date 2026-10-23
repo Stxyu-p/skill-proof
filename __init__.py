@@ -243,7 +243,7 @@ class SkillProofPlugin:
 
         embedding_model = str(ctx.get_config("embedding_model", "Xenova/multilingual-e5-small") or "").strip()
         gateway_url = str(ctx.get_config("gateway_url", "") or "").strip()
-        gateway_key_env = str(ctx.get_config("gateway_key_env", "HERMES_CUSTOM_LOCALHOST_20128_API_KEY") or "").strip()
+        gateway_key_env = str(ctx.get_config("gateway_key_env", "OPENAI_API_KEY") or "").strip()
         configured_models = str(ctx.get_config("models_dir", "") or "").strip()
         models_dir = pathlib.Path(configured_models).expanduser() if configured_models else None
 

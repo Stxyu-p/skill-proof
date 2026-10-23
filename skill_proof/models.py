@@ -134,6 +134,9 @@ def get_model_spec(key_or_alias: str) -> Optional[dict[str, Any]]:
 
 
 def default_models_dir() -> pathlib.Path:
+    env_dir = os.environ.get("HERMES_MODELS_DIR")
+    if env_dir:
+        return pathlib.Path(env_dir)
     hermes_home = os.environ.get("HERMES_HOME")
     if hermes_home:
         base = pathlib.Path(hermes_home)
@@ -141,8 +144,18 @@ def default_models_dir() -> pathlib.Path:
         local_app_data = os.environ.get("LOCALAPPDATA")
         base = pathlib.Path(local_app_data) / "hermes" if local_app_data else pathlib.Path.home() / ".hermes"
     else:
-        base = pathlib.Path.home() / ".hermes"
-    return base / "plugin-data" / "skill-proof" / "models"
+        xdg_data = os.environ.get("XDG_DATA_HOME")
+        base = pathlib.Path(xdg_data) / "hermes" if xdg_data else pathlib.Path.home() / ".local" / "share" / "hermes"
+    global_models = base / "models"
+    if global_models.exists():
+        return global_models
+    home_models = pathlib.Path.home() / ".hermes" / "models"
+    if home_models.exists():
+        return home_models
+    legacy = base / "plugin-data" / "skill-proof" / "models"
+    if legacy.exists():
+        return legacy
+    return global_models
 
 
 def _sanitize_dirname(repo_id: str) -> str:

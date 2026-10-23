@@ -264,8 +264,9 @@ plugins:
       settings:
         mode: nudge                       # nudge (default), observe, or enforce-tools
         reduce_skill_prompt: false        # opt-in; confident selection replaces the full index
-        embedding_provider: off           # off (default), local, or gateway
+        embedding_provider: local         # local (default to shared OS models dir), off, or gateway
         embedding_model: Xenova/multilingual-e5-small
+        models_dir: ""                    # optional custom dir; empty defaults to OS-standard models dir
         min_score: 0.28
         min_margin: 0.05
         catalog_cache_ttl_ms: 1000        # reuse host-filtered catalog within TTL window
