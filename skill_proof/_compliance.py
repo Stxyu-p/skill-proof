@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import time
+import uuid
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from statistics import median
@@ -44,13 +46,30 @@ class FilePolicyStore:
         return data if isinstance(data, dict) else {}
 
     def write(self, state: Mapping[str, Any]) -> None:
+        tmp = None
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_name(self.path.name + ".tmp")
+            suffix = f".{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+            tmp = self.path.with_name(self.path.name + suffix)
             tmp.write_text(json.dumps(dict(state), ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp, self.path)
+            for attempt in range(5):
+                try:
+                    os.replace(tmp, self.path)
+                    tmp = None
+                    break
+                except PermissionError:
+                    if attempt == 4:
+                        self.path.write_text(json.dumps(dict(state), ensure_ascii=False), encoding="utf-8")
+                        break
+                    time.sleep(0.02 * (2 ** attempt))
         except OSError:
             pass  # fail-open: advisory state must never break a turn
+        finally:
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 class InMemoryPolicyStore:
