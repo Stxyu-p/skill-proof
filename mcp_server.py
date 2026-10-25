@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
-"""skill-proof root shim: forwards to skill_proof.mcp_server."""
-from __future__ import annotations
+"""Skill Proof standalone MCP server entrypoint."""
 import sys
-import skill_proof.mcp_server as _m
-
-sys.modules[__name__] = _m
-for _k, _v in _m.__dict__.items():
-    if not _k.startswith("__"):
-        globals()[_k] = _v
+from skill_proof.mcp_server import main
 
 if __name__ == "__main__":
-    sys.exit(_m.main())
+    sys.exit(main())

@@ -22,7 +22,7 @@ from functools import wraps
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 try:  # Hermes loads directory plugins as packages; direct unit tests do not.
-    from .core import (
+    from .skill_proof.core import (
         SkillProofEngine,
         VectorIndex,
         __version__ as CORE_VERSION,
@@ -34,7 +34,7 @@ try:  # Hermes loads directory plugins as packages; direct unit tests do not.
         read_audit_records,
     )
 except ImportError:  # pragma: no cover - exercised by direct adapter tests
-    from core import (
+    from skill_proof.core import (
         SkillProofEngine,
         VectorIndex,
         __version__ as CORE_VERSION,

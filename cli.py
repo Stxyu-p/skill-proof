@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
-"""skill-proof root shim: forwards to skill_proof.cli."""
-from __future__ import annotations
+"""Skill Proof standalone CLI entrypoint."""
 import sys
-import skill_proof.cli as _m
-
-sys.modules[__name__] = _m
-for _k, _v in _m.__dict__.items():
-    if not _k.startswith("__"):
-        globals()[_k] = _v
+from skill_proof.cli import main
 
 if __name__ == "__main__":
-    sys.exit(_m.main())
+    sys.exit(main())
