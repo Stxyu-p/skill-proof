@@ -160,7 +160,7 @@ from _compliance import (  # v0.16 facade re-exports
 )
 
 
-__version__ = "1.3.0"
+__version__ = "1.3.2"
 
 
 @dataclass(frozen=True)
@@ -280,7 +280,7 @@ class SkillProofEngine:
         clock: Optional[Callable[[], float]] = None,
         policy_store: Optional[Any] = None,
         block_modified_hub_skills: bool = False,
-        catalog_cache_ttl_ms: float = 1000.0,
+        catalog_cache_ttl_ms: float = 300000.0,
         agent_routing: Optional[Mapping[str, Any]] = None,
     ) -> None:
         normalized_mode = normalize_identifier(mode)
@@ -826,8 +826,15 @@ class SkillProofEngine:
                 pass
         with self._lock:
             now = self._clock()
+            mtime_sig = tuple(
+                (k, v.stat().st_mtime_ns if v.is_dir() else -1)
+                for k, v in sorted(self._roots.items())
+            )
+            mtime_changed = getattr(self, "_last_mtime_sig", None) != mtime_sig
+            self._last_mtime_sig = mtime_sig
             fresh = (
-                self.catalog_cache_ttl_ms > 0
+                not mtime_changed
+                and self.catalog_cache_ttl_ms > 0
                 and "__catalog__" in self._catalog_cache
                 and (now - self._catalog_scan_at) * 1000.0 < self.catalog_cache_ttl_ms
             )
@@ -1332,12 +1339,19 @@ class SkillProofEngine:
 
     def _evaluate_compliance(self, state: _TurnState) -> None:
         if state.selection.selected is None:
-            state.compliance = "unassessed"
+            state.compliance = "not_applicable"
             return
         skill = state.selection.selected.skill
         inv = self._resolve_invariants(skill)
         if inv.is_empty:
-            state.compliance = "unassessed"
+            if state.host_loaded_event:
+                state.compliance = "compliant"
+                if "selected_skill_loaded" not in state.compliance_reasons:
+                    state.compliance_reasons.append("selected_skill_loaded")
+            else:
+                state.compliance = "skipped_nudge" if state.mode == "nudge" else "failed"
+                if "skill_not_loaded" not in state.compliance_reasons:
+                    state.compliance_reasons.append("skill_not_loaded")
             return
         if state.compliance == "failed":
             return

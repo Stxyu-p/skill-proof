@@ -222,6 +222,7 @@ class SkillProofPlugin:
         self.roots = _resolve_roots(ctx.get_config("skill_roots", []))
         mode = str(ctx.get_config("mode", "nudge") or "nudge")
         self.reduce_skill_prompt = _bool_setting(ctx.get_config("reduce_skill_prompt", False), False)
+        self.skills_cache_ttl = _float_setting(ctx.get_config("skills_cache_ttl", 30.0), 30.0)
         self._skills_cache: tuple[float, set[str]] = (0.0, set())
         self._clock: Callable[[], float] = clock or time.monotonic
         invariants = ctx.get_config("invariants", {})
@@ -286,7 +287,7 @@ class SkillProofPlugin:
             vector_index=vector_index,
             clock=clock,
             block_modified_hub_skills=_bool_setting(ctx.get_config("block_modified_hub_skills", False), False),
-            catalog_cache_ttl_ms=float(ctx.get_config("catalog_cache_ttl_ms", 1000.0) or 0.0),
+            catalog_cache_ttl_ms=float(ctx.get_config("catalog_cache_ttl_ms", 300000.0) or 0.0),
             agent_routing=ctx.get_config("agent_routing", None),
         )
         self.visible_receipt = _bool_setting(ctx.get_config("visible_receipt", True), True)
@@ -327,7 +328,7 @@ class SkillProofPlugin:
         try:
             availability_error = False
             now = self._clock()
-            if now - self._skills_cache[0] < 30.0 and self._skills_cache[1]:
+            if now - self._skills_cache[0] < self.skills_cache_ttl and self._skills_cache[1]:
                 names = self._skills_cache[1]
                 listing_ms = 0.0
             else:

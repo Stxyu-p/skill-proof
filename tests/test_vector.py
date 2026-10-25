@@ -146,5 +146,84 @@ class EmbedderSeamTests(unittest.TestCase):
             self.assertEqual(idx.trace_snapshot()["fallback_reason"], "embedder_failed")
 
 
+class ModelFastVerificationTests(unittest.TestCase):
+    def test_default_models_dir_skips_empty_candidate(self):
+        import models
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            empty_local = tmp_path / "local_hermes"
+            (empty_local / "models").mkdir(parents=True)
+            real_home = tmp_path / "home"
+            model_dir = real_home / ".hermes" / "models" / "Xenova_multilingual-e5-small" / "onnx"
+            model_dir.mkdir(parents=True)
+            (model_dir / "model_quantized.onnx").write_bytes(b"x")
+            (model_dir.parent / "tokenizer.json").write_bytes(b"y")
+
+            with mock.patch.dict(os.environ, {"HERMES_HOME": str(empty_local)}, clear=False):
+                os.environ.pop("HERMES_MODELS_DIR", None)
+                with mock.patch.object(pathlib.Path, "home", return_value=real_home):
+                    resolved = models.default_models_dir()
+                    self.assertEqual(resolved, real_home / ".hermes" / "models")
+
+    def test_check_model_status_uses_fast_stamp_after_first_verify(self):
+        import models
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            fake_spec = {
+                "repo_id": "test/tiny-model",
+                "dim": 4,
+                "onnx_relpath": "onnx/model.onnx",
+                "files": {
+                    "tokenizer.json": {
+                        "size": 4,
+                        "sha256": hashlib.sha256(b"tok!").hexdigest(),
+                    },
+                    "onnx/model.onnx": {
+                        "size": 5,
+                        "sha256": hashlib.sha256(b"onnx!").hexdigest(),
+                    },
+                },
+            }
+            with mock.patch.dict(models.MODEL_REGISTRY, {"test/tiny-model": fake_spec}):
+                target = tmp_path / "test_tiny-model"
+                (target / "onnx").mkdir(parents=True)
+                (target / "tokenizer.json").write_bytes(b"tok!")
+                (target / "onnx" / "model.onnx").write_bytes(b"onnx!")
+
+                sha_calls = []
+                orig_sha = models._file_sha256_matches
+
+                def counting_sha(p, expected):
+                    sha_calls.append(str(p))
+                    return orig_sha(p, expected)
+
+                with mock.patch.object(models, "_file_sha256_matches", side_effect=counting_sha):
+                    s1 = models.check_model_status("test/tiny-model", root_dir=tmp_path)
+                    self.assertTrue(s1["installed"])
+                    self.assertEqual(len(sha_calls), 2)
+
+                    sha_calls.clear()
+                    s2 = models.check_model_status("test/tiny-model", root_dir=tmp_path)
+                    self.assertTrue(s2["installed"])
+                    self.assertEqual(len(sha_calls), 0)
+
+    def test_vector_index_connect_sets_busy_timeout_per_connection_and_versions_match(self):
+        import re
+        from core import __version__ as core_ver
+        root = pathlib.Path(__file__).resolve().parent.parent
+        pyaml = (root / "plugin.yaml").read_text(encoding="utf-8")
+        pyproj = (root / "pyproject.toml").read_text(encoding="utf-8")
+        v_yaml = re.search(r"version:\s*([^\s]+)", pyaml).group(1).strip("\"'")
+        v_proj = re.search(r'version\s*=\s*"([^"]+)"', pyproj).group(1)
+        self.assertEqual(core_ver, v_yaml)
+        self.assertEqual(core_ver, v_proj)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            idx = VectorIndex(pathlib.Path(tmp) / "v.db")
+            with idx._connect() as conn:
+                bt = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                self.assertGreaterEqual(int(bt), 15000)
+
+
 if __name__ == "__main__":
     unittest.main()

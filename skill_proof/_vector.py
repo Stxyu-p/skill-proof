@@ -121,8 +121,10 @@ class VectorIndex:
 
     @contextmanager
     def _connect(self):
-        conn = sqlite3.connect(str(self.db_path), timeout=5.0)
+        conn = sqlite3.connect(str(self.db_path), timeout=15.0)
         try:
+            conn.execute("PRAGMA busy_timeout = 15000")
+            conn.execute("PRAGMA synchronous = NORMAL")
             yield conn
         finally:
             conn.close()
@@ -134,7 +136,10 @@ class VectorIndex:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA busy_timeout=15000")
+            conn.execute("PRAGMA temp_store=MEMORY")
+            conn.execute("PRAGMA journal_size_limit=8388608")
+            conn.execute("PRAGMA wal_autocheckpoint=200")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS skill_embeddings (
                     skill_name TEXT PRIMARY KEY,

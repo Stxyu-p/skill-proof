@@ -383,13 +383,29 @@ def _hermes_runtime_python():
     configured = os.environ.get("HERMES_PYTHON", "").strip()
     if configured:
         return pathlib.Path(configured).expanduser()
+    venv_env = os.environ.get("VIRTUAL_ENV", "").strip()
+    if venv_env:
+        cand = (
+            pathlib.Path(venv_env) / "Scripts" / "python.exe"
+            if os.name == "nt"
+            else pathlib.Path(venv_env) / "bin" / "python"
+        )
+        if cand.is_file():
+            return cand
     if os.name == "nt":
         local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-        if not local_app_data:
-            return None
-        return pathlib.Path(local_app_data) / "hermes" / "hermes-agent" / "venv" / "Scripts" / "python.exe"
-    hermes_home = pathlib.Path(os.environ.get("HERMES_HOME", "~/.hermes")).expanduser()
-    return hermes_home / "hermes-agent" / "venv" / "bin" / "python"
+        if local_app_data:
+            legacy = pathlib.Path(local_app_data) / "hermes" / "hermes-agent" / "venv" / "Scripts" / "python.exe"
+            if legacy.is_file():
+                return legacy
+    else:
+        hermes_home = pathlib.Path(os.environ.get("HERMES_HOME", "~/.hermes")).expanduser()
+        legacy = hermes_home / "hermes-agent" / "venv" / "bin" / "python"
+        if legacy.is_file():
+            return legacy
+    if sys.executable and pathlib.Path(sys.executable).is_file():
+        return pathlib.Path(sys.executable)
+    return None
 
 
 def _missing_local_runtime_dependencies():
@@ -523,6 +539,17 @@ def main(argv=None) -> int:
         if args.command == "install" and not getattr(args, "dry_run", False) and not getattr(args, "print_only", False):
             _sync_skill_proof_antigravity_schema()
             _sync_skill_proof_global_skill()
+            try:
+                from skill_proof import vault
+                roots = _collect_roots(getattr(args, "root", []), profile=getattr(args, "profile", None))
+                mig = vault.migrate_from_roots(roots, dry_run=False)
+                v_status = vault.status(roots=roots)
+                print(
+                    f"[Skill Proof Setup Wizard] Global Vault: {v_status['vault_dir']} "
+                    f"({v_status['vault_skills_count']} canonical skills, {mig.get('migrated_count', 0)} newly migrated)"
+                )
+            except Exception:
+                pass
             try:
                 try:
                     from . import bridge as _bridge_mod

@@ -311,7 +311,7 @@ class PluginAdapterTests(unittest.TestCase):
         self.assertTrue(transformed.startswith("Done."))
         self.assertIn("loaded=yes", transformed)
         self.assertIn("active=yes", transformed)
-        self.assertIn("compliance=unassessed", transformed)
+        self.assertIn("compliance=compliant", transformed)
         self.assertIn("verification=unverified", transformed)
         self.assertNotIn("model read", transformed.casefold())
         self.assertEqual(
@@ -412,7 +412,7 @@ class PluginAdapterTests(unittest.TestCase):
         footer = instance.on_transform_llm_output(response_text='Done.', session_id='s')
         self.assertIn('python-tdd', footer)
         self.assertIn('loaded', footer)
-        self.assertIn('compliance unassessed', footer)
+        self.assertIn('compliance compliant', footer)
         self.assertNotIn('active=', footer)
 
     def test_refresh_command_does_not_rewrite_receipt(self):

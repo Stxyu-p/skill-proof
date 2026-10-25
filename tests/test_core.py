@@ -696,7 +696,7 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(allowed.allowed)
         self.assertTrue(receipt["runtime"]["active"])
         self.assertEqual(receipt["runtime"]["active_evidence"], "post_load_tool_call")
-        self.assertEqual(receipt["compliance"], "unassessed")
+        self.assertEqual(receipt["compliance"], "compliant")
         self.assertEqual(receipt["verification"], "unverified")
 
     def test_receipt_is_bounded_truthful_and_contains_no_raw_query_or_absolute_path(self):
@@ -714,7 +714,7 @@ class EngineTests(unittest.TestCase):
         self.assertNotIn("XYZ", serialized)
         self.assertNotIn(str(self.root), serialized)
         self.assertNotIn("model_read", serialized)
-        self.assertEqual(receipt["compliance"], "unassessed")
+        self.assertEqual(receipt["compliance"], "compliant")
         self.assertEqual(receipt["verification"], "unverified")
 
     def test_finish_turn_is_idempotent_and_summary_states_limits(self):
@@ -731,7 +731,7 @@ class EngineTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertIn("loaded=yes", summary)
-        self.assertIn("compliance=unassessed", summary)
+        self.assertIn("compliance=compliant", summary)
         self.assertIn("verification=unverified", summary)
 
     def test_contains_spaceless_script_and_identifier_helpers(self):
@@ -750,6 +750,20 @@ class EngineTests(unittest.TestCase):
         norm_neg = normalize_identifier(neg_q)
         self.assertTrue(_skill_is_negated("python-tdd", neg_q, (), norm_neg))
         self.assertFalse(_skill_is_negated("systematic-debugging", neg_q, (), norm_neg))
+
+    def test_catalog_cache_survives_across_human_turn_gaps(self):
+        fake_now = [100.0]
+        engine = SkillProofEngine(
+            {"profile": self.root},
+            clock=lambda: fake_now[0],
+        )
+
+        t1 = engine.begin_turn(turn_id="t1", session_id="s1", task_id="task1", query="testing demo cache")
+        # Advance clock by 45 seconds (human reading/typing gap)
+        fake_now[0] = 145.0
+        t2 = engine.begin_turn(turn_id="t2", session_id="s1", task_id="task1", query="testing demo cache")
+        receipt = engine.receipt(turn_id="t2")
+        self.assertTrue(receipt["performance"].get("catalog_ttl_reuse", False))
 
 
 if __name__ == "__main__":

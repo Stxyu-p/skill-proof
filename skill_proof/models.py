@@ -146,16 +146,25 @@ def default_models_dir() -> pathlib.Path:
     else:
         xdg_data = os.environ.get("XDG_DATA_HOME")
         base = pathlib.Path(xdg_data) / "hermes" if xdg_data else pathlib.Path.home() / ".local" / "share" / "hermes"
-    global_models = base / "models"
-    if global_models.exists():
-        return global_models
-    home_models = pathlib.Path.home() / ".hermes" / "models"
-    if home_models.exists():
-        return home_models
-    legacy = base / "plugin-data" / "skill-proof" / "models"
-    if legacy.exists():
-        return legacy
-    return global_models
+
+    candidates = [
+        base / "models",
+        pathlib.Path.home() / ".hermes" / "models",
+        base / "plugin-data" / "skill-proof" / "models",
+    ]
+    # Check which candidate contains actual model weights first
+    for c in candidates:
+        if (c / "Xenova_multilingual-e5-small" / "onnx" / "model_quantized.onnx").is_file():
+            return c
+        if (c / "Xenova_multilingual-e5-small" / "tokenizer.json").is_file():
+            return c
+    for c in candidates:
+        try:
+            if c.is_dir() and any(c.iterdir()):
+                return c
+        except OSError:
+            pass
+    return candidates[0]
 
 
 def _sanitize_dirname(repo_id: str) -> str:
@@ -207,9 +216,18 @@ def check_model_status(model_key: str, root_dir: Optional[pathlib.Path | str] = 
             "spec": spec,
         }
 
+    stamp_file = target_dir / ".verified_stamp.json"
+    cached_stamp = None
+    if stamp_file.is_file():
+        try:
+            cached_stamp = json.loads(stamp_file.read_text(encoding="utf-8"))
+        except Exception:
+            cached_stamp = None
+
     missing: list[str] = []
     total_bytes = 0
     valid = True
+    new_stamp: dict[str, list[Any]] = {}
 
     for relpath, meta in spec["files"].items():
         fp = target_dir / relpath
@@ -217,16 +235,46 @@ def check_model_status(model_key: str, root_dir: Optional[pathlib.Path | str] = 
             missing.append(relpath)
             valid = False
             continue
-        actual_size = fp.stat().st_size
+        try:
+            st = fp.stat()
+            actual_size = st.st_size
+            mtime_ns = st.st_mtime_ns
+        except OSError:
+            valid = False
+            missing.append(relpath)
+            continue
+
         total_bytes += actual_size
         if actual_size != meta["size"]:
             valid = False
             missing.append(f"{relpath} (size mismatch: {actual_size} != {meta['size']})")
-        elif not _file_sha256_matches(fp, meta["sha256"]):
+            continue
+
+        # Fast stamp check
+        stamp_entry = cached_stamp.get(relpath) if isinstance(cached_stamp, dict) else None
+        if (
+            isinstance(stamp_entry, list)
+            and len(stamp_entry) >= 3
+            and stamp_entry[0] == actual_size
+            and stamp_entry[1] == mtime_ns
+            and str(stamp_entry[2]).lower() == meta["sha256"].lower()
+        ):
+            new_stamp[relpath] = stamp_entry
+            continue
+
+        if not _file_sha256_matches(fp, meta["sha256"]):
             valid = False
             missing.append(f"{relpath} (sha256 mismatch)")
+        else:
+            new_stamp[relpath] = [actual_size, mtime_ns, meta["sha256"].lower()]
 
     installed = len(missing) == 0 and valid
+    if installed and new_stamp:
+        try:
+            stamp_file.write_text(json.dumps(new_stamp), encoding="utf-8")
+        except Exception:
+            pass
+
     return {
         "status": "installed" if installed else "incomplete",
         "installed": installed,

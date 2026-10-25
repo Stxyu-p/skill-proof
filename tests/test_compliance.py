@@ -164,6 +164,19 @@ Follow the gate order.
         receipt = eng.finish_turn(turn_id="t1")
         self.assertEqual(receipt["compliance"], "verified")
 
+    def test_auto_compliance_without_manual_invariants(self):
+        # Create a skill without manual invariants
+        (self.root / "plain").mkdir()
+        (self.root / "plain" / "SKILL.md").write_text(
+            "---\nname: plain\ndescription: Plain skill without invariants\n---\nBody\n",
+            encoding="utf-8"
+        )
+        eng = self.engine()
+        eng.begin_turn(turn_id="t1", session_id="s1", task_id="k1", query="Use $plain", available_names={"plain"})
+        eng.observe_skill_loaded(session_id="s1", task_id="k1", skill_name="plain")
+        receipt = eng.receipt(turn_id="t1")
+        self.assertEqual(receipt["compliance"], "compliant")
+
 
 class ComplianceFakeContext(FakeContext):
     def __init__(self, settings=None, skills=None):
