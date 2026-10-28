@@ -388,3 +388,62 @@ def link_all(
         "results": results,
     }
 
+
+def is_skill_immutable(skill_path: pathlib.Path | str) -> bool:
+    """Check if a skill is marked immutable/locked in its YAML frontmatter."""
+    p = pathlib.Path(skill_path)
+    md_file = p if p.is_file() else p / "SKILL.md"
+    if not md_file.is_file():
+        # Fallback: check under vault root or environment override
+        vault_root = (
+            pathlib.Path(os.environ["SKILL_PROOF_VAULT"]).expanduser()
+            if os.environ.get("SKILL_PROOF_VAULT")
+            else DEFAULT_VAULT_ROOT
+        )
+        fallback = vault_root / skill_path / "SKILL.md"
+        if fallback.is_file():
+            md_file = fallback
+        else:
+            return False
+
+    try:
+        content = md_file.read_text(encoding="utf-8", errors="replace")
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != "---":
+            return False
+        for line in lines[1:50]:
+            stripped = line.strip().lower()
+            if stripped == "---":
+                break
+            if stripped.startswith("immutable:") and any(v in stripped for v in ("true", "yes", "1")):
+                return True
+            if stripped.startswith("governance:") and "locked" in stripped:
+                return True
+            if stripped.startswith("protected:") and any(v in stripped for v in ("true", "yes", "1")):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def set_skill_readonly(skill_dir: pathlib.Path | str, readonly: bool = True) -> bool:
+    """Apply or remove OS read-only attributes on all files in a skill directory."""
+    import stat
+    p = pathlib.Path(skill_dir)
+    target_dir = p.parent if p.is_file() else p
+    if not target_dir.is_dir():
+        return False
+
+    try:
+        mode = stat.S_IREAD if readonly else (stat.S_IREAD | stat.S_IWRITE)
+        for item in target_dir.rglob("*"):
+            if item.is_file():
+                try:
+                    os.chmod(item, mode)
+                except OSError:
+                    pass
+        return True
+    except Exception:
+        return False
+
+

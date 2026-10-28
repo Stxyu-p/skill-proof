@@ -33,6 +33,7 @@ try:  # Hermes loads directory plugins as packages; direct unit tests do not.
         normalize_identifier,
         read_audit_records,
     )
+    from .skill_proof.vault import is_skill_immutable
 except ImportError:  # pragma: no cover - exercised by direct adapter tests
     from skill_proof.core import (
         SkillProofEngine,
@@ -45,6 +46,8 @@ except ImportError:  # pragma: no cover - exercised by direct adapter tests
         normalize_identifier,
         read_audit_records,
     )
+    from skill_proof.vault import is_skill_immutable
+
 
 
 logger = logging.getLogger(__name__)
@@ -391,10 +394,48 @@ class SkillProofPlugin:
         session_id: str = "",
         task_id: str = "",
         turn_id: str = "",
-        **_: Any,
+        **kwargs: Any,
     ) -> Optional[dict[str, str]]:
         effective_turn_id = str(turn_id or f"{session_id}:{task_id}:current")
         normalized_tool = normalize_identifier(tool_name)
+
+        # Check Immutable SOP Protection first (< 0.1ms fail-open check)
+        args_payload = kwargs.get("args") or kwargs.get("arguments") or kwargs
+        if isinstance(args_payload, dict):
+            if normalized_tool == "skill_manage":
+                ops = args_payload.get("operations")
+                target_names = []
+                if isinstance(ops, list):
+                    for op in ops:
+                        if isinstance(op, dict) and op.get("name"):
+                            target_names.append(str(op["name"]))
+                elif args_payload.get("name"):
+                    target_names.append(str(args_payload["name"]))
+
+                for t_name in target_names:
+                    try:
+                        if is_skill_immutable(t_name):
+                            return {
+                                "action": "block",
+                                "message": f"Skill Proof write-guard: Skill '{t_name}' is immutable (governance: locked). Modification is refused.",
+                            }
+                    except Exception:
+                        pass
+
+            elif normalized_tool in ("write_file", "patch"):
+                target_path = args_payload.get("path")
+                if target_path and isinstance(target_path, str):
+                    try:
+                        p = pathlib.Path(target_path)
+                        if p.name == "SKILL.md" or "skills" in p.parts:
+                            if is_skill_immutable(p):
+                                return {
+                                    "action": "block",
+                                    "message": f"Skill Proof write-guard: Skill at '{target_path}' is immutable (governance: locked). Modification is refused.",
+                                }
+                    except Exception:
+                        pass
+
         if (
             self.engine.mode == "enforce-tools"
             and self._key(session_id, task_id, effective_turn_id) in self._policy_errors
