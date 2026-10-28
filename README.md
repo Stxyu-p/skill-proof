@@ -1,14 +1,19 @@
+<p align="center">
+  <img src="assets/logo.png" width="160" alt="Skill Proof Logo" />
+</p>
+
 # Skill Proof
 
 **Global Skill Vault & Deterministic In-Process Skill Router for AI Coding Agents**
 
-Consolidates all your dispersed `SKILL.md` playbooks into one global vault (`~/.skill-proof/skills`) and routes agent requests in **< 2 ms** with **zero LLM routing calls** and zero open network ports.
+Consolidates all your dispersed `SKILL.md` playbooks into one global vault (`~/.skill-proof/skills`), protects strict SOPs with OS read-only locks, and routes agent requests in **< 2 ms** with **zero LLM routing calls** and zero open network ports.
 
 [![PyPI](https://img.shields.io/pypi/v/skill-proof-router?style=flat-square&color=blue)](https://pypi.org/project/skill-proof-router/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![Storage](https://img.shields.io/badge/vault-Global_NTFS_/_Symlink-07405E?style=flat-square)](#the-global-skill-vault-skill-proofskills)
 [![Latency](https://img.shields.io/badge/latency-%3C_2ms_warm_route-10b981?style=flat-square)](#two-tier-deterministic-routing-engine)
 [![Safety](https://img.shields.io/badge/audit-SHA--256_Hash_Chain-8b5cf6?style=flat-square)](#cryptographic-audit-trail--compliance)
+[![Governance](https://img.shields.io/badge/governance-Immutable_SOP_Lock-10B981?style=flat-square)](#immutable-sop-protection--write-guard)
 [![License: MIT](https://img.shields.io/badge/license-MIT-slate?style=flat-square)](LICENSE)
 
 ---
@@ -87,6 +92,24 @@ skill-proof vault status
 skill-proof vault link-all --to ~/.cursor/skills
 skill-proof vault pin --skill systematic-debugging --to ~/.claude/skills
 ```
+
+---
+
+## Immutable SOP Protection & Write-Guard
+
+Protect your strict SOP playbooks against autonomous modification, upstream self-improvement rewrites, and unintended agent edits:
+
+1. **Frontmatter Governance Flag:** Add `immutable: true`, `governance: locked`, or `protected: true` to your `SKILL.md` frontmatter:
+   ```yaml
+   ---
+   name: production-deployment-sop
+   description: Mandatory pre-flight checklist for production releases
+   immutable: true
+   ---
+   ```
+2. **Dual-Layer Defense:**
+   - **Filesystem Level:** `set_skill_readonly()` enforces OS read-only permissions (`chmod 444` / `stat.S_IREAD`) on all vault-linked files.
+   - **Hermes Tool Interceptor:** `on_pre_tool_call` executes a fast-path (< 0.1 ms) guard that rejects `skill_manage`, `patch`, and `write_file` tool calls before they touch disk.
 
 ---
 
