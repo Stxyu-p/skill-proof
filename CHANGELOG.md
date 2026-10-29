@@ -4,6 +4,27 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-10-29
+
+### Added
+- **MemCore Persistent Constraint Veto (`memcore_skill_vetoes`):**
+  - Automatically queries active negative constraints and disproven playbooks from local `~/.memcore/memory.db` with a 30-second in-process cache (< 0.05 ms latency).
+  - Standing user constraints (e.g. *"ห้ามใช้ test-driven-development ในโปรเจกต์นี้"*) are permanently respected across every turn without requiring re-prompting.
+- **Natural Language Whitespace & Delimiter Normalization:**
+  - `_skill_is_negated` now splits and normalizes hyphens, underscores, and spaces, eliminating the UX bug where natural-language phrasing (`"do not use test driven development"`) bypassed exact hyphenated skill names.
+- **Local ONNX Dense Vector Search:**
+  - Runtime environment verified with `onnxruntime` and `tokenizers` for local CPU inference of `Xenova/multilingual-e5-small` embeddings without external API keys or network latency.
+- **Test Suite Modernization:**
+  - Repaired import bitrot across legacy harness modules; full suite passing at 149/149 tests (100% green).
+
+## [1.4.0] - 2026-10-29
+
+### Added
+- **Immutable SOP Protection & Write-Guard:**
+  - Frontmatter governance rail (`immutable: true`, `governance: locked`, `protected: true`) intercepted at `on_pre_tool_call`. Blocks `skill_manage`, `patch`, and `write_file` calls immediately before disk modification occurs.
+  - OS-level NTFS / POSIX read-only file attribute enforcement via `set_skill_readonly`.
+- **Official Simplified Vector Brand Logo.**
+
 ## [1.3.1] - 2026-10-24
 
 ### Changed

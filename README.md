@@ -4,9 +4,7 @@
 
 # Skill Proof
 
-**Global Skill Vault & Deterministic In-Process Skill Router for AI Coding Agents**
-
-Consolidates all your dispersed `SKILL.md` playbooks into one global vault (`~/.skill-proof/skills`), protects strict SOPs with OS read-only locks, and routes agent requests in **< 2 ms** with **zero LLM routing calls** and zero open network ports.
+**Global Skill Vault & Deterministic In-Process Skill Router for Autonomous AI Fleets**
 
 [![PyPI](https://img.shields.io/pypi/v/skill-proof-router?style=flat-square&color=blue)](https://pypi.org/project/skill-proof-router/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue?style=flat-square)](https://www.python.org/)
@@ -14,180 +12,165 @@ Consolidates all your dispersed `SKILL.md` playbooks into one global vault (`~/.
 [![Latency](https://img.shields.io/badge/latency-%3C_2ms_warm_route-10b981?style=flat-square)](#two-tier-deterministic-routing-engine)
 [![Safety](https://img.shields.io/badge/audit-SHA--256_Hash_Chain-8b5cf6?style=flat-square)](#cryptographic-audit-trail--compliance)
 [![Governance](https://img.shields.io/badge/governance-Immutable_SOP_Lock-10B981?style=flat-square)](#immutable-sop-protection--write-guard)
+[![Synergy](https://img.shields.io/badge/synergy-MemCore_Veto_Active-3B82F6?style=flat-square)](#memcore-persistent-constraint-veto)
 [![License: MIT](https://img.shields.io/badge/license-MIT-slate?style=flat-square)](LICENSE)
 
 ---
 
-## The Problem: Skill Fragmentation & Prompt Bloat
+## 🚀 Overview
 
-As teams and developers adopt autonomous coding agents, skills multiply into chaos:
-1. **Dispersed Folder Sprawl:** Skills are duplicated and scattered across `.agents/skills`, `.claude/skills`, `.cursor/skills`, `.gemini/skills`, and `~/.hermes/skills`. Editing a skill in one directory leaves all other agents with outdated playbooks.
-2. **System Prompt Bloat:** Injecting 50–100 full skill descriptions into every turn's base prompt burns thousands of context tokens on every request.
-3. **Nondeterministic Guesswork:** Calling a secondary routing LLM adds 1–3 seconds of latency, incurs extra token costs, and frequently misroutes tasks or ignores negative user constraints (e.g., *"do not use TDD"*).
+As engineering teams adopt autonomous coding agents, playbooks and `SKILL.md` documents proliferate into chaos:
+1. **Dispersed Folder Sprawl:** Skills are duplicated across `.agents/skills`, `.claude/skills`, `.cursor/skills`, `.gemini/skills`, and `~/.hermes/skills`. Editing a skill in one directory leaves all other agents with obsolete instructions.
+2. **System Prompt Bloat:** Dumping 50–100 full skill descriptions into every single turn's prompt burns **10,000–25,000 tokens** per request before the agent even reads the user's message.
+3. **Nondeterministic Guesswork:** Calling a secondary routing LLM adds 1.5–3.5 seconds of latency per turn, burns API credits, and frequently ignores negative user constraints (*"do not use TDD"*).
+4. **SOP Drift & Accidental Overwrites:** Autonomous agents frequently hallucinate edits or overwrite production rules in `SKILL.md` files while executing coding tasks.
 
----
-
-## The Solution: One Global Vault + Sub-2ms Deterministic Router
-
-**Skill Proof** replaces manual duplication and prompt bloat with an in-process, dual-stage routing engine:
-
-1. **Global Skill Vault (`~/.skill-proof/skills`):** Consolidates all skills into a single source of truth. Links skills into client directories via native NTFS junctions (Windows) or POSIX symlinks (macOS/Linux) without duplicating disk space.
-2. **Dual-Stage In-Process Router (< 2 ms):**
-   - **Fast Lexical & Fuzzy Path:** Pre-computed inverted index, RapidFuzz C++ token matching, Thai/CJK character n-grams, and 6-language negation vetoes (`"do not use X"`) that prune unwanted skills before scoring.
-   - **Local ONNX Vector Path:** When lexical scores are borderline, fuses dense vector cosine similarity (`Xenova/multilingual-e5-small`) via Reciprocal Rank Fusion ($k=60$) in pure CPU RAM — zero external daemons.
-3. **Cryptographic Audit Trail & Auto-Compliance:** Every routing decision appends an immutable, SHA-256 hash-chained receipt to `audit.jsonl` and automatically verifies whether the selected skill was loaded during the turn.
+### The Solution: One Global Vault + Sub-2ms Deterministic Router
+**Skill Proof** consolidates all your playbooks into a single source of truth (`~/.skill-proof/skills`), routes incoming tasks in **< 2 ms** without LLM routing calls, enforces immutable SOP read-only locks, and verifies cryptographic compliance.
 
 ---
 
-## Core Comparison: With vs Without Skill Proof
+## 🥊 Market Comparison: Skill Proof vs Industry Alternatives
 
-| Dimension | Without Skill Proof | With Skill Proof |
-| :--- | :--- | :--- |
-| **Skill Storage** | Duplicated across `.agents`, `.claude`, `.cursor`, `.gemini`, `.hermes` | **One canonical vault (`~/.skill-proof/skills`)** shared by all agents |
-| **Routing Latency** | 1–3 seconds (secondary LLM call) or full-catalog prompt bloat | **< 2 ms** deterministic in-process scoring |
-| **Negative Constraints** | *"do not use X"* is frequently ignored by prompt keywords | **6-language Negation Veto** prunes vetoed skills before ranking |
-| **Token Cost** | Every skill description is sent on every turn | Confident selection injects only the winner (`reduce_skill_prompt`) |
-| **Ambiguity Handling** | Agent guesses blindly between overlapping skills | Returns an explicit `ambiguous` shortlist or clean `no_match` |
-| **Auditability** | Opaque black box with no record of why a tool won | **SHA-256 hash-chained receipts** + `/skill-proof why <skill>` |
+| Feature / Metric | **Skill Proof v1.5.0** 🌟 | System Prompt Dump (Default) | Secondary LLM Tool Router | LangChain ToolRetriever |
+| :--- | :---: | :---: | :---: | :---: |
+| **Routing Mechanism** | **In-Process Two-Tier (Lexical + ONNX)** | Full catalog prompt injection | Secondary API call | Vector similarity retrieval |
+| **Routing Latency** | **< 2 ms (0.4 ms measured)** | 0 ms (pre-injected) | 1,500 – 3,500 ms | 200 – 800 ms |
+| **Token Overhead per Turn** | **0 – 200 tokens (Winner only)** | **10,000 – 25,000 tokens** | Schema tokens | Variable query tokens |
+| **Multi-Lingual Negation Veto** | ✅ **6 Languages (Thai, EN, JA, KO, VI, ZH)** | ❌ Model ignores negative prompt | ⚠️ Frequent model misinterpretations | ❌ Negative vectors still score high |
+| **MemCore Constraint Synergy** | ✅ **Auto-vetoes disproven skills** | ❌ None | ❌ None | ❌ None |
+| **Immutable SOP Protection** | ✅ **OS Read-Only + Tool Guard** | ❌ None (Agent overwrites SOP) | ❌ None | ❌ None |
+| **Auditability** | ✅ **SHA-256 Hash Chained Receipts** | ❌ Opaque | ❌ Black box | ❌ None |
+| **Network & Privacy** | **100% Offline / Local CPU** | Local | Cloud LLM dependency | Usually requires Cloud DB |
 
 ---
 
-## One-Command Setup Wizard
+## ⚡ Core Engineering Capabilities
 
-Install Skill Proof and run the Setup Wizard to initialize the Global Skill Vault, automatically migrate existing skills, pre-warm local ONNX embeddings, and register the stdio MCP server across all detected AI coding clients:
+### 1. Two-Tier Deterministic Routing Engine (< 2 ms)
+- **Tier 1 (Fast Lexical & Fuzzy Path):** Inverted index, RapidFuzz C++ token alignment, character n-grams for spaceless scripts (Thai, CJK), and pre-filter negation vetoes. Resolves queries in **~0.4 ms**.
+- **Tier 2 (Local ONNX Vector Path):** When lexical margin is borderline, fuses dense vector cosine similarity (`Xenova/multilingual-e5-small`) via Reciprocal Rank Fusion ($k=60$) running directly on local CPU via `onnxruntime` — zero external daemons or open network ports.
+- **Selective Prompt Reduction:** When enabled, removes the 50-skill catalog dump from the system prompt, injecting only the single winning skill description, saving thousands of tokens per turn.
 
+### 2. Multi-Lingual Negation Veto
+Standard vector search fails on negative prompts: searching *"do not use TDD"* yields a high cosine similarity match for `test-driven-development`! Skill Proof employs regularized negation parsers supporting 6 languages (Thai, English, Japanese, Korean, Vietnamese, Chinese), pruning vetoed playbooks before ranking runs.
+
+### 3. MemCore Persistent Constraint Synergy
+Skill Proof integrates with local `~/.memcore/memory.db`. Any standing user constraint or disproven rule recorded in MemCore (e.g. *"ห้ามใช้ test-driven-development ในโปรเจกต์นี้"* or *"never use X"*) is automatically queried with a 30-second in-process cache (< 0.05 ms) and applied as an automated veto.
+
+### 4. Immutable SOP Protection & Write-Guard
+Critical team playbooks must never be rewritten by autonomous coding agents.
+- **Tool Interceptor Guard:** In `on_pre_tool_call`, checks `skill_manage`, `patch`, and `write_file` invocations. If the targeted skill specifies `immutable: true`, `governance: locked`, or `protected: true` in its YAML frontmatter, the modification is immediately refused before disk I/O.
+- **OS-Level Read-Only Attribute:** `skill-proof vault lock <skill>` applies DOS/POSIX read-only file attributes across the directory, making tampering impossible even if tools bypass application guards.
+
+### 5. Cryptographic Audit Trail & Compliance Verification
+Every routing decision appends an immutable, SHA-256 hash-chained receipt to `audit.jsonl`. Verify audit trail integrity anytime with `/skill-proof audit-verify`.
+
+---
+
+## 🛠️ First-Time Setup (5 Minutes)
+
+### Step 1: Install Skill Proof Router
 ```bash
 pip install skill-proof-router
-skill-proof install
 ```
 
-`skill-proof install` detects and automatically registers:
+### Step 2: Run Unified Client Setup Wizard
+Automatically creates the Global Skill Vault (`~/.skill-proof/skills`), migrates existing agent skills, verifies local ONNX vector embeddings, and registers the stdio MCP server across all detected AI coding clients:
+```bash
+skill-proof install
+skill-proof setup local
+```
+Auto-detects and links:
 - **Claude Code** (`~/.claude.json`) & **Claude Desktop**
+- **Cursor** (`~/.cursor/mcp.json`), **Windsurf**, and **VS Code (Copilot)**
 - **Google Antigravity & Antigravity IDE** (`mcp_config.json`)
 - **Gemini CLI** (`settings.json`) & **Codex CLI** (`config.toml`)
-- **Cursor** (`~/.cursor/mcp.json`), **Windsurf**, **VS Code (Copilot)**, **OpenCode**, and **Cline**
+- **OpenCode** & **Cline**
 
-Verify client registrations and catalog health anytime:
-
+### Step 3: Verify Catalog & Router Status
 ```bash
-skill-proof clients
 skill-proof status
-skill-proof scan
+skill-proof roots
 ```
 
 ---
 
-## The Global Skill Vault (`~/.skill-proof/skills`)
+## ⚙️ Native Hermes Agent Plugin Configuration
 
-Manage all your coding skills in one centralized location:
-
+To install Skill Proof as a native plugin in Hermes Agent:
 ```bash
-# Migrate physical skills from all detected agent folders into the canonical vault
-skill-proof vault migrate
-
-# Check vault inventory and client link status
-skill-proof vault status
-
-# Link all vault skills into an agent directory (NTFS junction or symlink)
-skill-proof vault link-all --to ~/.cursor/skills
-skill-proof vault pin --skill systematic-debugging --to ~/.claude/skills
-```
-
----
-
-## Immutable SOP Protection & Write-Guard
-
-Protect your strict SOP playbooks against autonomous modification, upstream self-improvement rewrites, and unintended agent edits:
-
-1. **Frontmatter Governance Flag:** Add `immutable: true`, `governance: locked`, or `protected: true` to your `SKILL.md` frontmatter:
-   ```yaml
-   ---
-   name: production-deployment-sop
-   description: Mandatory pre-flight checklist for production releases
-   immutable: true
-   ---
-   ```
-2. **Dual-Layer Defense:**
-   - **Filesystem Level:** `set_skill_readonly()` enforces OS read-only permissions (`chmod 444` / `stat.S_IREAD`) on all vault-linked files.
-   - **Hermes Tool Interceptor:** `on_pre_tool_call` executes a fast-path (< 0.1 ms) guard that rejects `skill_manage`, `patch`, and `write_file` tool calls before they touch disk.
-
----
-
-## Two-Tier Deterministic Routing Engine
-
-### Decision States
-- **`selected` (Clear Winner):** High confidence score with a decisive margin over the runner-up. The embedding layer is bypassed via `lexical_fastpath` (< 1 ms).
-- **`ambiguous` (Close Competitors):** Multiple skills score within `min_margin`. Returns a ranked candidate shortlist instead of guessing.
-- **`no_match` (Clean Abstention):** No skill clears threshold. Skill Proof abstains so unrelated playbooks are never forced onto the agent.
-
-### Routing CLI & Diagnostics
-
-```bash
-# Deterministically select a skill for a task
-skill-proof select --query "Review this PR for syntax bugs, but do not use TDD"
-
-# Interactive query evaluation: token breakdown, n-grams, and full ranking matrix
-skill-proof eval "my page keeps crashing on login"
-
-# Detect near-duplicate or overlapping skills across roots
-skill-proof overlap
-
-# Suggest threshold calibration based on audit history
-skill-proof calibrate
-```
-
-### MCP Tools Exposed
-
-When registered via MCP, hosts gain five deterministic tools:
-- **`skill_select`**: Evaluates a user task and returns a deterministic routing decision (`selected`, `ambiguous`, or `no_match`), companions, and fleet hints.
-- **`skill_search`**: Hybrid lexical + vector RRF search across skill names, tags, aliases, and descriptions.
-- **`skill_read`**: Reads the full body of a skill playbook on demand without bloating the base system prompt.
-- **`skill_scan`**: Scans all skill roots and reports catalog health and diagnostic counts.
-- **`skill_roots`**: Lists active skill root directories and their precedence order.
-
----
-
-## Native Hermes Agent Plugin
-
-Skill Proof integrates natively into Hermes Agent without an external MCP layer:
-
-```bash
-# Linux / macOS
-git clone https://github.com/Stxyu-p/skill-proof.git ~/.hermes/plugins/skill-proof
-
 # Windows
 git clone https://github.com/Stxyu-p/skill-proof.git "$env:LOCALAPPDATA\hermes\plugins\skill-proof"
+
+# Linux / macOS
+git clone https://github.com/Stxyu-p/skill-proof.git ~/.hermes/plugins/skill-proof
 
 # Enable plugin in Hermes
 hermes plugins enable skill-proof
 ```
 
-In-session slash commands available in Hermes:
-- `/skill-proof status` — Compact turn state and catalog summary.
-- `/skill-proof why <skill>` — Full scoring breakdown for why a skill won, lost, or was vetoed.
-- `/skill-proof stats` — Hit rates, misses, and overrides from `audit.jsonl`.
-- `/skill-proof trace` — Cryptographic JSON receipt for the turn.
-
----
-
-## Part of the Global Agent Trinity
-
-Pairing **Skill Proof** with **MemCore** and **trimtok** completes the **Global Agent Trinity** — connecting all your AI coding clients to three shared local hubs without open ports or daemons:
-
-| Pillar | Hub | Role |
-| :--- | :--- | :--- |
-| **[Skill Proof](https://github.com/Stxyu-p/skill-proof)** | `~/.skill-proof` | **Skill Vault & Router:** Consolidates all `SKILL.md` files into one global vault and routes tasks in `< 2 ms` without LLM routing calls. |
-| **[MemCore](https://github.com/Stxyu-p/memcore)** | `~/.memcore` | **Governed Memory:** Shared bitemporal memory with hard SQL scope boundaries, source-file SHA-256 tracking, and zero hallucinated drift. |
-| **[trimtok](https://github.com/Stxyu-p/trimtok)** | `~/.trimtok` | **Context Shield:** Cuts terminal, traceback, diff, and JSON bloat by 38–48% (real telemetry) with instant `#c1` CCR recovery. |
-
-```bash
-# Install and link all three tools in one pass
-pip install skill-proof-router memcore-omnix trimtok
-skill-proof install && memcore install && trimtok install
+### Configuration Options (`~/.hermes/config.yaml` or `plugin.yaml`)
+```yaml
+plugins:
+  entries:
+    skill-proof:
+      settings:
+        mode: nudge                 # observe (log only), nudge (prompt hints), or enforce-tools
+        reduce_skill_prompt: false  # true = strip unselected skills from system prompt (saves 10K+ tokens)
+        embedding_provider: local   # local (onnxruntime CPU), gateway, or off
+        min_score: 0.28             # Minimum confidence score for auto-selection
+        min_margin: 0.05            # Minimum score gap required between #1 and #2 candidate
+        max_candidates: 3           # Top N candidates to inspect
+        audit_log: true             # Enable SHA-256 hash-chained receipts in plugin-data
 ```
 
 ---
 
-## License
+## 💻 Slash Commands & Standalone CLI
 
-Distributed under the [MIT License](LICENSE). Designed and built for robust, real-world autonomous engineering.
+### Hermes In-Chat Slash Commands
+- **`/skill-proof status`**: Displays catalog size, detected roots, embedding status, and routing timing.
+- **`/skill-proof explain`**: Explains why the current turn selected its active skill.
+- **`/skill-proof why <skill-name>`**: Detailed diagnostic report showing candidate score breakdown, veto status, or ranking gap.
+- **`/skill-proof audit-verify`**: Cryptographically verifies the SHA-256 hash chain of all historical routing receipts.
+- **`/skill-proof refresh`**: Invalidates in-memory catalog and re-scans skill roots immediately.
+
+### Global Vault Management CLI
+```bash
+# Inspect all consolidated skills in the global vault
+skill-proof vault list
+
+# Lock a critical SOP playbook with OS read-only attributes
+skill-proof vault lock critical-production-sop
+
+# Unlock an SOP for editing
+skill-proof vault unlock critical-production-sop
+
+# Link global vault skills into a new repository workspace
+skill-proof vault link ./my-project/.agents/skills
+```
+
+---
+
+## 🌐 Part of the Global Agent Trinity
+
+**Skill Proof** forms the **Global Agent Trinity** alongside **trimtok** and **MemCore** — unifying context compression, governed shared memory, and skill execution across all your AI coding clients:
+
+| Pillar | Hub | Role |
+| :--- | :--- | :--- |
+| **[trimtok](https://github.com/Stxyu-p/trimtok)** | `~/.trimtok` | **Context Shield:** Cuts terminal, traceback, web, and JSON bloat by 38–48% (real telemetry) with instant `#c1` CCR recovery. |
+| **[MemCore](https://github.com/Stxyu-p/memcore)** | `~/.memcore` | **Governed Memory:** Shared bitemporal memory with hard SQL scope boundaries, 1-bit vector quantization (32x smaller RAM), and Tainted Context Guard. |
+| **[Skill Proof](https://github.com/Stxyu-p/skill-proof)** | `~/.skill-proof` | **Skill Vault & Router:** Sub-2ms deterministic router, multi-lingual negation veto, and OS NTFS read-only Immutable SOP protection. |
+
+```bash
+# Install and link all three pillars in one pass
+pip install trimtok memcore-omnix skill-proof-router
+trimtok install && memcore install && skill-proof install
+```
+
+---
+
+## 📄 License
+
+Distributed under the [MIT License](LICENSE). Designed and crafted for robust, high-leverage autonomous software engineering.

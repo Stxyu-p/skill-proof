@@ -7,8 +7,7 @@ import pathlib
 import tempfile
 import unittest
 
-import bridge
-import core
+from skill_proof import bridge, core
 
 
 class BridgeTests(unittest.TestCase):

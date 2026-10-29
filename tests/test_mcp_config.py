@@ -4,9 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-import core
-import mcp_server
-import _vector
+from skill_proof import core, mcp_server, _vector
 
 
 class MCPVectorConfigurationTests(unittest.TestCase):

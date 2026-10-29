@@ -3,8 +3,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-import cli
-import models
+from skill_proof import cli, models
 
 
 class SetupConfigTests(unittest.TestCase):

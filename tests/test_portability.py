@@ -10,8 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import core
-import mcp_server
+from skill_proof import core, mcp_server
 
 
 class FakeVectorIndex:
