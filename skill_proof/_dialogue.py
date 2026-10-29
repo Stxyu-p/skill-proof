@@ -6,6 +6,9 @@ import re
 import unicodedata
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
+import pathlib
+import sqlite3
+import time
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 
@@ -200,6 +203,37 @@ def _query_might_contain_negation(query: str) -> bool:
     return any(stem in folded for stem in _NEGATION_SUBSTRINGS)
 
 
+_MEMCORE_VETO_CACHE: tuple[float, set[str]] = (0.0, set())
+_MEMCORE_TRIGGER_RE = re.compile(r'(?i)(?:do not use|never use|ห้ามใช้|ไม่เอา)\s+([a-zA-Z0-9_\-]+)')
+
+def memcore_skill_vetoes() -> set[str]:
+    """Load persistent negative constraints from MemCore (< 0.05ms with cache)."""
+    global _MEMCORE_VETO_CACHE
+    now = time.monotonic()
+    if now - _MEMCORE_VETO_CACHE[0] < 30.0:
+        return _MEMCORE_VETO_CACHE[1]
+
+    vetoes: set[str] = set()
+    try:
+        db = pathlib.Path.home() / '.memcore' / 'memory.db'
+        if db.is_file():
+            conn = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+            cur = conn.execute('''
+                SELECT v.content FROM memory m 
+                JOIN memory_version v ON v.id = m.current_version_id 
+                WHERE m.lifecycle IN ('accepted', 'candidate')
+            ''')
+            for (content,) in cur.fetchall():
+                for match in _MEMCORE_TRIGGER_RE.finditer(content or ''):
+                    vetoes.add(match.group(1).lower().replace('_', '-'))
+            conn.close()
+    except Exception:
+        pass
+
+    _MEMCORE_VETO_CACHE = (now, vetoes)
+    return vetoes
+
+
 def _skill_is_negated(
     name: str,
     query: str,
@@ -212,10 +246,21 @@ def _skill_is_negated(
     filler-vocabulary clause for prefix vetoes, and an SOV post-negation pattern
     for Japanese/Korean syntax ("skillは使わないで").
     """
+    # Cross-Pillar Synergy: check persistent MemCore constraints first
+    clean_norm_name = normalize_identifier(name).replace('_', '-')
+    if clean_norm_name in memcore_skill_vetoes():
+        return True
+
     if not _query_might_contain_negation(query):
         return False
     normalized_query = norm_query if norm_query is not None else normalize_identifier(query)
-    candidates = (name,) + tuple(aliases)
+    raw_candidates = (name,) + tuple(aliases)
+    candidates = list(raw_candidates)
+    for c in raw_candidates:
+        if "-" in c:
+            candidates.append(c.replace("-", " "))
+        if "_" in c:
+            candidates.append(c.replace("_", " "))
     for cand in candidates:
         norm = normalize_identifier(cand)
         if not norm or norm not in normalized_query:
