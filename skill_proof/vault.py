@@ -13,6 +13,8 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
+from pathlib import PurePath, PureWindowsPath
 from typing import Any, Mapping, Optional
 
 DEFAULT_VAULT_ROOT = (
@@ -135,6 +137,27 @@ def create_junction_or_link(source: pathlib.Path, target: pathlib.Path, force: b
         return False
 
 
+def _is_safe_skill_name(skill_name: str) -> bool:
+    """Accept one portable path component, never a path or drive-qualified name."""
+    if (
+        not isinstance(skill_name, str)
+        or not skill_name
+        or skill_name.endswith((" ", "."))
+    ):
+        return False
+    if "/" in skill_name or "\\" in skill_name:
+        return False
+    posix_path = PurePath(skill_name)
+    windows_path = PureWindowsPath(skill_name)
+    return (
+        not posix_path.is_absolute()
+        and len(posix_path.parts) == 1
+        and not windows_path.is_absolute()
+        and not windows_path.drive
+        and len(windows_path.parts) == 1
+    )
+
+
 def migrate_from_roots(
     roots: Mapping[str, os.PathLike[str] | str],
     vault_dir: Optional[pathlib.Path] = None,
@@ -194,12 +217,32 @@ def migrate_from_roots(
                 # Upgrade vault copy if source has richer content
                 if len(src_bytes) > len(dst_bytes):
                     if not dry_run:
+                        temp_root = None
+                        staged = None
+                        backup = None
+                        preserve_backup = False
                         try:
-                            shutil.rmtree(dest)
-                            shutil.copytree(child, dest, symlinks=False)
+                            temp_root = pathlib.Path(tempfile.mkdtemp(prefix=".skill-proof-upgrade-", dir=vdir))
+                            staged = temp_root / "new"
+                            backup = temp_root / "old"
+                            shutil.copytree(child, staged, symlinks=False)
+                            os.replace(dest, backup)
+                            os.replace(staged, dest)
+                            shutil.rmtree(backup, ignore_errors=True)
                             migrated.append({"skill": child.name, "source": str(child), "upgraded": True})
                         except Exception as e:
+                            if staged is not None and staged.exists():
+                                shutil.rmtree(staged, ignore_errors=True)
+                            if backup is not None and backup.exists() and not dest.exists():
+                                try:
+                                    os.replace(backup, dest)
+                                except OSError as restore_error:
+                                    preserve_backup = True
+                                    e = RuntimeError(f"{e}; rollback retained at {backup}: {restore_error}")
                             skipped.append({"skill": child.name, "source": str(child), "reason": str(e)})
+                        finally:
+                            if temp_root is not None and temp_root.exists() and not preserve_backup:
+                                shutil.rmtree(temp_root, ignore_errors=True)
                     else:
                         migrated.append({"skill": child.name, "source": str(child), "upgraded": True})
                 else:
@@ -241,6 +284,8 @@ def pin(
     force: bool = False,
 ) -> dict[str, Any]:
     """Pin a skill from the global vault to a target agent directory via junction/symlink."""
+    if not _is_safe_skill_name(skill_name):
+        return {"success": False, "error": "skill name must be a single path component"}
     vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
     source = vdir / skill_name
     if not source.is_dir() or not (source / "SKILL.md").is_file():
@@ -268,6 +313,8 @@ def pin(
 
 def unpin(skill_name: str, target_root: pathlib.Path, dry_run: bool = False) -> dict[str, Any]:
     """Unpin (remove link) a skill from a target agent directory."""
+    if not _is_safe_skill_name(skill_name):
+        return {"success": False, "error": "skill name must be a single path component"}
     dest = target_root.resolve() / skill_name
     if not (dest.exists() or _is_reparse(dest)):
         return {"success": False, "error": f"skill link '{dest}' does not exist"}
