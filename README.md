@@ -8,13 +8,13 @@
 
 [![PyPI](https://img.shields.io/pypi/v/skill-proof-router?style=flat-square&color=blue)](https://pypi.org/project/skill-proof-router/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue?style=flat-square)](https://www.python.org/)
-[![Hub](https://img.shields.io/badge/hub-Canonical_NTFS_Junctions-07405E?style=flat-square)](#1-physical-hub--auto-healing-reconciler)
-[![Token Shield](https://img.shields.io/badge/tokens--99%25_prompt_overhead-10b981?style=flat-square)](#2-just-in-time-jit-prompt-token-shield)
-[![Latency](https://img.shields.io/badge/latency-%3C_2ms_warm_route-10b981?style=flat-square)](#two-tier-deterministic-routing-engine)
-[![Protocol](https://img.shields.io/badge/mcp-Universal_Cross--CLI_stdio-8b5cf6?style=flat-square)](#3-universal-mcp-stdio-server)
+[![Hub](https://img.shields.io/badge/hub-Canonical_NTFS_Junctions-07405E?style=flat-square)](#system-architecture--core-capabilities)
+[![Token Shield](https://img.shields.io/badge/tokens--99%25_prompt_overhead-10b981?style=flat-square)](#system-architecture--core-capabilities)
+[![Latency](https://img.shields.io/badge/latency-%3C_2ms_warm_route-10b981?style=flat-square)](#system-architecture--core-capabilities)
+[![Protocol](https://img.shields.io/badge/mcp-Universal_Cross--CLI_stdio-8b5cf6?style=flat-square)](#system-architecture--core-capabilities)
 [![Safety](https://img.shields.io/badge/audit-SHA--256_Hash_Chain-8b5cf6?style=flat-square)](#cryptographic-audit-trail--compliance)
-[![Governance](https://img.shields.io/badge/governance-Immutable_SOP_%26_Tool_Gating-10B981?style=flat-square)](#6-immutable-sop-protection--write-guard)
-[![Synergy](https://img.shields.io/badge/synergy-MemCore_Veto_Active-3B82F6?style=flat-square)](#4-memcore-persistent-constraint-veto)
+[![Governance](https://img.shields.io/badge/governance-Immutable_SOP_%26_Tool_Gating-10B981?style=flat-square)](#system-architecture--core-capabilities)
+[![Synergy](https://img.shields.io/badge/synergy-MemCore_Veto_Active-3B82F6?style=flat-square)](#system-architecture--core-capabilities)
 [![License: MIT](https://img.shields.io/badge/license-MIT-slate?style=flat-square)](LICENSE)
 
 ---
@@ -81,73 +81,23 @@ Skill Proof consolidates playbooks into a single source of truth, eliminates pro
 
 ---
 
-## ⚡ 10 Core Engineering Capabilities
+## ⚡ System Architecture & Core Capabilities
 
-### 1. Physical Hub & Auto-Healing Reconciler
-All playbooks are stored in a single canonical vault: `~/.agents/skills` (Global) and `./.agents/skills` (Project).
-Every agent root (`~/.gemini/antigravity-cli/skills`, `AppData/Local/hermes/skills`, `.hermes/skills`) is wired directly via **NTFS Directory Junctions** (`_winapi.CreateJunction` on Windows, symlinks on POSIX).
-- **Zero byte duplication** across the entire machine.
-- Editing a skill file updates every agent immediately.
-- Run `skill-proof vault reconcile` anytime to verify, repair, and link all client ecosystems idempotently.
+Skill Proof delivers an integrated suite of four production subsystems engineered for zero-overhead, multi-agent fleet operations:
 
-### 2. Just-In-Time (JIT) Prompt Token Shield
-Hermes Agent traditionally dumps all available skills into `<available_skills>` on every turn, burning **~3,451 tokens (13,114 characters)** per request.
-Enabling `reduce_skill_prompt: true`:
-- Intercepts outgoing LLM requests via middleware.
-- Strips the catalog down to **only the winning skill and declared companions** (~80 characters).
-- Achieves **99.0% prompt overhead reduction**, saving >3,000 tokens on every single turn.
-- Fails open safely to a compact index if user intent is ambiguous or unselected.
-
-### 3. Universal MCP stdio Server
-Exposes Skill Proof tools to any MCP-capable host (Claude Code, Antigravity CLI/IDE, Cursor, OpenCode, Codex):
-- `skill_select`: Fast deterministic routing returning winning skill and match evidence.
-- `skill_search`: Keyword and semantic hybrid search across the canonical vault.
-- `skill_read`: Inlines full `SKILL.md` content and linked reference files in one turn.
-- Register across all detected clients in one command: `skill-proof install`.
-
-### 4. MemCore Persistent Constraint Veto
-Vector search natively fails on negative queries: searching *"do not use TDD"* produces a high cosine similarity match for `test-driven-development`.
-Skill Proof queries `~/.memcore/memory.db` (< 0.05ms cached):
-- Automatically extracts standing negative rules (e.g. *"ห้ามใช้ test-driven-development"*, *"never use synthetic tests"*).
-- Vetoes conflicting playbooks before ranking runs, ensuring persistent user preferences are respected across every session.
-
-### 5. Single-Source Rule Compiler (`skill-proof compile`)
-Maintains unified instruction files across all agents:
-- Reads canonical playbooks and Trinity protocols.
-- Injects/updates bounded sections (`<!-- trinity:habit:start -->` ... `<!-- trinity:habit:end -->`) inside:
-  - `AGENTS.md` (Hermes Agent & Antigravity)
-  - `CLAUDE.md` (Claude Code)
-  - `GEMINI.md` (Antigravity CLI)
-  - `.cursorrules` (Cursor)
-- Eliminates manual documentation duplication.
-
-### 6. Immutable SOP Protection & Write-Guard
-Critical operational playbooks must never be rewritten or poisoned by autonomous coding agents.
-- **Tool Interceptor:** In `on_pre_tool_call`, inspects `skill_manage`, `patch`, and `write_file` calls. If the targeted skill specifies `immutable: true` or `governance: locked`, execution is immediately refused before disk I/O.
-- **OS-Level Read-Only Attribute:** `skill-proof vault lock <skill>` applies POSIX / Windows `S_IREAD` read-only flags across all files in the skill folder.
-
-### 7. Cross-Agent Session Handoff (`skill-proof handoff`)
-Seamlessly switch between AI agents (e.g., from high-level planning in one agent to implementation in another CLI):
-- `skill-proof handoff --target antigravity`:
-  - Collects active task context, open work items, and pending issues.
-  - Captures current `git status -s` and diff statistics.
-  - Injects standing constraints from MemCore.
-  - Outputs an executable, bounded Markdown payload (< 2,000 tokens) ready for immediate agent consumption.
-
-### 8. Real-Usage Telemetry & Dead Skill Pruning
-Ground truth lies in real production telemetry, not synthetic benchmarks.
-- `skill-proof audit stats`: Analyzes `audit.jsonl` to calculate exact hit rates, top invoked playbooks, and identifies unused skills.
-- `skill-proof audit prune [--dry-run]`: Safely archives dead playbooks (0 invocations over 30 days) to `~/.agents/archive/`, keeping active catalogs clean and fast.
-
-### 9. Dynamic Tool Gating per Skill (Blast Radius Restriction)
-Skills declaring `mode: readonly` or `forbidden_tools: [patch, write_file, terminal]` restrict the agent's tool execution environment:
-- Review and research playbooks (`code-review`, `diagnosing-bugs`) are barred from invoking file-write or destructive shell tools.
-- Violations are intercepted and logged as `compliance: failed` audit receipts.
-
-### 10. Local Patch Layer for Upstream Skills
-When skills are updated via `npx skills update` from upstream repositories (e.g. `mattpocock/skills`), local customizations and language-specific prompt enhancements are preserved:
-- Stores unified diff patches under `~/.agents/patches/<skill>.patch`.
-- `skill-proof vault patch --patch-op rebase` automatically reapplies local rules cleanly on top of updated upstream playbooks.
+| Subsystem | Capability | Technical Implementation | Operational Impact & CLI Reference |
+| :--- | :--- | :--- | :--- |
+| **Physical Storage & Hub** | **Canonical Single-Source Vault** | Centralizes playbooks at `~/.agents/skills`; fans out to all agent environments via OS-level NTFS Directory Junctions (`_winapi.CreateJunction` on Windows, symlinks on POSIX). | **0 Duplicate Bytes.** Instant real-time synchronization across all agent directories.<br>`skill-proof vault reconcile` |
+| | **Local Upstream Patch Layer** | Preserves local customizations and language-specific prompt rules across upstream `npx skills update` runs using unified diffs (`~/.agents/patches/`). | Rebase local customizations cleanly over external updates without loss.<br>`skill-proof vault patch --patch-op rebase` |
+| **Token & Prompt Engine** | **JIT Prompt Token Shield** | Middleware intercepts prompt construction; strips full 100+ skill catalog down to only the active winning playbook and declared companions. | **99.0% Token Overhead Cut** (>3,000 tokens saved per turn).<br>`reduce_skill_prompt: true` in config |
+| | **Two-Tier Deterministic Router** | Tier 1: In-process RapidFuzz C++ token alignment (< 0.5 ms). Tier 2: Local CPU ONNX vector fusion (`Xenova/multilingual-e5-small`) via Reciprocal Rank Fusion. | **Sub-2ms Routing Latency.** Completely offline; zero external API calls or network latency.<br>`skill-proof select "<query>"` |
+| **Cross-Agent Integration** | **Universal stdio MCP Server** | Implements standard Model Context Protocol over stdio JSON-RPC, exposing `skill_select`, `skill_search`, and `skill_read` to Claude Code, Antigravity, Cursor, and OpenCode. | Standardized tool access across all language runtimes (Go, TypeScript, Python).<br>`skill-proof install` |
+| | **Cross-Agent Session Handoff** | Serializes active tasks, open work items, git diff statistics, and memory constraints into a structured launch payload. | Zero-friction context transfer when switching between agent models.<br>`skill-proof handoff --target <agent>` |
+| | **Single-Source Rule Compiler** | Injects bounded Global Agent Trinity guidelines into `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `.cursorrules` in-place. | Eliminates manual documentation divergence across heterogeneous agent tools.<br>`skill-proof compile` |
+| **Governance & Safety** | **Immutable SOP Lock & Write-Guard** | Intercepts `write_file`, `patch`, and `skill_manage` tool calls for `immutable: true` skills; enforces OS `S_IREAD` read-only file attributes. | Absolute protection against autonomous agent hallucinated playbook edits.<br>`skill-proof vault lock <skill>` |
+| | **Dynamic Blast-Radius Tool Gating** | Enforces `mode: readonly` and `forbidden_tools` per skill, barring audit/review playbooks from executing destructive write or terminal commands. | Restricts tool execution environment based on active playbook intent.<br>`mode: readonly` in frontmatter |
+| | **MemCore Constraint Veto** | Queries `~/.memcore/memory.db` (< 0.05 ms cached) for negative constraints (`ห้ามใช้`, `do not use`) across 6 languages, pruning candidates pre-ranking. | Prevents negated queries from scoring high semantic similarity.<br>Automated in routing pipeline |
+| | **Production Telemetry & Pruning** | Mines `audit.jsonl` execution receipts to track actual hit frequencies and safely archive dead skills (0 hits over 30 days) to `~/.agents/archive/`. | Evidence-based catalog maintenance; eliminates dead weight from catalogs.<br>`skill-proof audit stats` / `prune` |
 
 ---
 
