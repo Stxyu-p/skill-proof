@@ -69,7 +69,7 @@ Skill Proof consolidates playbooks into a single source of truth, eliminates pro
 | **Storage Architecture** | **1 Canonical Hub + OS Junctions** | 4–6 duplicate copies (150+ folders) | Per-project copies | In-memory string dump |
 | **System Prompt Bloat** | **~80 chars (JIT Winner Only)** | Full catalog (13KB+ / ~3,450 tokens) | Schema tokens | 10,000 – 25,000 tokens |
 | **Token Reduction** | **99.0% savings per turn** | 0% | Variable | 0% |
-| **Routing Mechanism** | **In-Process RapidFuzz + ONNX Vector** | Manual user invocation | Secondary API call (1.5–3.5s) | LLM context reading |
+| **Routing Mechanism** | **In-Process RapidFuzz C++ Token Alignment** | Manual user invocation | Secondary API call (1.5–3.5s) | LLM context reading |
 | **Routing Latency** | **< 2 ms warm (0.4–4.6 ms measured)** | Manual | 1,500 – 3,500 ms | 0 ms (pre-injected bloat) |
 | **Cross-Agent Support** | **Universal stdio MCP Server** | Proprietary formats | Host-specific | Host-specific |
 | **Multi-Lingual Veto** | ✅ **6 Languages (Thai, EN, JA, KO, VI, ZH)** | ❌ Negative prompt ignored | ⚠️ Frequent LLM misinterpretation | ❌ Negative vectors score high |
@@ -90,7 +90,7 @@ Skill Proof delivers an integrated suite of four production subsystems engineere
 | **Physical Storage & Hub** | **Canonical Single-Source Vault** | Centralizes playbooks at `~/.agents/skills`; fans out to all agent environments via OS-level NTFS Directory Junctions (`_winapi.CreateJunction` on Windows, symlinks on POSIX). | **0 Duplicate Bytes.** Instant real-time synchronization across all agent directories.<br>`skill-proof vault reconcile` |
 | | **Local Upstream Patch Layer** | Preserves local customizations and language-specific prompt rules across upstream `npx skills update` runs using unified diffs (`~/.agents/patches/`). | Rebase local customizations cleanly over external updates without loss.<br>`skill-proof vault patch --patch-op rebase` |
 | **Token & Prompt Engine** | **JIT Prompt Token Shield** | Middleware intercepts prompt construction; strips full 100+ skill catalog down to only the active winning playbook and declared companions. | **99.0% Token Overhead Cut** (>3,000 tokens saved per turn).<br>`reduce_skill_prompt: true` in config |
-| | **Two-Tier Deterministic Router** | Tier 1: In-process RapidFuzz C++ token alignment (< 0.5 ms). Tier 2: Local CPU ONNX vector fusion (`Xenova/multilingual-e5-small`) via Reciprocal Rank Fusion. | **Sub-2ms Routing Latency.** Completely offline; zero external API calls or network latency.<br>`skill-proof select "<query>"` |
+| | **Deterministic Router** | In-process RapidFuzz C++ token alignment, character n-grams, and multi-lingual negation veto. | **Sub-2ms Routing Latency.** Completely offline; zero external API calls or network latency.<br>`skill-proof select "<query>"` |
 | **Cross-Agent Integration** | **Universal stdio MCP Server** | Implements standard Model Context Protocol over stdio JSON-RPC, exposing `skill_select`, `skill_search`, and `skill_read` to Claude Code, Antigravity, Cursor, and OpenCode. | Standardized tool access across all language runtimes (Go, TypeScript, Python).<br>`skill-proof install` |
 | | **Cross-Agent Session Handoff** | Serializes active tasks, open work items, git diff statistics, and memory constraints into a structured launch payload. | Zero-friction context transfer when switching between agent models.<br>`skill-proof handoff --target <agent>` |
 | | **Single-Source Rule Compiler** | Injects bounded Global Agent Trinity guidelines into `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `.cursorrules` in-place. | Eliminates manual documentation divergence across heterogeneous agent tools.<br>`skill-proof compile` |
@@ -107,9 +107,6 @@ Skill Proof delivers an integrated suite of four production subsystems engineere
 ```bash
 # Install via pip
 pip install skill-proof-router
-
-# Install optional local CPU vector dependencies (onnxruntime + tokenizers)
-pip install onnxruntime tokenizers numpy
 ```
 
 ### 2. Run Auto-Healing Reconciler
@@ -136,7 +133,6 @@ git clone https://github.com/Stxyu-p/skill-proof.git ~/.hermes/plugins/skill-pro
 # Enable and configure in Hermes
 hermes plugins enable skill-proof
 hermes config set plugins.entries.skill-proof.settings.reduce_skill_prompt true
-hermes config set plugins.entries.skill-proof.settings.embedding_provider local
 ```
 
 ---
@@ -176,7 +172,7 @@ skill-proof select "ช่วยรีวิว PR โค้ดหน่อย�
 ```
 
 ### Hermes In-Chat Slash Commands
-- **`/skill-proof status`**: Displays catalog size, detected roots, embedding status, and routing latency.
+- **`/skill-proof status`**: Displays catalog size, detected roots, routing status, and latency.
 - **`/skill-proof explain`**: Explains why the current turn selected its active skill with ranked candidate scores.
 - **`/skill-proof why <skill-name>`**: Detailed diagnostic report showing candidate score breakdown, veto status, or ranking gap.
 - **`/skill-proof stats`**: Displays real telemetry hit counts, miss rate, and top invoked skills.
@@ -192,7 +188,7 @@ skill-proof select "ช่วยรีวิว PR โค้ดหน่อย�
 | Pillar | Hub | Role |
 | :--- | :--- | :--- |
 | **[trimtok](https://github.com/Stxyu-p/trimtok)** | `~/.trimtok` | **Context Shield:** Cuts terminal, traceback, web, and JSON bloat by 38–48% (real telemetry) with instant `#c1` CCR recovery. |
-| **[MemCore](https://github.com/Stxyu-p/memcore)** | `~/.memcore` | **Governed Memory:** Shared bitemporal memory with hard SQL scope boundaries, 1-bit vector quantization (32x smaller RAM), and Tainted Context Guard. |
+| **[MemCore](https://github.com/Stxyu-p/memcore)** | `~/.memcore` | **Governed Memory:** Shared bitemporal memory with hard SQL scope boundaries, deterministic lexical recall, and Tainted Context Guard. |
 | **[Skill Proof](https://github.com/Stxyu-p/skill-proof)** | `~/.agents/skills` | **Universal Skill Hub & Gatekeeper:** Zero-duplication NTFS junctions, JIT prompt token shield (-99% bloat), and OS-level Immutable SOP protection. |
 
 ```bash
