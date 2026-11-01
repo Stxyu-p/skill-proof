@@ -4,6 +4,15 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-10-31
+
+### Security Hardening
+- **Path Traversal Defense (`_safe_skill_name`):** All vault operations (`pin`, `unpin`, `export_patch`, `apply_patch`, `rebase_patches`, `prune`) now validate skill names against a strict `[a-zA-Z0-9_.-]` allow-list, rejecting `../`, absolute paths, backslashes, shell metacharacters, and whitespace-injected traversal attempts before any filesystem I/O.
+- **Archive Overlap Guard:** `prune_dead_skills` refuses archive directories that overlap or contain the canonical vault root, preventing recursive moves and accidental vault destruction.
+- **Handoff Output Confinement:** `skill-proof handoff` rejects custom output paths that resolve outside the workspace `.scratch` directory, blocking symlink/translocation write attacks.
+- **Patch Flow Validation:** `apply_patch` requires a valid `SKILL.md` in the target skill directory before applying; `rebase_patches` silently skips malformed filenames with `failed` receipts instead of crashing.
+- **New Test Suite (`tests/test_vault_hardening.py`):** 6 regression tests covering traversal rejection, valid-name acceptance, and unsafe-operation refusal. Full suite green at **159/159 tests**.
+
 ## [2.0.0] - 2026-10-31
 
 ### Added

@@ -134,6 +134,15 @@ def export_handoff(
     prompt = format_handoff_prompt(state, target=target)
     
     out_file = output_path or (ws / ".scratch" / f"handoff-{target}.md")
+    # Symbolic link attack: reject output paths escaping the workspace scratch area
+    try:
+        root_resolved = (ws / ".scratch").resolve()
+        out_resolved = out_file.resolve()
+    except OSError:
+        root_resolved = (ws / ".scratch").absolute()
+        out_resolved = out_file.absolute()
+    if not out_resolved.is_relative_to(root_resolved):
+        raise ValueError(f"refusing unsafe handoff output path outside scratch dir: {out_file}")
     out_file.parent.mkdir(parents=True, exist_ok=True)
     out_file.write_text(prompt, encoding="utf-8")
     

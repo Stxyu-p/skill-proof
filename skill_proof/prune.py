@@ -6,11 +6,10 @@ identify dead skills (0 invocations), and safely move unused skills to an archiv
 from __future__ import annotations
 
 from collections import Counter
-import json
 import os
 import pathlib
 import shutil
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
 
 from . import _compliance
 from . import vault
@@ -69,6 +68,19 @@ def prune_dead_skills(
     v_dir = (pathlib.Path(vault_dir).expanduser() if vault_dir else vault.DEFAULT_VAULT_ROOT).resolve()
     a_dir = (pathlib.Path(archive_dir).expanduser() if archive_dir else v_dir.parent / "archive").resolve()
 
+    # Block archive path escapes: archive must sit OUTSIDE the vault but never inside a vault skill.
+    try:
+        if v_dir.is_relative_to(a_dir) or a_dir.is_relative_to(v_dir):
+            raise ValueError(f"refusing unsafe archive dir overlapping vault: {a_dir}")
+    except AttributeError:
+        # Python 3.9 fallback: compare commonpath
+        import os as _os
+        try:
+            if _os.path.commonpath([str(v_dir), str(a_dir)]) in (str(v_dir), str(a_dir)):
+                raise ValueError(f"refusing unsafe archive dir overlapping vault: {a_dir}")
+        except (OSError, ValueError):
+            pass
+
     target_skills: list[str] = (
         audit_stats(vault_dir=v_dir)["dead_skills"]
         if skills_to_prune is None
@@ -79,16 +91,20 @@ def prune_dead_skills(
     skipped = []
 
     for name in target_skills:
-        src = v_dir / name
+        safe = vault._safe_skill_name(name)
+        if safe is None:
+            skipped.append({"skill": name, "reason": "invalid_skill_name"})
+            continue
+        src = v_dir / safe
         if not src.exists():
-            skipped.append({"skill": name, "reason": "not_found"})
+            skipped.append({"skill": safe, "reason": "not_found"})
             continue
         # Don't prune immutable SOPs
         if vault.is_skill_immutable(src):
-            skipped.append({"skill": name, "reason": "immutable_sop_locked"})
+            skipped.append({"skill": safe, "reason": "immutable_sop_locked"})
             continue
 
-        dest = a_dir / name
+        dest = a_dir / safe
         if not dry_run:
             a_dir.mkdir(parents=True, exist_ok=True)
             try:
@@ -98,11 +114,11 @@ def prune_dead_skills(
                     if dest.exists():
                         shutil.rmtree(dest)
                     shutil.move(str(src), str(dest))
-                pruned.append({"skill": name, "destination": str(dest)})
+                pruned.append({"skill": safe, "destination": str(dest)})
             except Exception as exc:
-                skipped.append({"skill": name, "reason": str(exc)})
+                skipped.append({"skill": safe, "reason": str(exc)})
         else:
-            pruned.append({"skill": name, "destination": str(dest), "dry_run": True})
+            pruned.append({"skill": safe, "destination": str(dest), "dry_run": True})
 
     return {
         "vault_dir": str(v_dir),

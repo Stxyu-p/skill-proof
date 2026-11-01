@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -245,15 +246,18 @@ def pin(
     force: bool = False,
 ) -> dict[str, Any]:
     """Pin a skill from the global vault to a target agent directory via junction/symlink."""
+    safe = _safe_skill_name(skill_name)
+    if safe is None:
+        return {"success": False, "error": f"invalid skill name: {skill_name!r}"}
     vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
-    source = vdir / skill_name
+    source = vdir / safe
     if not source.is_dir() or not (source / "SKILL.md").is_file():
         return {
             "success": False,
-            "error": f"skill '{skill_name}' not found in vault {vdir}",
+            "error": f"skill '{safe}' not found in vault {vdir}",
         }
 
-    dest = target_root.resolve() / skill_name
+    dest = target_root.resolve() / safe
     if dest.exists() and dest.is_dir() and not _is_reparse(dest) and not force:
         return {
             "success": False,
@@ -272,7 +276,10 @@ def pin(
 
 def unpin(skill_name: str, target_root: pathlib.Path, dry_run: bool = False) -> dict[str, Any]:
     """Unpin (remove link) a skill from a target agent directory."""
-    dest = target_root.resolve() / skill_name
+    safe = _safe_skill_name(skill_name)
+    if safe is None:
+        return {"success": False, "error": f"invalid skill name: {skill_name!r}"}
+    dest = target_root.resolve() / safe
     if not (dest.exists() or _is_reparse(dest)):
         return {"success": False, "error": f"skill link '{dest}' does not exist"}
 
@@ -495,6 +502,21 @@ def reconcile_all_clients(
     }
 
 
+_SKILL_NAME_SAFE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
+
+
+def _safe_skill_name(skill_name: str) -> Optional[str]:
+    """Return sanitized skill name, or None if it escapes the allowed shape."""
+    if not isinstance(skill_name, str) or not skill_name:
+        return None
+    stripped = skill_name.strip()
+    if stripped in (".", "..") or ".." in stripped.split("/") or "\\" in stripped or "/" in stripped:
+        return None
+    if not _SKILL_NAME_SAFE_RE.fullmatch(stripped):
+        return None
+    return stripped
+
+
 def get_patches_dir(vault_dir: Optional[pathlib.Path] = None) -> pathlib.Path:
     vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
     pdir = vdir.parent / "patches"
@@ -503,18 +525,24 @@ def get_patches_dir(vault_dir: Optional[pathlib.Path] = None) -> pathlib.Path:
 
 
 def export_patch(skill_name: str, patch_content: str, vault_dir: Optional[pathlib.Path] = None) -> pathlib.Path:
+    safe = _safe_skill_name(skill_name)
+    if safe is None:
+        raise ValueError(f"invalid skill name for patch export: {skill_name!r}")
     pdir = get_patches_dir(vault_dir)
-    pfile = pdir / f"{skill_name}.patch"
+    pfile = pdir / f"{safe}.patch"
     pfile.write_text(patch_content, encoding="utf-8")
     return pfile
 
 
 def apply_patch(skill_name: str, patch_file: Optional[pathlib.Path] = None, vault_dir: Optional[pathlib.Path] = None) -> bool:
-    vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
-    target_skill = vdir / skill_name
-    if not target_skill.is_dir():
+    safe = _safe_skill_name(skill_name)
+    if safe is None:
         return False
-    pfile = patch_file or (get_patches_dir(vault_dir) / f"{skill_name}.patch")
+    vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    target_skill = vdir / safe
+    if not target_skill.is_dir() or not (target_skill / "SKILL.md").is_file():
+        return False
+    pfile = patch_file or (get_patches_dir(vault_dir) / f"{safe}.patch")
     if not pfile.is_file():
         return False
 
@@ -540,11 +568,16 @@ def rebase_patches(vault_dir: Optional[pathlib.Path] = None) -> dict[str, Any]:
     applied = []
     failed = []
     for pfile in sorted(pdir.glob("*.patch")):
-        skill_name = pfile.stem
-        if apply_patch(skill_name, patch_file=pfile, vault_dir=vault_dir):
-            applied.append(skill_name)
+        if not pfile.name.endswith(".patch"):
+            continue
+        safe = _safe_skill_name(pfile.stem)
+        if safe is None:
+            failed.append(pfile.stem)
+            continue
+        if apply_patch(safe, patch_file=pfile, vault_dir=vault_dir):
+            applied.append(safe)
         else:
-            failed.append(skill_name)
+            failed.append(safe)
     return {"applied": applied, "failed": failed}
 
 
