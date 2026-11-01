@@ -19,19 +19,19 @@
 
 ---
 
-## 🚀 Overview: The 1+3 Paradigm Shift
+## 🚀 Overview: Unified Playbook Management for AI Fleets
 
 As engineering teams adopt multi-agent autonomous coding fleets (Hermes Agent, Google Antigravity, Claude Code, Cursor, OpenCode, Codex), team playbooks (`SKILL.md`) rapidly degrade into chaos:
 1. **Physical Folder Sprawl:** The same 38–100 skills are duplicated across `.agents/skills`, `.claude/skills`, `.cursor/skills`, `.gemini/skills`, and `~/.hermes/skills`. Editing a playbook in one directory leaves all other agents executing obsolete, conflicting instructions.
-2. **System Prompt Bloat:** Dumping 100+ skill descriptions into every turn burns **3,000–5,000 tokens per request** before the model reads the prompt.
+2. **System Prompt Bloat:** Dumping 100+ skill descriptions into every turn burns **3,000–5,000 tokens per request** before the model reads the user prompt.
 3. **Cross-Process Isolation:** AI CLI tools run in isolated language sandboxes (Go, TypeScript, C++, Python) and will not route requests through an external runtime middleman.
 4. **SOP Drift & Accidental Overwrites:** Autonomous agents frequently hallucinate edits or overwrite production rules in `SKILL.md` files while executing coding tasks.
 
 ### The Solution: One Physical Hub + Universal MCP + Lean Governance Gatekeeper
-Skill Proof v2.0 abandons intrusive runtime middleman wrappers and adopts the **1+3 Universal Architecture**:
+Skill Proof consolidates playbooks into a single source of truth, eliminates prompt token bloat, and enforces strict governance rails across all AI coding hosts:
 
 ```text
-                           [ skills.sh / GitHub / Matt Pocock ]
+                           [ skills.sh / GitHub / Community ]
                                            │
                                     (Install / Update)
                                            ▼
@@ -91,10 +91,10 @@ Every agent root (`~/.gemini/antigravity-cli/skills`, `AppData/Local/hermes/skil
 - Run `skill-proof vault reconcile` anytime to verify, repair, and link all client ecosystems idempotently.
 
 ### 2. Just-In-Time (JIT) Prompt Token Shield
-Hermes Agent traditionally dumps all 118 available skills into `<available_skills>` on every turn, burning **~3,451 tokens (13,114 characters)** per request.
+Hermes Agent traditionally dumps all available skills into `<available_skills>` on every turn, burning **~3,451 tokens (13,114 characters)** per request.
 Enabling `reduce_skill_prompt: true`:
 - Intercepts outgoing LLM requests via middleware.
-- Strips the 118-skill catalog down to **only the winning skill and declared companions** (~80 characters).
+- Strips the catalog down to **only the winning skill and declared companions** (~80 characters).
 - Achieves **99.0% prompt overhead reduction**, saving >3,000 tokens on every single turn.
 - Fails open safely to a compact index if user intent is ambiguous or unselected.
 
@@ -127,9 +127,9 @@ Critical operational playbooks must never be rewritten or poisoned by autonomous
 - **OS-Level Read-Only Attribute:** `skill-proof vault lock <skill>` applies POSIX / Windows `S_IREAD` read-only flags across all files in the skill folder.
 
 ### 7. Cross-Agent Session Handoff (`skill-proof handoff`)
-Seamlessly switch between AI agents (e.g., from Hermes planning to Antigravity / Argon implementation):
+Seamlessly switch between AI agents (e.g., from high-level planning in one agent to implementation in another CLI):
 - `skill-proof handoff --target antigravity`:
-  - Collects active objectives and pending tickets from `.scratch/*/issues/`.
+  - Collects active task context, open work items, and pending issues.
   - Captures current `git status -s` and diff statistics.
   - Injects standing constraints from MemCore.
   - Outputs an executable, bounded Markdown payload (< 2,000 tokens) ready for immediate agent consumption.
@@ -145,7 +145,7 @@ Skills declaring `mode: readonly` or `forbidden_tools: [patch, write_file, termi
 - Violations are intercepted and logged as `compliance: failed` audit receipts.
 
 ### 10. Local Patch Layer for Upstream Skills
-When skills are updated via `npx skills update` from upstream repositories (e.g. `mattpocock/skills`), local customizations and Thai-specific prompt enhancements are preserved:
+When skills are updated via `npx skills update` from upstream repositories (e.g. `mattpocock/skills`), local customizations and language-specific prompt enhancements are preserved:
 - Stores unified diff patches under `~/.agents/patches/<skill>.patch`.
 - `skill-proof vault patch --patch-op rebase` automatically reapplies local rules cleanly on top of updated upstream playbooks.
 

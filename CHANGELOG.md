@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.0] - 2026-10-31
 
 ### Added
-- **1+3 Universal Skill Platform Architecture:**
+- **Universal Multi-Agent Skill Platform Architecture:**
   - Migrated canonical global vault to `~/.agents/skills` (Vercel Labs / Matt Pocock / Antigravity standard).
   - Physical zero-duplication linking via OS-level NTFS Directory Junctions (`_winapi.CreateJunction`). All agents (`hermes`, `antigravity-cli`, `opencode`) share identical bytes with 0 redundant files.
 - **Physical Hub Auto-Healing Reconciler (`skill-proof vault reconcile`):**
