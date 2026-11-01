@@ -204,7 +204,7 @@ def _query_might_contain_negation(query: str) -> bool:
 
 
 _MEMCORE_VETO_CACHE: tuple[float, set[str]] = (0.0, set())
-_MEMCORE_TRIGGER_RE = re.compile(r'(?i)(?:do not use|never use|ห้ามใช้|ไม่เอา)\s+([a-zA-Z0-9_\-]+)')
+_MEMCORE_TRIGGER_RE = re.compile(r'(?i)(?:do not use|don\'?t use|never use|ห้ามใช้|อย่าใช้|ไม่เอา)\s+([a-zA-Z0-9_\-]+)')
 
 def memcore_skill_vetoes() -> set[str]:
     """Load persistent negative constraints from MemCore (< 0.05ms with cache)."""

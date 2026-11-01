@@ -160,7 +160,7 @@ from _compliance import (  # v0.16 facade re-exports
 )
 
 
-__version__ = "1.5.0"
+__version__ = "2.0.0"
 
 
 @dataclass(frozen=True)
@@ -1246,12 +1246,11 @@ class SkillProofEngine:
                     reason = f"forbidden_tool:{normalized_tool}"
                     if reason not in state.compliance_reasons:
                         state.compliance_reasons.append(reason)
-                    if self.mode == "enforce-tools":
-                        return GuardResult(
-                            False,
-                            "forbidden_tool",
-                            f'Skill Proof blocked this tool: skill "{selection.selected.skill.name}" forbids tool "{tool_name}".',
-                        )
+                    return GuardResult(
+                        False,
+                        "forbidden_tool",
+                        f'Skill Proof blocked this tool: skill "{selection.selected.skill.name}" forbids tool "{tool_name}".',
+                    )
                 if inv.ordered_tools and normalized_tool in inv.ordered_tools:
                     idx = inv.ordered_tools.index(normalized_tool)
                     prior = inv.ordered_tools[:idx]

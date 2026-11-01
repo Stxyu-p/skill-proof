@@ -227,6 +227,12 @@ def _parse_skill(
                 aliases = parsed_list
             else:
                 related_skills = parsed_list
+        elif is_top_level and stripped_key == "mode":
+            mode_val = value.strip().strip("'\"").lower()
+            if mode_val in ("readonly", "read-only"):
+                invariants_data["forbidden_tools"] = tuple(
+                    dict.fromkeys(invariants_data.get("forbidden_tools", ()) + ("write_file", "patch", "skill_manage"))
+                )
         elif is_top_level and stripped_key == "invariants":
             cursor = index + 1
             inv_lines = []

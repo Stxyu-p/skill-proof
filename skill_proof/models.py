@@ -413,8 +413,8 @@ class LocalEmbedder:
         self._available: Optional[bool] = None
 
     def is_available(self) -> bool:
-        if self._available is not None:
-            return self._available
+        if self._available is True:
+            return True
         if not self.spec:
             self._available = False
             return False

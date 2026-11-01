@@ -483,6 +483,12 @@ def main(argv=None) -> int:
     calibrate_parser.add_argument("--audit-path", default="", help="audit.jsonl path (default: hermes plugin-data)")
     calibrate_parser.add_argument("--min-score", type=float, default=0.28)
     calibrate_parser.add_argument("--min-margin", type=float, default=0.05)
+
+    audit_parser = subparsers.add_parser("audit", parents=[common], help="inspect audit logs, usage statistics, and prune dead skills")
+    audit_parser.add_argument("audit_action", nargs="?", default="stats", choices=("stats", "prune"))
+    audit_parser.add_argument("--audit-path", default="", help="audit.jsonl path (default: hermes plugin-data)")
+    audit_parser.add_argument("--skill", dest="skill_name", default=None, help="specific skill to prune")
+    audit_parser.add_argument("--dry-run", action="store_true", help="dry run without modifying disk")
     bridge_parser = subparsers.add_parser("bridge", parents=[common], help="connect or inspect host agent workspaces")
     bridge_parser.add_argument("bridge_action", nargs="?", default="status", choices=("status", "init", "install", "remove", "ai-setup"))
     bridge_parser.add_argument("--host", default="auto")
@@ -491,7 +497,9 @@ def main(argv=None) -> int:
     bridge_parser.add_argument("--force", action="store_true")
 
     vault_parser = subparsers.add_parser("vault", parents=[common], help="global skill vault management (~/.skill-proof/skills)")
-    vault_parser.add_argument("vault_action", nargs="?", default="status", choices=("status", "migrate", "pin", "unpin", "sync", "link-all"))
+    vault_parser.add_argument("vault_action", nargs="?", default="status", choices=("status", "migrate", "pin", "unpin", "sync", "link-all", "reconcile", "lock", "unlock", "patch"))
+    vault_parser.add_argument("--patch-op", choices=("export", "apply", "rebase"), default="rebase", help="patch operation for vault patch")
+    vault_parser.add_argument("--patch-content", default="", help="raw patch content to export")
     vault_parser.add_argument("--skill", dest="skill_name", default=None, help="skill name to pin or unpin")
     vault_parser.add_argument("--to", dest="target_root", default=None, help="target agent root directory for pin")
     vault_parser.add_argument("--from", dest="from_root", default=None, help="target agent root directory for unpin")
@@ -503,6 +511,16 @@ def main(argv=None) -> int:
     mcp_install.add_install_arguments(install_parser)
 
     subparsers.add_parser("clients", help="list detected agent clients and their MCP configs")
+
+    compile_parser = subparsers.add_parser("compile", help="compile skills index and trinity protocol into AGENTS.md, CLAUDE.md, and GEMINI.md")
+    compile_parser.add_argument("--workspace", default=None, help="target workspace directory (default: current directory)")
+    compile_parser.add_argument("--dry-run", action="store_true", help="dry run without modifying files")
+
+    handoff_parser = subparsers.add_parser("handoff", help="export workspace state & tickets to switch to another agent model")
+    handoff_parser.add_argument("--target", default="antigravity", choices=("antigravity", "claude-code", "codex"), help="target AI coding model/CLI")
+    handoff_parser.add_argument("--workspace", default=None, help="target workspace directory (default: current directory)")
+    handoff_parser.add_argument("--output", default=None, help="custom path to save handoff prompt file")
+    handoff_parser.add_argument("--launch", action="store_true", help="launch target agent CLI with handoff payload")
 
     uninstall_parser = subparsers.add_parser("uninstall", help="remove MCP registration from agent clients")
     mcp_install.add_install_arguments(uninstall_parser)
@@ -560,6 +578,85 @@ def main(argv=None) -> int:
             except Exception:
                 pass
         return rc
+
+    if args.command == "audit":
+        try:
+            from . import prune as _prune_mod
+        except (ImportError, ValueError):
+            import prune as _prune_mod
+        action = getattr(args, "audit_action", "stats")
+        a_path = getattr(args, "audit_path", "") or None
+        if action == "stats":
+            res = _prune_mod.audit_stats(audit_path=a_path)
+            if getattr(args, "json", False):
+                print(json.dumps(res, indent=2, ensure_ascii=False))
+            else:
+                print(f"Skill Proof Telemetry Statistics ({res['total_turns']} turns audited):")
+                print(f"  Hit rate: {res['hit_rate']:.1%} (Selected: {res['status_counts'].get('selected', 0)}, Miss: {res['status_counts'].get('no_match', 0)})")
+                print(f"  Vault skills: {res['vault_skills_count']} total ({res['used_skills_count']} active in telemetry, {res['dead_skills_count']} unused)")
+                print("\nTop invoked skills:")
+                for name, cnt in res["top_skills"]:
+                    print(f"  - {name:<28}: {cnt} hits")
+                if res["dead_skills"]:
+                    print(f"\nUnused candidates ({len(res['dead_skills'])}):")
+                    for d in res["dead_skills"][:10]:
+                        print(f"  • {d}")
+                    if len(res["dead_skills"]) > 10:
+                        print(f"  ... and {len(res['dead_skills'])-10} more")
+            return 0
+        if action == "prune":
+            target_skills = [args.skill_name] if getattr(args, "skill_name", None) else None
+            res = _prune_mod.prune_dead_skills(skills_to_prune=target_skills, dry_run=getattr(args, "dry_run", False))
+            if getattr(args, "json", False):
+                print(json.dumps(res, indent=2, ensure_ascii=False))
+            else:
+                dry_label = " (dry run)" if res["dry_run"] else ""
+                print(f"Skill Proof Pruning: {res['pruned_count']} archived{dry_label}, {res['skipped_count']} skipped")
+                for p in res.get("pruned", []):
+                    print(f"  ✓ Archived: {p['skill']} -> {p['destination']}")
+                for s in res.get("skipped", []):
+                    print(f"  • Skipped: {s['skill']} ({s['reason']})")
+            return 0
+
+    if args.command == "compile":
+        try:
+            from . import bridge as _bridge_mod
+        except (ImportError, ValueError):
+            import bridge as _bridge_mod
+        ws = pathlib.Path(args.workspace).resolve() if getattr(args, "workspace", None) else pathlib.Path.cwd()
+        actions = _bridge_mod.sync_global_trinity_habits(workspace_dir=ws, dry_run=getattr(args, "dry_run", False))
+        if getattr(args, "json", False):
+            print(json.dumps({"workspace": str(ws), "actions": actions}, indent=2, ensure_ascii=False))
+        else:
+            print(f"Skill Proof Rule Compiler (Workspace: {ws}):")
+            for act in actions:
+                print(f"  ✓ {act}")
+        return 0
+
+    if args.command == "handoff":
+        try:
+            from . import handoff as _handoff_mod
+        except (ImportError, ValueError):
+            import handoff as _handoff_mod
+        ws = pathlib.Path(args.workspace).resolve() if getattr(args, "workspace", None) else pathlib.Path.cwd()
+        out = pathlib.Path(args.output).resolve() if getattr(args, "output", None) else None
+        res = _handoff_mod.export_handoff(
+            target=getattr(args, "target", "antigravity"),
+            workspace=ws,
+            output_path=out,
+            launch=getattr(args, "launch", False),
+        )
+        if getattr(args, "json", False):
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+        else:
+            print(f"Skill Proof Handoff Payload Generated for [{res['target'].upper()}]:")
+            print(f"  ✓ Saved to: {res['handoff_file']}")
+            print(f"  ✓ Tickets tracked: {res['tickets_count']}")
+            print(f"  ✓ Prompt length: {res['prompt_chars']} chars (~{res['prompt_chars']//4} tokens)")
+            print("\n" + "="*50)
+            print(res["prompt"])
+            print("="*50)
+        return 0
 
     if args.command == "vault":
         from skill_proof import vault
@@ -619,6 +716,68 @@ def main(argv=None) -> int:
             else:
                 print(f"Vault link-all: {res['linked']}/{res['total']} skills pinned to {res['target']}")
             return 0
+        if action == "reconcile":
+            res = vault.reconcile_all_clients(
+                roots=roots,
+                dry_run=getattr(args, "dry_run", False),
+                force=getattr(args, "force", False),
+            )
+            if args.json:
+                print(json.dumps(res, indent=2, ensure_ascii=False))
+            else:
+                print(f"Skill Proof Vault Reconciled: {res['vault_dir']} ({res['total_canonical_skills']} canonical skills)")
+                for cid, cinfo in res.get("clients", {}).items():
+                    print(f"  ✓ {cid:<16}: {cinfo.get('status')} -> {cinfo.get('path')}")
+            return 0
+        if action in ("lock", "unlock"):
+            skill_name = getattr(args, "skill_name", None)
+            if not skill_name:
+                print(f"error: --skill <name> is required for {action}", file=sys.stderr)
+                return 2
+            vdir = vault.init_vault()
+            target_skill = vdir / skill_name
+            if not target_skill.is_dir():
+                print(f"error: skill '{skill_name}' not found in vault {vdir}", file=sys.stderr)
+                return 1
+            ok = vault.set_skill_readonly(target_skill, readonly=(action == "lock"))
+            if getattr(args, "json", False):
+                print(json.dumps({"skill": skill_name, "action": action, "success": ok}))
+            else:
+                status_str = "LOCKED (Read-Only)" if action == "lock" else "UNLOCKED (Writable)"
+                print(f"Skill Proof Vault: '{skill_name}' is now {status_str}")
+            return 0 if ok else 1
+        if action == "patch":
+            pop = getattr(args, "patch_op", "rebase")
+            skill_name = getattr(args, "skill_name", None)
+            if pop in ("export", "apply") and not skill_name:
+                print(f"error: --skill <name> is required for patch {pop}", file=sys.stderr)
+                return 2
+            if pop == "export":
+                pcontent = getattr(args, "patch_content", "") or ""
+                pfile = vault.export_patch(str(skill_name), pcontent)
+                if getattr(args, "json", False):
+                    print(json.dumps({"skill": skill_name, "patch_file": str(pfile)}))
+                else:
+                    print(f"Skill Proof Patch Exported: {pfile}")
+                return 0
+            if pop == "apply":
+                ok = vault.apply_patch(str(skill_name))
+                if getattr(args, "json", False):
+                    print(json.dumps({"skill": skill_name, "success": ok}))
+                else:
+                    print(f"Skill Proof Patch Applied for '{skill_name}': {ok}")
+                return 0 if ok else 1
+            if pop == "rebase":
+                res = vault.rebase_patches()
+                if getattr(args, "json", False):
+                    print(json.dumps(res, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Skill Proof Patch Rebase: {len(res['applied'])} applied, {len(res['failed'])} failed")
+                    for s in res['applied']:
+                        print(f"  ✓ {s}")
+                    for s in res['failed']:
+                        print(f"  ✗ {s}")
+                return 0
         # Default: status
         res = vault.status(roots=roots)
         if args.json:

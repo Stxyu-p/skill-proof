@@ -18,7 +18,11 @@ from typing import Any, Mapping, Optional
 DEFAULT_VAULT_ROOT = (
     pathlib.Path(os.environ["SKILL_PROOF_VAULT"]).expanduser()
     if os.environ.get("SKILL_PROOF_VAULT")
-    else pathlib.Path.home() / ".skill-proof" / "skills"
+    else (
+        pathlib.Path.home() / ".agents" / "skills"
+        if (pathlib.Path.home() / ".agents" / "skills").exists()
+        else pathlib.Path.home() / ".skill-proof" / "skills"
+    )
 )
 
 
@@ -387,6 +391,161 @@ def link_all(
         "dry_run": dry_run,
         "results": results,
     }
+
+
+def reconcile_all_clients(
+    vault_dir: Optional[pathlib.Path] = None,
+    roots: Optional[Mapping[str, os.PathLike[str] | str]] = None,
+    dry_run: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Auto-heal and reconcile all detected agent client roots via NTFS junctions."""
+    vdir = init_vault(vault_dir) if not dry_run else (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    try:
+        from . import _catalog
+    except (ImportError, ValueError):
+        import _catalog
+    detected_roots = dict(roots if roots is not None else _catalog.detect_agent_roots())
+
+    # Include known candidate ecosystems if their parent client exists
+    base_home = pathlib.Path.home()
+    local_app = pathlib.Path(os.environ.get("LOCALAPPDATA", str(base_home / "AppData" / "Local")))
+    known_clients = [
+        ("antigravity-cli", base_home / ".gemini" / "antigravity-cli" / "skills"),
+        ("antigravity", base_home / ".gemini" / "antigravity" / "skills"),
+        ("hermes", local_app / "hermes" / "skills"),
+        ("claude", base_home / ".claude" / "skills"),
+        ("cursor", base_home / ".cursor" / "skills"),
+    ]
+    for cid, cpath in known_clients:
+        if cid not in detected_roots and (cpath.parent.exists() or cpath.exists()):
+            detected_roots[cid] = cpath
+
+    skills = list_vault_skills(vdir)
+    reconciled: dict[str, Any] = {}
+
+    for root_id, root_str in detected_roots.items():
+        rp = pathlib.Path(root_str).expanduser()
+        if root_id == "agents" or str(rp.absolute()).lower() == str(vdir.absolute()).lower():
+            continue
+
+        # If it already resolves directly to the vault root and is a reparse point, it is healthy!
+        if _is_reparse(rp):
+            try:
+                if rp.resolve() == vdir.resolve():
+                    reconciled[root_id] = {"path": str(rp), "status": "healthy_junction", "target": str(vdir)}
+                    continue
+            except Exception:
+                pass
+            if not dry_run:
+                rp.parent.mkdir(parents=True, exist_ok=True)
+                ok = create_junction_or_link(vdir, rp, force=force)
+                reconciled[root_id] = {"path": str(rp), "status": "repaired_junction" if ok else "failed", "target": str(vdir)}
+            else:
+                reconciled[root_id] = {"path": str(rp), "status": "dry_run_reconcile", "target": str(vdir)}
+            continue
+
+        # Hybrid or per-skill pinning (Hermes global)
+        if root_id == "hermes":
+            pinned_count = 0
+            for s in skills:
+                name = s["name"]
+                target_skill = rp / name
+                is_rep = _is_reparse(target_skill)
+                if is_rep:
+                    try:
+                        tgt = target_skill.resolve(strict=True)
+                        if tgt == (vdir / name).resolve():
+                            pinned_count += 1
+                            continue
+                    except Exception:
+                        pass
+                if not dry_run:
+                    ok = pin(name, rp, vault_dir=vdir, force=force)
+                    if ok.get("success"):
+                        pinned_count += 1
+            reconciled[root_id] = {
+                "path": str(rp),
+                "status": "healthy_junctions",
+                "pinned_count": pinned_count,
+                "total_vault_skills": len(skills),
+            }
+            continue
+
+        reconciled[root_id] = {"path": str(rp), "status": "unchanged"}
+
+    # Project-level check
+    cwd = pathlib.Path.cwd()
+    project_hermes = cwd / ".hermes" / "skills"
+    project_agents = cwd / ".agents" / "skills"
+    if project_agents.is_dir() and project_agents.resolve() != vdir.resolve():
+        is_rep = _is_reparse(project_hermes)
+        if not is_rep or not project_hermes.exists():
+            if not dry_run:
+                project_hermes.parent.mkdir(parents=True, exist_ok=True)
+                create_junction_or_link(project_agents, project_hermes, force=force)
+                reconciled["project-hermes"] = {"path": str(project_hermes), "status": "linked_to_project_agents"}
+        else:
+            reconciled["project-hermes"] = {"path": str(project_hermes), "status": "healthy_junction"}
+
+    return {
+        "vault_dir": str(vdir),
+        "total_canonical_skills": len(skills),
+        "clients": reconciled,
+    }
+
+
+def get_patches_dir(vault_dir: Optional[pathlib.Path] = None) -> pathlib.Path:
+    vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    pdir = vdir.parent / "patches"
+    pdir.mkdir(parents=True, exist_ok=True)
+    return pdir
+
+
+def export_patch(skill_name: str, patch_content: str, vault_dir: Optional[pathlib.Path] = None) -> pathlib.Path:
+    pdir = get_patches_dir(vault_dir)
+    pfile = pdir / f"{skill_name}.patch"
+    pfile.write_text(patch_content, encoding="utf-8")
+    return pfile
+
+
+def apply_patch(skill_name: str, patch_file: Optional[pathlib.Path] = None, vault_dir: Optional[pathlib.Path] = None) -> bool:
+    vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    target_skill = vdir / skill_name
+    if not target_skill.is_dir():
+        return False
+    pfile = patch_file or (get_patches_dir(vault_dir) / f"{skill_name}.patch")
+    if not pfile.is_file():
+        return False
+
+    try:
+        res = subprocess.run(["git", "apply", "--ignore-whitespace", str(pfile)], cwd=str(target_skill), capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    patch_text = pfile.read_text(encoding="utf-8")
+    md_file = target_skill / "SKILL.md"
+    if md_file.is_file():
+        content = md_file.read_text(encoding="utf-8")
+        if patch_text not in content:
+            md_file.write_text(content + "\n\n" + patch_text, encoding="utf-8")
+        return True
+    return False
+
+
+def rebase_patches(vault_dir: Optional[pathlib.Path] = None) -> dict[str, Any]:
+    pdir = get_patches_dir(vault_dir)
+    applied = []
+    failed = []
+    for pfile in sorted(pdir.glob("*.patch")):
+        skill_name = pfile.stem
+        if apply_patch(skill_name, patch_file=pfile, vault_dir=vault_dir):
+            applied.append(skill_name)
+        else:
+            failed.append(skill_name)
+    return {"applied": applied, "failed": failed}
 
 
 def is_skill_immutable(skill_path: pathlib.Path | str) -> bool:

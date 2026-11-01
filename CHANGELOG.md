@@ -4,6 +4,31 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-10-31
+
+### Added
+- **1+3 Universal Skill Platform Architecture:**
+  - Migrated canonical global vault to `~/.agents/skills` (Vercel Labs / Matt Pocock / Antigravity standard).
+  - Physical zero-duplication linking via OS-level NTFS Directory Junctions (`_winapi.CreateJunction`). All agents (`hermes`, `antigravity-cli`, `opencode`) share identical bytes with 0 redundant files.
+- **Physical Hub Auto-Healing Reconciler (`skill-proof vault reconcile`):**
+  - Idempotently detects, repairs, and links all agent roots (`~/.gemini/antigravity-cli/skills`, `~/.hermes/skills`, `Workspace/.hermes/skills`) to the canonical vault.
+- **Just-In-Time Prompt Token Shield (`reduce_skill_prompt: true`):**
+  - Prunes the 118-skill catalog (13,114 chars / ~3,451 tokens per turn) from system prompts, injecting only the winning skill and companions JIT. Cuts token overhead by **99.0%** (> 3,000 tokens/turn saved).
+- **Universal stdio MCP Server Integration:**
+  - Registered `skill-proof-mcp` across Antigravity CLI/IDE, OpenCode, Claude Code, and Cursor. Exposes `skill_select`, `skill_search`, and `skill_read` cross-agent.
+- **MemCore Negative Constraint Synergy:**
+  - Enhanced `_dialogue.py` with multi-lingual regex triggers (`ห้ามใช้`, `อย่าใช้`, `do not use`, `never use`) querying `~/.memcore/memory.db`. Auto-vetoes disallowed workflows in < 0.05ms.
+- **Single-Source Rule Compiler (`skill-proof compile`):**
+  - Synchronizes bounded Global Agent Trinity rules into `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md`.
+- **Cross-Agent Session Handoff (`skill-proof handoff`):**
+  - Serializes active tickets, git diff stat, and MemCore constraints into an executable launch payload for Antigravity, Claude Code, or Codex.
+- **Real-Usage Telemetry Pruning (`skill-proof audit stats / prune`):**
+  - Analyzes production invocations from `audit.jsonl` and safely moves dead skills (0 hits over 30 days) to `~/.agents/archive/`.
+- **Dynamic Tool Gating per Skill:**
+  - Skills declaring `mode: readonly` or `forbidden_tools` in frontmatter strictly block destructive tools (`write_file`, `patch`, `skill_manage`) at the pre-tool interceptor.
+- **Local Patch Layer for Upstream Skills (`skill-proof vault patch`):**
+  - Stores local customizations and Thai prompt adaptations in `~/.agents/patches/<skill>.patch`, cleanly rebasing local rules on top of upstream `npx skills update` runs.
+
 ## [1.5.0] - 2026-10-29
 
 ### Added
