@@ -59,5 +59,28 @@ Instructions for reading only.
         self.assertFalse(res_write.allowed, "write_file should be strictly blocked")
         self.assertEqual(res_write.reason, "forbidden_tool")
 
+    def test_capability_gating_expands_cross_agent_tools(self):
+        raw = b"""---
+name: test-capability
+description: Test capability based gating
+forbidden_capabilities:
+  - fs:write
+  - shell:exec
+---
+Instructions.
+"""
+        record = _parse_skill(
+            raw,
+            root_id="test",
+            relative_path="test/SKILL.md",
+            root_path=pathlib.Path("."),
+            source_path=pathlib.Path("test/SKILL.md"),
+        )
+        self.assertIn("write_file", record.invariants.forbidden_tools)
+        self.assertIn("patch", record.invariants.forbidden_tools)
+        self.assertIn("terminal", record.invariants.forbidden_tools)
+        self.assertIn("edit", record.invariants.forbidden_tools)
+        self.assertIn("bash", record.invariants.forbidden_tools)
+
 if __name__ == "__main__":
     unittest.main()

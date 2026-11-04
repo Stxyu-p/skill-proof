@@ -43,6 +43,27 @@ def normalize_identifiers(names: Iterable[str]) -> frozenset[str]:
     return frozenset(norm for name in names if (norm := normalize_identifier(name)))
 
 
+CAPABILITY_TOOL_MAP: dict[str, tuple[str, ...]] = {
+    "fs:read": ("read_file", "view", "readfile", "search_files"),
+    "fs:write": ("write_file", "patch", "edit", "write_to_file", "replace_file_content", "skill_manage"),
+    "shell:exec": ("terminal", "bash", "execute_command", "exec", "sh", "zsh"),
+    "skill:manage": ("skill_manage",),
+}
+
+
+def _expand_capabilities_to_tools(caps_or_tools: Iterable[str]) -> tuple[str, ...]:
+    tools = []
+    for item in caps_or_tools:
+        clean = item.strip().lower()
+        if clean in CAPABILITY_TOOL_MAP:
+            tools.extend(CAPABILITY_TOOL_MAP[clean])
+        else:
+            norm = normalize_identifier(item)
+            if norm:
+                tools.append(norm)
+    return tuple(dict.fromkeys(tools))
+
+
 @dataclass(frozen=True)
 class Diagnostic:
     code: str
@@ -227,6 +248,12 @@ def _parse_skill(
                 aliases = parsed_list
             else:
                 related_skills = parsed_list
+        elif is_top_level and stripped_key in {"forbidden_capabilities", "forbidden_capability"}:
+            parsed_list, skip_until = _parse_list_value(lines, index, closing, value)
+            expanded = _expand_capabilities_to_tools(parsed_list)
+            invariants_data["forbidden_tools"] = tuple(
+                dict.fromkeys(invariants_data.get("forbidden_tools", ()) + expanded)
+            )
         elif is_top_level and stripped_key == "mode":
             mode_val = value.strip().strip("'\"").lower()
             if mode_val in ("readonly", "read-only"):
@@ -252,6 +279,11 @@ def _parse_skill(
                         invariants_data[ik_norm] = tuple(
                             normalize_identifier(x) for x in _parse_inline_tags(iv) if normalize_identifier(x)
                         )
+                    elif ik_norm in {"forbidden_capabilities", "forbidden_capability"}:
+                        expanded = _expand_capabilities_to_tools(_parse_inline_tags(iv))
+                        invariants_data["forbidden_tools"] = tuple(
+                            dict.fromkeys(invariants_data.get("forbidden_tools", ()) + expanded)
+                        )
 
     name = fields.get("name", "")
     description = fields.get("description", "")
@@ -263,9 +295,9 @@ def _parse_skill(
     stable_ref = f"{root_id}:{relative_path}:{normalize_identifier(name)}"
     skill_id = "skl-" + hashlib.sha256(stable_ref.encode("utf-8")).hexdigest()[:20]
     inv_obj = SkillInvariants(
-        required_tools=invariants_data.get("required_tools", ()),
-        forbidden_tools=invariants_data.get("forbidden_tools", ()),
-        ordered_tools=invariants_data.get("ordered_tools", ()),
+        required_tools=_expand_capabilities_to_tools(invariants_data.get("required_tools", ())),
+        forbidden_tools=_expand_capabilities_to_tools(invariants_data.get("forbidden_tools", ())),
+        ordered_tools=_expand_capabilities_to_tools(invariants_data.get("ordered_tools", ())),
     )
     return SkillRecord(
         skill_id=skill_id,
