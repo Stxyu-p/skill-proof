@@ -1,21 +1,25 @@
+<h1 align="center">🎯 Skill Proof</h1>
+
 <p align="center">
-  <img src="assets/logo.png" width="160" alt="Skill Proof Logo" />
+  <strong>Universal Skill Platform, Zero-Duplication Hub &amp; Deterministic Governance Gatekeeper for Autonomous AI Fleets</strong>
 </p>
 
-# Skill Proof v2.0.0
+<p align="center">
+  <a href="https://pypi.org/project/skill-proof-router/"><img src="https://img.shields.io/pypi/v/skill-proof-router?style=flat-square&color=blue" alt="PyPI" /></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square" alt="Python" /></a>
+  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/hub-Canonical_NTFS_Junctions-07405E?style=flat-square" alt="Hub" /></a>
+  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/tokens--99%25_prompt_overhead-10b981?style=flat-square" alt="Token Shield" /></a>
+  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/latency-%3C_2ms_warm_route-10b981?style=flat-square" alt="Latency" /></a>
+  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/mcp-Universal_Cross--CLI_stdio-8b5cf6?style=flat-square" alt="MCP" /></a>
+  <a href="#cryptographic-audit-trail--compliance"><img src="https://img.shields.io/badge/audit-SHA--256_Hash_Chain-8b5cf6?style=flat-square" alt="Audit" /></a>
+  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/governance-Immutable_SOP_%26_Tool_Gating-10B981?style=flat-square" alt="Governance" /></a>
+  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/synergy-MemCore_Veto_Active-3B82F6?style=flat-square" alt="Synergy" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-slate?style=flat-square" alt="License" /></a>
+</p>
 
-**Universal Skill Platform, Zero-Duplication Hub & Deterministic Governance Gatekeeper for Autonomous AI Fleets**
-
-[![PyPI](https://img.shields.io/pypi/v/skill-proof-router?style=flat-square&color=blue)](https://pypi.org/project/skill-proof-router/)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue?style=flat-square)](https://www.python.org/)
-[![Hub](https://img.shields.io/badge/hub-Canonical_NTFS_Junctions-07405E?style=flat-square)](#system-architecture--core-capabilities)
-[![Token Shield](https://img.shields.io/badge/tokens--99%25_prompt_overhead-10b981?style=flat-square)](#system-architecture--core-capabilities)
-[![Latency](https://img.shields.io/badge/latency-%3C_2ms_warm_route-10b981?style=flat-square)](#system-architecture--core-capabilities)
-[![Protocol](https://img.shields.io/badge/mcp-Universal_Cross--CLI_stdio-8b5cf6?style=flat-square)](#system-architecture--core-capabilities)
-[![Safety](https://img.shields.io/badge/audit-SHA--256_Hash_Chain-8b5cf6?style=flat-square)](#cryptographic-audit-trail--compliance)
-[![Governance](https://img.shields.io/badge/governance-Immutable_SOP_%26_Tool_Gating-10B981?style=flat-square)](#system-architecture--core-capabilities)
-[![Synergy](https://img.shields.io/badge/synergy-MemCore_Veto_Active-3B82F6?style=flat-square)](#system-architecture--core-capabilities)
-[![License: MIT](https://img.shields.io/badge/license-MIT-slate?style=flat-square)](LICENSE)
+<p align="center">
+  <img src="assets/before-after.svg" width="100%" alt="Skill Proof - Ungoverned Sprawl vs JIT Shield &amp; Canonical Hub" />
+</p>
 
 ---
 
