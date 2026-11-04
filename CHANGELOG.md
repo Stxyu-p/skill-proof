@@ -4,6 +4,13 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-11-04
+
+### Added
+- **Cross-Host Capability Gating (`CAPABILITY_TOOL_MAP`):** Skill frontmatter supports abstract `forbidden_capabilities` (`fs:read`, `fs:write`, `shell:exec`, `skill:manage`), automatically expanding into host-specific tool identifiers across Hermes Agent, Claude Code, and Antigravity.
+- **Distributed Trace Correlation Protocol:** Automatically captures `TRINITY_TRACE_ID` from the environment and records `trace_id` in `audit.jsonl` execution receipts, enabling zero-broker cross-hub correlation.
+- **Test Suite Modernization:** 161 unit and regression tests passing (100% green).
+
 ## [2.0.1] - 2026-10-31
 
 ### Security Hardening
