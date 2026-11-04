@@ -95,9 +95,9 @@ Skill Proof delivers an integrated suite of four production subsystems engineere
 | | **Cross-Agent Session Handoff** | Serializes active tasks, open work items, git diff statistics, and memory constraints into a structured launch payload. | Zero-friction context transfer when switching between agent models.<br>`skill-proof handoff --target <agent>` |
 | | **Single-Source Rule Compiler** | Injects bounded Global Agent Trinity guidelines into `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `.cursorrules` in-place. | Eliminates manual documentation divergence across heterogeneous agent tools.<br>`skill-proof compile` |
 | **Governance & Safety** | **Immutable SOP Lock & Write-Guard** | Intercepts `write_file`, `patch`, and `skill_manage` tool calls for `immutable: true` skills; enforces OS `S_IREAD` read-only file attributes. | Absolute protection against autonomous agent hallucinated playbook edits.<br>`skill-proof vault lock <skill>` |
-| | **Dynamic Blast-Radius Tool Gating** | Enforces `mode: readonly` and `forbidden_tools` per skill, barring audit/review playbooks from executing destructive write or terminal commands. | Restricts tool execution environment based on active playbook intent.<br>`mode: readonly` in frontmatter |
+| | **Dynamic Blast-Radius Tool Gating** | Enforces `mode: readonly`, `forbidden_tools`, and cross-host `forbidden_capabilities` (`fs:write`, `shell:exec`), blocking destructive actions across Hermes, Claude Code, and Antigravity. | Restricts tool execution environment based on active playbook intent.<br>`mode: readonly` or `forbidden_capabilities` in frontmatter |
 | | **MemCore Constraint Veto** | Queries `~/.memcore/memory.db` (< 0.05 ms cached) for negative constraints (`ห้ามใช้`, `do not use`) across 6 languages, pruning candidates pre-ranking. | Prevents negated queries from scoring high semantic similarity.<br>Automated in routing pipeline |
-| | **Production Telemetry & Pruning** | Mines `audit.jsonl` execution receipts to track actual hit frequencies and safely archive dead skills (0 hits over 30 days) to `~/.agents/archive/`. | Evidence-based catalog maintenance; eliminates dead weight from catalogs.<br>`skill-proof audit stats` / `prune` |
+| | **Production Telemetry & Unified Tracing** | Mines `audit.jsonl` execution receipts, captures `TRINITY_TRACE_ID` for cross-hub correlation, and safely archives dead skills to `~/.agents/archive/`. | Evidence-based catalog maintenance and unified distributed trace logging.<br>`skill-proof audit stats` / `prune` |
 
 ---
 
@@ -187,9 +187,9 @@ skill-proof select "ช่วยรีวิว PR โค้ดหน่อย�
 
 | Pillar | Hub | Role |
 | :--- | :--- | :--- |
-| **[trimtok](https://github.com/Stxyu-p/trimtok)** | `~/.trimtok` | **Context Shield:** Cuts terminal, traceback, web, and JSON bloat by 38–48% (real telemetry) with instant `#c1` CCR recovery. |
+| **[trimtok](https://github.com/Stxyu-p/trimtok)** | `~/.trimtok` | **Context Shield:** Cuts terminal, traceback, web, and JSON bloat with instant `#c1` CCR recovery, active chunk pinning, and zero-broker trace correlation. |
 | **[MemCore](https://github.com/Stxyu-p/memcore)** | `~/.memcore` | **Governed Memory:** Shared bitemporal memory with hard SQL scope boundaries, deterministic lexical recall, and Tainted Context Guard. |
-| **[Skill Proof](https://github.com/Stxyu-p/skill-proof)** | `~/.agents/skills` | **Universal Skill Hub & Gatekeeper:** Zero-duplication NTFS junctions, JIT prompt token shield (-99% bloat), and OS-level Immutable SOP protection. |
+| **[Skill Proof](https://github.com/Stxyu-p/skill-proof)** | `~/.agents/skills` | **Universal Skill Hub & Gatekeeper:** Zero-duplication NTFS junctions, cross-host capability gating, JIT prompt token shield (-99% bloat), and OS-level Immutable SOP protection. |
 
 ```bash
 # Install and link all three pillars in one pass
@@ -201,7 +201,7 @@ trimtok install && memcore install && skill-proof install
 
 ## 🧪 Verification & Automated Testing
 
-Skill Proof includes a comprehensive 153-test test suite verifying every component:
+Skill Proof includes a comprehensive 161-test test suite verifying every component:
 
 ```bash
 # Run full unit & integration test suite
