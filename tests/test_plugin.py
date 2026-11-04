@@ -422,6 +422,19 @@ class PluginAdapterTests(unittest.TestCase):
         self.assertIn('next turn', instance.handle_command('refresh'))
         self.assertEqual(before, instance.handle_command('trace'))
 
+    def test_audit_record_carries_trinity_trace_id(self):
+        import os
+        old = os.environ.get('TRINITY_TRACE_ID')
+        os.environ['TRINITY_TRACE_ID'] = 'trinity-skill-trace-789'
+        try:
+            record = plugin_module.SkillProofPlugin._audit_record({}, 'ses_test')
+            self.assertEqual(record.get('trace_id'), 'trinity-skill-trace-789')
+        finally:
+            if old is None:
+                os.environ.pop('TRINITY_TRACE_ID', None)
+            else:
+                os.environ['TRINITY_TRACE_ID'] = old
+
 
 if __name__ == "__main__":
     unittest.main()

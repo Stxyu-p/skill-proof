@@ -700,9 +700,11 @@ class SkillProofPlugin:
         session = evidence.get("session") if isinstance(evidence.get("session"), Mapping) else {}
         runtime = receipt.get("runtime") if isinstance(receipt.get("runtime"), Mapping) else {}
         performance = receipt.get("performance") if isinstance(receipt.get("performance"), Mapping) else {}
+        tid = os.environ.get("TRINITY_TRACE_ID") or receipt.get("trace_id")
         return {
             "schema": "skill-proof.audit.v1",
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "trace_id": str(tid)[:64] if tid else None,
             "turn_id": receipt.get("turn_id"),
             "session_sha256": hashlib.sha256(str(session_id or "").encode("utf-8")).hexdigest()[:16],
             "status": decision.get("status"),
