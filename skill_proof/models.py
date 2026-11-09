@@ -12,10 +12,11 @@ import json
 import logging
 import os
 import pathlib
-import shutil
 import time
-import urllib.request
 from typing import Any, Callable, Optional, Sequence
+
+# urllib.request and shutil are imported where used: they cost ~70 ms at import
+# time and most sessions never download or delete a model.
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +300,8 @@ def download_file_verified(
 
     hasher = hashlib.sha256()
     received_bytes = 0
+    import urllib.request
+
     req = urllib.request.Request(url, headers={"User-Agent": "skill-proof/0.15.0"})
 
     try:
@@ -386,6 +389,8 @@ def remove_model(model_key: str, root_dir: Optional[pathlib.Path | str] = None) 
     if not target_dir.exists():
         return True
     try:
+        import shutil
+
         shutil.rmtree(target_dir)
         return True
     except Exception as exc:

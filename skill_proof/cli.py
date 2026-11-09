@@ -66,7 +66,7 @@ def _sync_skill_proof_global_skill() -> None:
         "---\n\n"
         "# Skill Proof — Deterministic Skill Router & Global Vault\n\n"
         "Use `skill_select` (with optional `include_content: true`), `skill_search`, `skill_read`, `skill_scan`, "
-        "and `skill_roots` to route and inspect skills across the Global Skill Vault (`~/.skill-proof/skills`).\n"
+        "and `skill_roots` to route and inspect skills across the Global Skill Vault (`~/.agents/skills`).\n"
         "\n"
         "**Surface note:** those five are the **MCP server** tools (Codex CLI, Claude Code, Antigravity / Gemini CLI). In "
         "**Hermes**, skill-proof runs as a native plugin with no MCP server — routing is automatic: a routing hint is "
@@ -496,7 +496,7 @@ def main(argv=None) -> int:
     bridge_parser.add_argument("--dry-run", action="store_true")
     bridge_parser.add_argument("--force", action="store_true")
 
-    vault_parser = subparsers.add_parser("vault", parents=[common], help="global skill vault management (~/.skill-proof/skills)")
+    vault_parser = subparsers.add_parser("vault", parents=[common], help="global skill vault management (~/.agents/skills)")
     vault_parser.add_argument("vault_action", nargs="?", default="status", choices=("status", "migrate", "pin", "unpin", "sync", "link-all", "reconcile", "lock", "unlock", "patch"))
     vault_parser.add_argument("--patch-op", choices=("export", "apply", "rebase"), default="rebase", help="patch operation for vault patch")
     vault_parser.add_argument("--patch-content", default="", help="raw patch content to export")

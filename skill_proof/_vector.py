@@ -11,18 +11,8 @@ import sqlite3
 import struct
 import threading
 import time
-import urllib.request
 from contextlib import contextmanager
 from typing import Any, Iterable, Mapping, Optional, Sequence
-try:
-    from . import models
-except ImportError:
-    try:
-        import models
-    except ImportError:
-        models = None
-
-
 from _catalog import (
     SkillRecord,
     default_hermes_home,
@@ -68,11 +58,29 @@ class VectorIndex:
         self.api_key = api_key if api_key is not None else os.environ.get(self.gateway_key_env, "")
         self._memory_vectors: dict[str, tuple[float, ...]] = {}
         self._local_embedder = None
+        self._local_unavailable = False
         self._trace_local = threading.local()
         self.reset_trace()
 
-        if self.provider == "local" and models is not None:
-            self._local_embedder = models.LocalEmbedder(model_key=self.model, root_dir=self.models_dir)
+        if self.provider == "local":
+            # Imported here, not at module load: models pulls the optional
+            # ONNX/tokenizers stack (~250 ms) even when no model is installed.
+            try:
+                from . import models as _models
+            except ImportError:
+                try:
+                    import models as _models
+                except ImportError:
+                    _models = None
+            if _models is not None:
+                self._local_embedder = _models.LocalEmbedder(
+                    model_key=self.model, root_dir=self.models_dir
+                )
+            if self._local_embedder is None or not self._local_embedder.is_available():
+                # Latch: a missing local model must cost one probe, not one
+                # probe per turn. Callers see provider_used=off from now on.
+                self.provider = "off"
+                self._local_unavailable = True
 
         if self.db_path:
             self._init_db()
@@ -217,6 +225,8 @@ class VectorIndex:
             if not self.api_key:
                 self._trace(provider_used="off", fallback_reason="gateway_key_missing")
                 return []
+            import urllib.request
+
             out: list[tuple[float, ...]] = []
             started = time.perf_counter()
             for i in range(0, len(texts), 32):

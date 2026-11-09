@@ -1,7 +1,7 @@
 """
 Skill Proof Global Vault Manager.
 
-Provides a unified canonical skill repository at ~/.skill-proof/skills/
+Provides a unified canonical skill repository at ~/.agents/skills/
 and manages synchronization and pinning across agent ecosystems
 (Codex, Claude Code, Gemini CLI, Antigravity, Cursor, Hermes).
 """

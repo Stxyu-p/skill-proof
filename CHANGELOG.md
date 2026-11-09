@@ -4,6 +4,32 @@ All notable changes to Skill Proof are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Per-turn latency: 312 ms median -> ~150-200 ms cold, 3-4 ms warm.** The
+  audit trail showed 563 of 627 turns over 100 ms with a 4.5 s worst case, while
+  the README promised sub-2 ms routing. Four causes, all measured:
+  - `load_disabled_skills` parsed the whole 150 KB Hermes `config.yaml` with
+    `yaml.safe_load` on every process start (~175 ms). It now walks the file
+    once for `skills.disabled` (~2.6 ms) and keeps YAML as the fallback.
+  - `_vector`, `models`, and `core` imported `urllib.request`/`shutil` eagerly
+    even though they are only used by the optional download/gateway paths
+    (~90 ms of module import).
+  - A configured-but-missing local ONNX model was re-probed on every turn and,
+    with `sync_catalog`, re-hashed all 109 skills each time. The index now
+    latches to `off` after one probe.
+  - Spaceless-script detection ran a Python loop per character (13,368 calls
+    per catalog scan, ~65 ms). One compiled character class replaces it.
+- **One canonical vault.** `detect_agent_roots` still listed the retired
+  `~/.skill-proof/skills` copy, so the two `vault.json` manifests disagreed
+  about where the truth lives. The vault root now resolves to `~/.agents/skills`
+  when it exists, is added last, and is deduplicated by resolved path. A
+  self-referential `~/.agents/skills/skill-proof` link (a directory loop that
+  broke `cd` and directory scans) was removed.
+- **159 tests passing, 2 skipped.** The portability root-detection assertions
+  now match the single-vault layout.
+
 ## [2.1.0] - 2026-11-04
 
 ### Added

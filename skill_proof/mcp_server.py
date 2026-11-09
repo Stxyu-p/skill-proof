@@ -30,7 +30,7 @@ SERVER_INSTRUCTIONS = (
     "1. **Route Before Acting (`skill_select`):** Before starting a specialized engineering, research, design, or domain workflow, "
     "call `skill_select` with `query` set to the user's intent (pass `include_content: true` to inline the winning `SKILL.md` in one round-trip).\n"
     "2. **Read or Search When Needed (`skill_read` / `skill_search`):** Call `skill_read` with the selected skill `name` to load its full instructions, "
-    "or `skill_search` to discover top-K matching skills across the Global Skill Vault (`~/.skill-proof/skills`)."
+    "or `skill_search` to discover top-K matching skills across the Global Skill Vault (`~/.agents/skills`)."
 )
 
 _ENGINE_CACHE: dict[tuple, core.SkillProofEngine] = {}

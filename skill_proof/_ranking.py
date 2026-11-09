@@ -20,6 +20,8 @@ from _catalog import (
     _is_sea_spaceless_character,
     _is_spaceless_character,
     _phrase_present,
+    has_sea_spaceless,
+    spaceless_only,
     normalize_identifier,
     normalize_identifiers,
 )
@@ -198,7 +200,7 @@ def _tokens(value: str) -> tuple[str, ...]:
 
     return tuple(
         token for token in raw_tokens
-        if len(token) > 1 and token not in _STOPWORDS and not any(_is_sea_spaceless_character(c) for c in token)
+        if len(token) > 1 and token not in _STOPWORDS and not has_sea_spaceless(token)
     )
 
 
@@ -261,11 +263,7 @@ def _char_ngrams(value: str, size: int = _NGRAM_SIZE) -> "frozenset[str]":
     ภาษาไทย" are about the same thing.  Character n-grams are a dictionary-free
     way to measure that overlap, and they never fire for spaced scripts.
     """
-    text = "".join(
-        character
-        for character in unicodedata.normalize("NFKC", str(value or "")).casefold()
-        if _is_spaceless_character(character)
-    )
+    text = spaceless_only(unicodedata.normalize("NFKC", str(value or "")).casefold())
     if len(text) < size:
         return frozenset()
     return frozenset(text[index : index + size] for index in range(len(text) - size + 1))

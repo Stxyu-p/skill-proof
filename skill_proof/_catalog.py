@@ -496,30 +496,72 @@ def load_disabled_skills(hermes_home: Optional[os.PathLike[str] | str] = None) -
     except OSError:
         pass
     res: frozenset[str] = frozenset()
+    # Linear scan of the two keys we need instead of a full safe_load: the
+    # 150 KB config costs ~175 ms to parse and we want one short list. A regex
+    # over the whole file backtracks badly, so this walks lines once.
+    scanned = False
     try:
-        import yaml
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        disabled = data.get("skills", {}).get("disabled", []) or []
-        res = frozenset(normalize_identifier(x) for x in disabled if x) - {normalize_identifier("hermes-agent")}
-    except Exception:
-        try:
-            content = cfg_path.read_text(encoding="utf-8")
-            m = re.search(r"^skills:\s*\n(?:[ \t]+[^\n]+\n)*?[ \t]+disabled:\s*\n((?:[ \t]+-[^\n]+\n)+)", content, re.MULTILINE)
-            if m:
-                names = set()
-                for line in m.group(1).splitlines():
-                    line = line.strip()
-                    if line.startswith("-"):
-                        val = line[1:].strip().strip("\"'")
+        names: set[str] = set()
+        in_skills = False
+        in_disabled = False
+        for line in cfg_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            indent = len(line) - len(line.lstrip(" "))
+            if indent == 0:
+                in_skills = line.rstrip() == "skills:"
+                in_disabled = False
+                continue
+            if not in_skills:
+                continue
+            stripped = line.strip()
+            if in_disabled:
+                if stripped.startswith("-"):
+                    val = stripped[1:].strip().strip("\"'")
+                    if val:
+                        names.add(normalize_identifier(val))
+                else:
+                    in_disabled = False
+            elif stripped.startswith("disabled:"):
+                in_disabled = True
+                inline = stripped[len("disabled:"):].strip()
+                if inline.startswith("[") and inline.endswith("]"):
+                    for val in inline[1:-1].split(","):
+                        val = val.strip().strip("\"'")
                         if val:
                             names.add(normalize_identifier(val))
-                res = frozenset(names) - {normalize_identifier("hermes-agent")}
+        res = frozenset(names) - {normalize_identifier("hermes-agent")}
+        scanned = True
+    except Exception:
+        scanned = False
+    if not scanned:
+        try:
+            import yaml
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            disabled = data.get("skills", {}).get("disabled", []) or []
+            res = frozenset(normalize_identifier(x) for x in disabled if x) - {normalize_identifier("hermes-agent")}
         except Exception:
             res = frozenset()
     if mtime_ns is not None:
         _DISABLED_SKILLS_CACHE = [str(cfg_path), mtime_ns, res]
     return res
+
+
+def _canonical_vault_root(base_home: pathlib.Path) -> pathlib.Path:
+    """One hub for every host: ``~/.agents/skills`` wins when it exists.
+
+    v2.0.0 moved the canonical vault there and fanned it out with junctions,
+    but detection still listed the retired ``~/.skill-proof/skills`` copy, so
+    two vault manifests disagreed about where the truth lives.
+    """
+    configured = os.environ.get("SKILL_PROOF_VAULT", "").strip()
+    if configured:
+        return pathlib.Path(configured).expanduser()
+    agents_root = base_home / ".agents" / "skills"
+    if agents_root.exists():
+        return agents_root
+    return base_home / ".skill-proof" / "skills"
 
 
 def detect_agent_roots(
@@ -540,7 +582,6 @@ def detect_agent_roots(
     candidates: list[tuple[str, pathlib.Path]] = [
         ("project-agents", base_cwd / ".agents" / "skills"),
         ("project-claude", base_cwd / ".claude" / "skills"),
-        ("vault", base_home / ".skill-proof" / "skills"),
         ("agents", base_home / ".agents" / "skills"),
     ]
     if profile:
@@ -577,11 +618,21 @@ def detect_agent_roots(
             ("kilo", base_home / ".kilo" / "skills"),
         ]
     )
+    # The vault manifest is a compatibility fallback: when it resolves to a root
+    # already detected above (the usual ~/.agents/skills case) it must not add a
+    # second entry for the same directory.
+    candidates.append(("vault", _canonical_vault_root(base_home)))
     detected: dict[str, pathlib.Path] = {}
+    seen_paths: set[str] = set()
     for root_id, path in candidates:
         try:
-            if path.is_dir() and not path.is_symlink():
-                detected[root_id] = path
+            if not path.is_dir() or path.is_symlink():
+                continue
+            resolved = str(path.resolve())
+            if resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
+            detected[root_id] = path
         except OSError:
             continue
     return detected
@@ -950,10 +1001,40 @@ def _is_spaceless_character(character: str) -> bool:
     return any(lo <= code <= hi for lo, hi in _SPACELESS_RANGES)
 
 
-# ponytail: lru_cache on _contains_spaceless_script cuts repeated character category loops
+# One compiled class beats a Python loop per character: the catalog scan calls
+# this for every name and description token, which measured 13k calls per turn.
+_SPACELESS_RE = re.compile(
+    "[" + "".join("\\U%08X-\\U%08X" % (lo, hi) for lo, hi in _SPACELESS_RANGES) + "]"
+)
+_SEA_SPACELESS_RE = re.compile(
+    "[" + "".join(
+        "\\U%08X-\\U%08X" % (lo, hi) for lo, hi in _SPACELESS_RANGES[:_SEA_RANGE_COUNT]
+    ) + "]"
+)
+
+
+def spaceless_only(value: str) -> str:
+    """Keep only spaceless-script characters, in order (one C-level pass)."""
+    text = str(value or "")
+    if text.isascii():
+        return ""
+    return "".join(_SPACELESS_RE.findall(text))
+
+
+def has_sea_spaceless(value: str) -> bool:
+    """True when the text contains a Thai/Lao/Myanmar/Khmer character."""
+    text = str(value or "")
+    if text.isascii():
+        return False
+    return _SEA_SPACELESS_RE.search(text) is not None
+
+
 @lru_cache(maxsize=4096)
 def _contains_spaceless_script(value: str) -> bool:
-    return any(_is_spaceless_character(character) for character in str(value or ""))
+    text = str(value or "")
+    if text.isascii():
+        return False
+    return _SPACELESS_RE.search(text) is not None
 
 
 @lru_cache(maxsize=2048)

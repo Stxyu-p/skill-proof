@@ -220,7 +220,7 @@ TRINITY_HABIT_SECTION_MCP = """## Global Agent Trinity — Zero-Willpower Habit 
 Three local-first engines are installed machine-wide: **skill-proof** (skill routing), **memcore** (governed memory), **trimtok** (context compression). This client reaches them as **MCP servers** (registered in your MCP config), so call the MCP tools directly:
 
 1. **Skill Routing (`skill-proof` MCP):**
-   - At the start of a specialized coding, architecture, debugging, design, or research task, call `skill_select` (`query`, optional `include_content: true`) or `skill_search` to route from the Global Skill Vault (`~/.skill-proof/skills`); `skill_read` loads the full body of a selected skill.
+   - At the start of a specialized coding, architecture, debugging, design, or research task, call `skill_select` (`query`, optional `include_content: true`) or `skill_search` to route from the Global Skill Vault (`~/.agents/skills`); `skill_read` loads the full body of a selected skill.
 2. **Governed Memory (`memcore` MCP):**
    - **Before guessing project history:** Call `memory_search` (`query`) to recall verified project facts, architectural decisions, and user preferences.
    - **After verifying a durable truth:** Call `memory_remember` (`content`, `memory_type`, optional `source_file`) or `memory_supersede` when a prior decision changes.
@@ -238,7 +238,7 @@ Three local-first engines are installed machine-wide: **skill-proof** (skill rou
 
 | Engine | A) MCP clients — Codex CLI, Claude Code, Antigravity / Gemini CLI | B) Hermes (this agent — native plugins, no MCP) |
 |---|---|---|
-| **skill-proof** | `skill_select` (`query`, optional `include_content: true`) / `skill_search` / `skill_read` — route from the Global Skill Vault (`~/.skill-proof/skills`) | **Automatic.** A routing hint is injected each turn: read it and load the skill it names. `skill_select` does not exist here. |
+| **skill-proof** | `skill_select` (`query`, optional `include_content: true`) / `skill_search` / `skill_read` — route from the Global Skill Vault (`~/.agents/skills`) | **Automatic.** A routing hint is injected each turn: read it and load the skill it names. `skill_select` does not exist here. |
 | **memcore** | `memory_search` (`query`) / `memory_remember` (`content`, `memory_type`, optional `source_file`) / `memory_supersede` / `memory_reject` / `memory_feedback` / `memory_review_queue` / `memory_review_decide` / `memory_get` / `memory_status` | **Native tools, same core names** — `memory_search` / `memory_remember` / `memory_promote` / `memory_supersede` / `memory_reject` / `memory_feedback` / `memory_review_queue` / `memory_review_decide`. No `memory_get` / `memory_status` here. |
 | **trimtok** | `trimtok_compress_terminal` (`output` or `file_path`) for noisy shell/test logs; `trimtok_compress_tool` (`result` or `file_path`) for large JSON/tool output; `trimtok_retrieve` (`hash`, `section`) to inspect omitted lines | **Automatic.** Terminal and tool output is already compressed (lossless TOON, CCR `#hash` aliases). No compress tools here — use `trimtok_retrieve` when it is exposed, else re-run the command with a narrower filter. |
 

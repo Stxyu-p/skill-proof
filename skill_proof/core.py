@@ -19,7 +19,6 @@ import struct
 import threading
 import time
 import unicodedata
-import urllib.request
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
