@@ -506,7 +506,28 @@ def main(argv=None) -> int:
     vault_parser.add_argument("--dry-run", action="store_true", help="dry run without modifying disk")
     vault_parser.add_argument("--force", action="store_true", help="replace existing physical skill directory with vault junction")
 
+    def _add_crystallize_args(p):
+        p.add_argument("--name", help="skill slug name")
+        p.add_argument("--desc", help="short capability description (under 60 chars)")
+        p.add_argument("--cmd", help="verification command (must pass)")
+        p.add_argument("--step", action="append", help="procedure step (repeatable)")
+        p.add_argument("--from-traces", action="store_true", help="mine repeated, cleanly-compressed commands from telemetry traces")
+        p.add_argument("--traces", action="append", help="trace file path (repeatable; default ~/.trimtok/usage.jsonl)")
+        p.add_argument("--min-runs", type=int, default=3, help="minimum observed runs per command (default: 3)")
+        p.add_argument("--limit", type=int, default=8, help="maximum skills to emit (default: 8)")
+        p.add_argument("--dry-run", action="store_true", help="report what would be crystallized")
+        p.add_argument("--category", default="devops", help="skill category (default: devops)")
+        p.add_argument("--vault", default=None, help="vault directory (default: ~/.agents/skills)")
+        p.add_argument("--hermes", help="Hermes profile skills directory")
+
+    crystallize_parser = subparsers.add_parser("crystallize", parents=[common], help="crystallize execution trace into verified SKILL.md")
+    _add_crystallize_args(crystallize_parser)
+
+    mine_parser = subparsers.add_parser("mine", parents=[common], help="mine repeatable commands from telemetry into candidate skills (alias for crystallize)")
+    _add_crystallize_args(mine_parser)
+
     from skill_proof import mcp_install
+
     install_parser = subparsers.add_parser("install", help="register stdio MCP server across agent clients")
     mcp_install.add_install_arguments(install_parser)
 
@@ -1009,7 +1030,88 @@ def main(argv=None) -> int:
         else:
             print(core.format_calibrate(payload))
         return 0
+    if args.command in ("crystallize", "mine"):
+        from . import crystallize as _cryst_mod
+        from . import trace_skills as _trace_mod
+
+        if getattr(args, "from_traces", False):
+            traces = getattr(args, "traces", None) or None
+            min_runs = int(getattr(args, "min_runs", 3) or 3)
+            limit = int(getattr(args, "limit", 8) or 8)
+            category = getattr(args, "category", "devops") or "devops"
+            vault_path = getattr(args, "vault", None)
+            hermes_path = getattr(args, "hermes", None)
+            dry_run = bool(getattr(args, "dry_run", False))
+
+            evidence = _trace_mod.mine_traces(traces, min_runs=min_runs, limit=limit)
+            if not evidence:
+                print(f"[skill-proof] No repeatable workflows found (need >= {min_runs} runs with >= 80% clean completion) in trace log.")
+                return 0
+
+            for ev in evidence:
+                s_name = _trace_mod.skill_name(ev)
+                s_desc = f"Repeatable {ev.signature} workflow ({ev.runs} observed runs)"
+                steps = [
+                    f"Run `{ev.signature}` from the project root.",
+                    "Read the output; trimtok compresses it into context automatically.",
+                    "Confirm the command exits 0 before treating the result as fact.",
+                ]
+                skill_md, proof = _cryst_mod.crystallize_skill(
+                    name=s_name,
+                    description=s_desc,
+                    steps=steps,
+                    verification_cmd=ev.signature,
+                    category=category,
+                    when_to_use=f"Use when the task requires `{ev.signature}` repeatedly.",
+                    pitfalls=[
+                        "Mined from telemetry: the observed runs compressed cleanly, but a "
+                        "clean compression is not proof that the command succeeded.",
+                    ],
+                    evidence=_trace_mod.evidence_lines(ev),
+                )
+                if dry_run:
+                    print(f"[dry-run] {s_name}: {ev.runs} runs ({ev.clean_runs} clean), {ev.saved_chars:,} chars saved - status {proof.status}")
+                else:
+                    res = _cryst_mod.save_crystallized_skill(
+                        skill_md=skill_md,
+                        name=s_name,
+                        category=category,
+                        vault_dir=vault_path,
+                        hermes_skills_dir=hermes_path,
+                    )
+                    print(f"Crystallized skill '{proof.skill_name}' (status: {proof.status}, proof: {proof.proof_hash[:12]}...)")
+                    print(f"  Vault: {res.get('vault_file')}")
+                    if res.get("hermes_file"):
+                        print(f"  Hermes: {res.get('hermes_file')}")
+            return 0
+
+        # Manual single-skill crystallization
+        name = getattr(args, "name", "")
+        desc = getattr(args, "desc", "")
+        cmd = getattr(args, "cmd", "")
+        if not (name and desc and cmd):
+            print("error: --name, --desc and --cmd are required unless --from-traces is used", file=sys.stderr)
+            return 2
+        steps = getattr(args, "step", None) or ["Execute validated procedure via terminal."]
+        cat = getattr(args, "category", "devops")
+        v_path = getattr(args, "vault", None)
+        h_path = getattr(args, "hermes", None)
+
+        skill_md, proof = _cryst_mod.crystallize_skill(
+            name=name, description=desc, steps=steps,
+            verification_cmd=cmd, exit_code=0, category=cat,
+        )
+        res = _cryst_mod.save_crystallized_skill(
+            skill_md=skill_md, name=name, category=cat,
+            vault_dir=v_path, hermes_skills_dir=h_path,
+        )
+        print(f"Crystallized skill '{proof.skill_name}' (status: {proof.status}, proof: {proof.proof_hash[:12]}...)")
+        print(f"  Vault: {res.get('vault_file')}")
+        if res.get("hermes_file"):
+            print(f"  Hermes: {res.get('hermes_file')}")
+        return 0
     if args.command == "overlap":
+
         try:
             payload = _overlap_payload(roots, args.min_similarity, args.limit)
         except ValueError as error:
