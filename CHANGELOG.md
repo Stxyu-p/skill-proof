@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-09
+
 ### Fixed
 - **Per-turn latency: 312 ms median -> ~150-200 ms cold, 3-4 ms warm.** The
   audit trail showed 563 of 627 turns over 100 ms with a 4.5 s worst case, while

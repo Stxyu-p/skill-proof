@@ -159,7 +159,7 @@ from _compliance import (  # v0.16 facade re-exports
 )
 
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 
 @dataclass(frozen=True)
