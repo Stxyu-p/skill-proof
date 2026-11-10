@@ -113,13 +113,13 @@ def crystallize_skill(
         "",
         f"{desc}",
         "",
-        "## When to Use",
+        "## When to Use [INFERRED]",
         f"- {w_trigger}",
         "",
         "## How to Run",
         "Execute procedure steps via terminal tool.",
         "",
-        "## Procedure",
+        "## Procedure [EXTRACTED]",
     ]
 
     for i, step in enumerate(steps, 1):
@@ -127,13 +127,13 @@ def crystallize_skill(
 
     body_lines.extend([
         "",
-        "## Pitfalls",
+        "## Pitfalls [INFERRED]",
     ])
     for pitfall in p_items:
         body_lines.append(f"- {pitfall}")
 
     if evidence:
-        body_lines.extend(["", "## Evidence"])
+        body_lines.extend(["", "## Evidence [EXTRACTED]"])
         body_lines.extend(evidence)
 
     body_lines.extend([

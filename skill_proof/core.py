@@ -1640,3 +1640,23 @@ class SkillProofEngine:
     def latest_turn_id(self) -> Optional[str]:
         with self._lock:
             return self._latest_turn_id
+
+
+def log_skill_telemetry(skill_name: str, action: str = "match", duration_ms: float = 0.0) -> None:
+    """Best-effort telemetry logging to ~/.skill-proof/usage.jsonl (fail-open)."""
+    try:
+        data_dir = os.environ.get("SKILL_PROOF_DATA_DIR")
+        if not data_dir:
+            data_dir = os.path.expanduser("~/.skill-proof")
+        os.makedirs(data_dir, exist_ok=True)
+        log_path = os.path.join(data_dir, "usage.jsonl")
+        rec = {
+            "ts": time.time(),
+            "skill": str(skill_name),
+            "action": str(action),
+            "duration_ms": round(duration_ms, 2),
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass

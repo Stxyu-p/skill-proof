@@ -77,10 +77,11 @@ class SkillInvariants:
     required_tools: tuple[str, ...] = ()
     forbidden_tools: tuple[str, ...] = ()
     ordered_tools: tuple[str, ...] = ()
+    required_binaries: tuple[str, ...] = ()
 
     @property
     def is_empty(self) -> bool:
-        return not self.required_tools and not self.forbidden_tools and not self.ordered_tools
+        return not self.required_tools and not self.forbidden_tools and not self.ordered_tools and not self.required_binaries
 
 
 @dataclass(frozen=True)
@@ -275,7 +276,7 @@ def _parse_skill(
                 if ":" in inv_line:
                     ik, iv = inv_line.split(":", 1)
                     ik_norm = normalize_identifier(ik)
-                    if ik_norm in {"required_tools", "forbidden_tools", "ordered_tools"}:
+                    if ik_norm in {"required_tools", "forbidden_tools", "ordered_tools", "required_binaries"}:
                         invariants_data[ik_norm] = tuple(
                             normalize_identifier(x) for x in _parse_inline_tags(iv) if normalize_identifier(x)
                         )
@@ -298,6 +299,7 @@ def _parse_skill(
         required_tools=_expand_capabilities_to_tools(invariants_data.get("required_tools", ())),
         forbidden_tools=_expand_capabilities_to_tools(invariants_data.get("forbidden_tools", ())),
         ordered_tools=_expand_capabilities_to_tools(invariants_data.get("ordered_tools", ())),
+        required_binaries=invariants_data.get("required_binaries", ()),
     )
     return SkillRecord(
         skill_id=skill_id,
@@ -1054,3 +1056,27 @@ def _phrase_present(shorter: str, longer: str) -> bool:
     if " " not in shorter and " " not in longer and _contains_spaceless_script(longer):
         return True
     return bool(_phrase_boundary_pattern(shorter).search(longer))
+
+
+def check_prerequisites(
+    skill: SkillRecord,
+    available_tools: Iterable[str] | None = None,
+) -> tuple[bool, tuple[str, ...]]:
+    """Check if all prerequisites (binaries, tools) are satisfied before execution.
+
+    Returns (is_satisfied, missing_list).
+    Checks required_binaries using shutil.which (respects PATH and Windows PATHEXT).
+    Checks required_tools against available_tools if provided.
+    """
+    import shutil
+
+    missing: list[str] = []
+    for binary in skill.invariants.required_binaries:
+        if not shutil.which(binary):
+            missing.append(f"binary:{binary}")
+    if available_tools is not None:
+        avail_norm = {normalize_identifier(t) for t in available_tools}
+        for tool in skill.invariants.required_tools:
+            if normalize_identifier(tool) not in avail_norm:
+                missing.append(f"tool:{tool}")
+    return len(missing) == 0, tuple(missing)
