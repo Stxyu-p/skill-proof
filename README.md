@@ -66,9 +66,9 @@ Skill Proof consolidates playbooks into a single source of truth, eliminates pro
 
 ---
 
-## 🥊 Market Comparison: Skill Proof v2.0 vs Alternatives
+## 🥊 Market Comparison: Skill Proof vs Alternatives
 
-| Feature / Metric | **Skill Proof v2.0** 🌟 | Legacy Multi-Dir Setup | Secondary LLM Tool Router | System Prompt Catalog Dump |
+| Feature / Metric | **Skill Proof** 🌟 | Legacy Multi-Dir Setup | Secondary LLM Tool Router | System Prompt Catalog Dump |
 | :--- | :---: | :---: | :---: | :---: |
 | **Storage Architecture** | **1 Canonical Hub + OS Junctions** | 4–6 duplicate copies (150+ folders) | Per-project copies | In-memory string dump |
 | **System Prompt Bloat** | **~80 chars (JIT Winner Only)** | Full catalog (13KB+ / ~3,450 tokens) | Schema tokens | 10,000 – 25,000 tokens |
