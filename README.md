@@ -96,6 +96,7 @@ Skill Proof delivers an integrated suite of four production subsystems engineere
 | **Token & Prompt Engine** | **JIT Prompt Token Shield** | Middleware intercepts prompt construction; strips full 100+ skill catalog down to only the active winning playbook and declared companions. | **99.0% Token Overhead Cut** (>3,000 tokens saved per turn).<br>`reduce_skill_prompt: true` in config |
 | | **Deterministic Router** | In-process RapidFuzz C++ token alignment, character n-grams, and multi-lingual negation veto. | **Sub-2ms Routing Latency.** Completely offline; zero external API calls or network latency.<br>`skill-proof select "<query>"` |
 | **Cross-Agent Integration** | **Universal stdio MCP Server** | Implements standard Model Context Protocol over stdio JSON-RPC, exposing `skill_select`, `skill_search`, and `skill_read` to Claude Code, Antigravity, Cursor, and OpenCode. | Standardized tool access across all language runtimes (Go, TypeScript, Python).<br>`skill-proof install` |
+| | **Progressive Skill Reads** | Adds `level="outline"` to MCP `skill_read` and `skill-proof read`; returns headings and list items while omitting prose and fenced code. Full reads remain the default. | Inspect structure first, then load complete instructions only when needed.<br>`skill-proof read <name> --level outline` |
 | | **Cross-Agent Session Handoff** | Serializes active tasks, open work items, git diff statistics, and memory constraints into a structured launch payload. | Zero-friction context transfer when switching between agent models.<br>`skill-proof handoff --target <agent>` |
 | | **Single-Source Rule Compiler** | Injects bounded Global Agent Trinity guidelines into `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `.cursorrules` in-place. | Eliminates manual documentation divergence across heterogeneous agent tools.<br>`skill-proof compile` |
 | **Governance & Safety** | **Immutable SOP Lock & Write-Guard** | Intercepts `write_file`, `patch`, and `skill_manage` tool calls for `immutable: true` skills; enforces OS `S_IREAD` read-only file attributes. | Absolute protection against autonomous agent hallucinated playbook edits.<br>`skill-proof vault lock <skill>` |
@@ -209,10 +210,10 @@ trimtok install && memcore install && skill-proof install
 <a id="verification"></a>
 ## 🧪 Verification & Automated Testing
 
-Skill Proof includes a comprehensive 183-test test suite verifying every component:
+Skill Proof includes a comprehensive 185-test suite verifying every component:
 
 ```bash
-# Run full unit & integration test suite (183 passed, 2 skipped)
+# Run full unit & integration test suite (185 passed, 2 skipped)
 uv run pytest
 
 # Run specific capability tests

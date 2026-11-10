@@ -448,6 +448,9 @@ def main(argv=None) -> int:
     common.add_argument("--json", action="store_true", help="machine-readable output")
     subparsers.add_parser("roots", parents=[common], help="list detected skill roots")
     subparsers.add_parser("scan", parents=[common], help="scan roots and report catalog state")
+    read_parser = subparsers.add_parser("read", parents=[common], help="read a skill at a progressive level")
+    read_parser.add_argument("name", help="canonical skill name")
+    read_parser.add_argument("--level", choices=("outline", "full"), default="full")
     select_parser = subparsers.add_parser("select", parents=[common], help="choose one skill for a query")
     select_parser.add_argument("pos_query", nargs="?", default="", metavar="QUERY", help="the user request to route")
     select_parser.add_argument("--query", dest="flag_query", default="", help="the user request to route")
@@ -914,6 +917,23 @@ def main(argv=None) -> int:
             print("\n".join(f"{root_id}\t{path}" for root_id, path in payload["roots"].items()))
         else:
             print("No skill roots detected.")
+        return 0
+    if args.command == "read":
+        from . import reading
+        try:
+            payload = reading.read_skill(args.name, roots, level=args.level)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        payload["level"] = args.level
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(f"skill: {payload['name']}")
+            print(f"level: {args.level}")
+            print(f"source: {payload['source_path']}")
+            print()
+            print(payload["content"])
         return 0
     if args.command == "scan":
         payload = _scan_payload(roots)

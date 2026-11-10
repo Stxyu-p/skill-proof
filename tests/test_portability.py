@@ -114,6 +114,24 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["version"], core.__version__)
         self.assertIsInstance(payload["roots"], dict)
 
+    def test_read_outline_cli_omits_body_and_code(self):
+        skill_file = self.root / "demo-skill" / "SKILL.md"
+        skill_file.write_text(chr(10).join([
+            "---", "name: demo-skill", "description: Demo workflow", "---", "",
+            "# Deploy", "", "This paragraph must be omitted.", "", "## Procedure",
+            "1. Inspect service health", "2. Restart affected worker", "", "```bash",
+            "secret-command", "```", "",
+        ]), encoding="utf-8")
+        payload = json.loads(self.run_cli(
+            "read", "demo-skill", "--level", "outline", "--root", str(self.root), "--json"
+        ))
+        self.assertEqual(payload["level"], "outline")
+        self.assertEqual(payload["content"].splitlines(), [
+            "# Deploy", "## Procedure", "1. Inspect service health", "2. Restart affected worker"
+        ])
+        self.assertNotIn("paragraph must be omitted", payload["content"])
+        self.assertNotIn("secret-command", payload["content"])
+
 
 class McpServerTests(unittest.TestCase):
     def setUp(self):
@@ -214,6 +232,30 @@ class McpServerTests(unittest.TestCase):
         text = response["content"][0]["text"]
         self.assertNotIn("Body text", text)
         self.assertIn("ambiguous", text.lower())
+
+    def test_skill_read_outline_mcp_omits_body_and_code(self):
+        skill_file = self.root / "demo-skill" / "SKILL.md"
+        skill_file.write_text(chr(10).join([
+            "---", "name: demo-skill", "description: Demo workflow", "---", "",
+            "# Deploy", "", "This paragraph must be omitted.", "", "## Procedure",
+            "1. Inspect service health", "2. Restart affected worker", "", "```bash",
+            "secret-command", "```", "",
+        ]), encoding="utf-8")
+        response = mcp_server.handle({
+            "method": "tools/call",
+            "params": {
+                "name": "skill_read",
+                "arguments": {"name": "demo-skill", "roots": [str(self.root)], "level": "outline"},
+            },
+        })
+        payload = json.loads(response["content"][0]["text"])
+        self.assertFalse(response["isError"])
+        self.assertEqual(payload["level"], "outline")
+        self.assertEqual(payload["content"].splitlines(), [
+            "# Deploy", "## Procedure", "1. Inspect service health", "2. Restart affected worker"
+        ])
+        self.assertNotIn("paragraph must be omitted", payload["content"])
+        self.assertNotIn("secret-command", payload["content"])
 
     def test_explicit_skill_select_skips_vector_catalog_sync(self):
         vector_index = FakeVectorIndex()

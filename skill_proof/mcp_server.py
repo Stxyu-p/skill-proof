@@ -106,12 +106,17 @@ TOOLS = [
     },
     {
         "name": "skill_read",
-        "description": "Read the full markdown content of a SKILL.md by skill name.",
+        "description": "Read a skill by name; level='outline' returns headings and list items without body prose or code (default: full).",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Canonical name of the skill"},
                 "roots": _ROOTS_SCHEMA,
+                "level": {
+                    "type": "string",
+                    "enum": ["full", "outline"],
+                    "description": "Read depth; full preserves the complete SKILL.md (default), outline returns structure only",
+                },
             },
             "required": ["name"],
             "additionalProperties": False,
@@ -280,23 +285,13 @@ def _tool_search(parameters):
 
 
 def _tool_read(parameters):
-    name = parameters.get("name")
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError("name must be a non-empty string")
-    roots = _roots(parameters)
-    catalog = core.scan_catalog(roots)
-    matches = catalog.by_name(name.strip())
-    if not matches:
-        raise ValueError(f"Skill '{name}' not found in catalog")
-    if len(matches) > 1:
-        raise ValueError(f"Skill '{name}' is ambiguous in catalog")
-    skill = matches[0]
-    content = skill.source_path.read_text(encoding="utf-8")
-    return {
-        "name": skill.name,
-        "source_path": str(skill.source_path),
-        "content": content,
-    }
+    from . import reading
+
+    return reading.read_skill(
+        parameters.get("name"),
+        _roots(parameters),
+        level=parameters.get("level", "full"),
+    )
 
 
 _TOOLS = {
