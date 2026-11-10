@@ -101,7 +101,9 @@ Skill Proof delivers an integrated suite of four production subsystems engineere
 | **Governance & Safety** | **Immutable SOP Lock & Write-Guard** | Intercepts `write_file`, `patch`, and `skill_manage` tool calls for `immutable: true` skills; enforces OS `S_IREAD` read-only file attributes. | Absolute protection against autonomous agent hallucinated playbook edits.<br>`skill-proof vault lock <skill>` |
 | | **Dynamic Blast-Radius Tool Gating** | Enforces `mode: readonly`, `forbidden_tools`, and cross-host `forbidden_capabilities` (`fs:write`, `shell:exec`), blocking destructive actions across Hermes, Claude Code, and Antigravity. | Restricts tool execution environment based on active playbook intent.<br>`mode: readonly` or `forbidden_capabilities` in frontmatter |
 | | **MemCore Constraint Veto** | Queries `~/.memcore/memory.db` (< 0.05 ms cached) for negative constraints (`ห้ามใช้`, `do not use`) across 6 languages, pruning candidates pre-ranking. | Prevents negated queries from scoring high semantic similarity.<br>Automated in routing pipeline |
-| | **Production Telemetry & Unified Tracing** | Mines `audit.jsonl` execution receipts, captures `TRINITY_TRACE_ID` for cross-hub correlation, and safely archives dead skills to `~/.agents/archive/`. | Evidence-based catalog maintenance and unified distributed trace logging.<br>`skill-proof audit stats` / `prune` |
+| | **Deterministic Prerequisite DAG Preflight** | Inspects `required_binaries` (`gh`, `git`, `adb`) via `shutil.which` and `required_tools` before dispatch, preventing runtime mid-task failures. | Preflight guard verifies environmental readiness before execution.<br>`check_prerequisites()` in catalog |
+| | **Epistemic Provenance Badges** | Tags crystallized procedures as `[EXTRACTED]` (executed commands) and `[INFERRED]` (model reasoning), preserving ground truth integrity. | Unambiguous audit trail distinguishing observed telemetry from AI hypothesis.<br>`crystallize.py` |
+| | **Production Telemetry & Unified Tracing** | Mines `audit.jsonl` execution receipts, captures `TRINITY_TRACE_ID`, logs in-flight invocations to `~/.skill-proof/usage.jsonl`, and safely archives dead skills to `~/.agents/archive/`. | Evidence-based catalog maintenance and unified distributed trace logging.<br>`skill-proof audit stats` / `prune` |
 
 ---
 
@@ -185,9 +187,10 @@ skill-proof select "ช่วยรีวิว PR โค้ดหน่อย�
 
 ---
 
-## 🌐 Part of the Global Agent Trinity
+<a id="autonomous-agent-ecosystem"></a>
+## 🌐 Autonomous Agent Ecosystem
 
-**Skill Proof** forms the **Global Agent Trinity** alongside **trimtok** and **MemCore** — unifying context compression, governed shared memory, and skill execution across all your AI coding clients:
+**Skill Proof** operates seamlessly alongside complementary local tooling — unifying context compression, governed shared memory, and skill execution across all your AI coding clients:
 
 | Pillar | Hub | Role |
 | :--- | :--- | :--- |
@@ -203,18 +206,20 @@ trimtok install && memcore install && skill-proof install
 
 ---
 
+<a id="verification"></a>
 ## 🧪 Verification & Automated Testing
 
-Skill Proof includes a comprehensive 161-test test suite verifying every component:
+Skill Proof includes a comprehensive 183-test test suite verifying every component:
 
 ```bash
-# Run full unit & integration test suite
-python -m unittest discover -s tests -t .
+# Run full unit & integration test suite (183 passed, 2 skipped)
+uv run pytest
 
 # Run specific capability tests
-python tests/test_memcore_synergy.py       # MemCore negative constraint vetoes
-python tests/test_dynamic_tool_gating.py   # Readonly mode & tool gating
-python tests/test_immutable_guard.py       # Pre-tool SOP write protection
+uv run pytest tests/test_prerequisite_dag.py     # Deterministic prerequisite preflight & provenance
+uv run pytest tests/test_memcore_synergy.py       # MemCore negative constraint vetoes
+uv run pytest tests/test_dynamic_tool_gating.py   # Readonly mode & tool gating
+uv run pytest tests/test_immutable_guard.py       # Pre-tool SOP write protection
 ```
 
 ---
