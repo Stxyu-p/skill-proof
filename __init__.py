@@ -78,11 +78,11 @@ def _audit_line_sha(line: str) -> str:
 
 
 def verify_audit_chain(path) -> dict[str, Any]:
-    """Verify the tamper-evident ``prev_sha256`` links of an audit log.
+    """Check adjacent hash links in the retained audit file, not authenticity.
 
-    The first line anchors the chain (its own link is unverifiable); every
-    later line must carry the 16-hex sha256 prefix of the raw line before it.
-    A rotated log keeps a suffix of intact lines, so only the anchor moves.
+    The first retained line and final line are unanchored; rotation also
+    discards older receipts. A trusted external digest is required for tamper
+    detection of the log as a whole.
     """
     path = pathlib.Path(path)
     try:
@@ -107,7 +107,14 @@ def verify_audit_chain(path) -> dict[str, Any]:
             broken += 1
         previous = _audit_line_sha(line)
         checked += 1
-    return {"ok": broken == 0, "lines_checked": checked, "broken_links": broken, "path": str(path)}
+    return {
+        "ok": broken == 0,
+        "lines_checked": checked,
+        "broken_links": broken,
+        "path": str(path),
+        "verification_scope": "retained_adjacent_links",
+        "authenticity_verified": False,
+    }
 
 
 def _replace_available_skills_text(text: Any, skill_name: str) -> tuple[Any, int]:
@@ -310,8 +317,15 @@ class SkillProofPlugin:
             else _default_profile_home() / "plugin-data" / "skill-proof" / "audit.jsonl"
         )
         self._audit_writes = 0
+        self._audit_lines = 0
         self._audit_broken = False
+        self._audit_turn_ids: set[str] = set()
         self._audit_chain: Optional[str] = self._audit_tail_sha()
+        if self.audit_enabled:
+            try:
+                self._rotate_audit()
+            except Exception:
+                logger.exception("Skill Proof could not rotate audit log at startup")
 
     @staticmethod
     def _key(session_id: Any, task_id: Any, turn_id: Any) -> tuple[str, str, str]:
@@ -326,6 +340,7 @@ class SkillProofPlugin:
         **_: Any,
     ) -> Optional[dict[str, str]]:
         effective_turn_id = str(turn_id or f"{session_id}:{task_id}:current")
+        self._audit_turn_ids.discard(effective_turn_id)
         key = self._key(session_id, task_id, effective_turn_id)
         started = self._clock()
         try:
@@ -549,6 +564,11 @@ class SkillProofPlugin:
             evidence = receipt.get("evidence") or {}
             compliance_val = receipt.get("compliance", "unassessed")
             detail = f"{selected.get('name', 'none')} | {'loaded' if evidence.get('host_loaded_event', evidence.get('hermes_loaded_event')) else 'not loaded'} | compliance {compliance_val}"
+            provider = receipt.get("provider")
+            provider_used = receipt.get("provider_used")
+            fallback_reason = receipt.get("fallback_reason")
+            if provider not in (None, "", "off") and provider_used in (None, "", "off", "lexical_fastpath") and fallback_reason not in (None, "", "not_used"):
+                detail += f" | semantic fallback: {fallback_reason}"
         problems = list(receipt.get("errors") or [])
         if decision.get("status") == "blocked":
             problems.append(decision.get("reason", "blocked"))
@@ -727,6 +747,7 @@ class SkillProofPlugin:
             "query_sha256": receipt.get("query_sha256"),
             "catalog_size": (receipt.get("catalog") or {}).get("skill_count")
             if isinstance(receipt.get("catalog"), Mapping) else None,
+            "listing_ms": performance.get("listing_ms"),
             "total_ms": performance.get("total_ms"),
         }
 
@@ -745,6 +766,9 @@ class SkillProofPlugin:
     def _write_audit(self, receipt: Mapping[str, Any], session_id: str) -> None:
         if not receipt or not self.audit_enabled or self._audit_broken:
             return
+        turn_id = str(receipt.get("turn_id") or "")
+        if turn_id and turn_id in self._audit_turn_ids:
+            return
         try:
             self.audit_path.parent.mkdir(parents=True, exist_ok=True)
             record = self._audit_record(receipt, session_id)
@@ -754,7 +778,10 @@ class SkillProofPlugin:
                 handle.write(line + "\n")
             self._audit_chain = _audit_line_sha(line)
             self._audit_writes += 1
-            if self._audit_writes % 50 == 0:
+            self._audit_lines += 1
+            if turn_id:
+                self._audit_turn_ids.add(turn_id)
+            if self._audit_lines > self.audit_limit or self._audit_writes % 50 == 0:
                 self._rotate_audit()
         except OSError:
             # A broken audit file must never break a turn; stop trying quietly.
@@ -763,14 +790,18 @@ class SkillProofPlugin:
 
     def _rotate_audit(self) -> None:
         if not self.audit_path.is_file():
+            self._audit_lines = 0
             return
         lines = self.audit_path.read_text(encoding="utf-8").splitlines()
-        if len(lines) <= self.audit_limit:
+        nonblank_count = sum(1 for line in lines if line.strip())
+        if nonblank_count <= self.audit_limit:
+            self._audit_lines = nonblank_count
             return
-        kept = [line for line in lines[-self.audit_limit:] if line.strip()]
+        kept = [line for line in lines if line.strip()][-self.audit_limit:]
         tmp_path = self.audit_path.with_name(self.audit_path.name + ".tmp")
         tmp_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
         tmp_path.replace(self.audit_path)
+        self._audit_lines = len(kept)
 
     def _overlap_report(self, min_similarity: float, limit: int):
         """Near-duplicates plus which side the host actually loads (audit hits)."""
@@ -1022,7 +1053,9 @@ class SkillProofPlugin:
         current = self.engine.receipt(session_id=str(session_id or ""))
         turn_id = str(current.get("turn_id") or "")
         if turn_id:
-            self._persist(self.engine.finish_turn(turn_id=turn_id))
+            payload = self.engine.finish_turn(turn_id=turn_id)
+            self._persist(payload)
+            self._write_audit(payload, str(session_id or ""))
         # Skill history and focus belong to this session only; drop them at once
         # instead of carrying them across sessions.
         self.engine.forget_session(str(session_id or ""))

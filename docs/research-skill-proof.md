@@ -88,7 +88,7 @@ Mirroring `trimtok`'s production telemetry baseline:
   ```json
   {"timestamp": 1794307500, "skill": "research", "status": "invoked", "duration_ms": 12.4}
   ```
-- `skill-proof prune --dormant-days 30` can read `usage.jsonl` to reliably identify dead skills without guessing.
+- `skill-proof prune --dormant-days 30` is a proposed future feature, not an implemented CLI option. Current audit pruning uses only the retained audit window and cannot establish 30-day dormancy.
 
 ---
 

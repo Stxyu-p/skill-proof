@@ -104,7 +104,7 @@ Skill Proof delivers an integrated suite of four production subsystems engineere
 | | **MemCore Constraint Veto** | Queries `~/.memcore/memory.db` (< 0.05 ms cached) for negative constraints (`ห้ามใช้`, `do not use`) across 6 languages, pruning candidates pre-ranking. | Prevents negated queries from scoring high semantic similarity.<br>Automated in routing pipeline |
 | | **Deterministic Prerequisite DAG Preflight** | Inspects `required_binaries` (`gh`, `git`, `adb`) via `shutil.which` and `required_tools` before dispatch, preventing runtime mid-task failures. | Preflight guard verifies environmental readiness before execution.<br>`check_prerequisites()` in catalog |
 | | **Epistemic Provenance Badges** | Tags crystallized procedures as `[EXTRACTED]` (executed commands) and `[INFERRED]` (model reasoning), preserving ground truth integrity. | Unambiguous audit trail distinguishing observed telemetry from AI hypothesis.<br>`crystallize.py` |
-| | **Production Telemetry & Unified Tracing** | Mines `audit.jsonl` execution receipts, captures `TRINITY_TRACE_ID`, logs in-flight invocations to `~/.skill-proof/usage.jsonl`, and safely archives dead skills to `~/.agents/archive/`. | Evidence-based catalog maintenance and unified distributed trace logging.<br>`skill-proof audit stats` / `prune` |
+| | **Production Telemetry & Workflow Mining** | Records routing decisions in `audit.jsonl`, reads TrimTok command telemetry for repeated workflow candidates, and reports unused vault skills. Pruning is non-mutating by default; `--apply` is required to archive candidates. | Evidence-bounded diagnostics; audit records are not proof of skill compliance.<br>`skill-proof audit stats` / `prune` |
 
 ---
 
@@ -166,10 +166,11 @@ skill-proof vault patch --patch-op rebase
 skill-proof handoff --target antigravity
 skill-proof handoff --target claude-code
 
-# Inspect production telemetry and prune dead skills
+# Inspect production telemetry; pruning only previews unless --apply is explicit
 skill-proof audit stats
 skill-proof audit prune --dry-run
-skill-proof audit prune --skill <skill-name>
+skill-proof audit prune --apply
+skill-proof audit prune --skill <skill-name> --apply
 
 # Compile Global Trinity protocol into AGENTS.md / CLAUDE.md / GEMINI.md
 skill-proof compile
@@ -178,12 +179,14 @@ skill-proof compile
 skill-proof select "ช่วยรีวิว PR โค้ดหน่อยครับ"
 ```
 
+`audit prune` reports skills absent from the retained audit window, not skills proven permanently unused. Automatic pruning is refused when the selected audit file is missing, corrupt, or has no usable records. Review the candidate list and first/last receipt timestamps before using `--apply`; explicitly naming a skill is still the caller's responsibility.
+
 ### Hermes In-Chat Slash Commands
 - **`/skill-proof status`**: Displays catalog size, detected roots, routing status, and latency.
 - **`/skill-proof explain`**: Explains why the current turn selected its active skill with ranked candidate scores.
 - **`/skill-proof why <skill-name>`**: Detailed diagnostic report showing candidate score breakdown, veto status, or ranking gap.
-- **`/skill-proof stats`**: Displays real telemetry hit counts, miss rate, and top invoked skills.
-- **`/skill-proof audit-verify`**: Cryptographically verifies the SHA-256 hash chain of all historical routing receipts.
+- **`/skill-proof stats`**: Shows routing decisions and host load counts; it does not measure whether the model followed the skill or completed the task.
+- **`/skill-proof audit-verify`**: Checks adjacent `prev_sha256` links in the retained audit file. It does not authenticate the file or recover history removed by rotation.
 - **`/skill-proof refresh`**: Invalidates in-memory catalog cache and re-scans skill roots immediately.
 
 ---

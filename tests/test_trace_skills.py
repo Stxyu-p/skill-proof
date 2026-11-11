@@ -35,6 +35,9 @@ class TestCommandSignature(unittest.TestCase):
             "python -m unittest",
         )
 
+    def test_rejects_printf_shell_noise(self):
+        self.assertIsNone(command_signature("printf '%s\\n' '--- root ---'"))
+
     def test_path_arguments_reduce_to_basename(self):
         self.assertEqual(
             command_signature("python C:/Users/x/repo/tests/test_a.py"),

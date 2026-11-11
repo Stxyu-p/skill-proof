@@ -30,7 +30,7 @@ DEFAULT_TRACE_PATH = "~/.trimtok/usage.jsonl"
 _NOISE_PROGRAMS = frozenset(
     {
         "ls", "cd", "pwd", "echo", "cat", "head", "tail", "wc", "mkdir",
-        "rm", "mv", "cp", "touch", "true", "false", "sleep", "clear",
+        "rm", "mv", "cp", "touch", "true", "false", "sleep", "clear", "printf",
         "export", "source", "which", "whereis", "type", "env", "set",
         "find", "grep", "egrep", "rg", "ag", "fd", "sed", "awk", "diff",
     }

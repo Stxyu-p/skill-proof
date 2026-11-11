@@ -1,7 +1,7 @@
-"""Skill Telemetry and Pruning Engine.
+"""Analyze the retained audit window and preview/archive unselected skills.
 
-Analyzes production telemetry from audit.jsonl to calculate skill hit frequency,
-identify dead skills (0 invocations), and safely move unused skills to an archive.
+A missing skill from a finite log is only an unobserved candidate, not proof
+that it is permanently unused; destructive archival is explicit and fail-closed.
 """
 from __future__ import annotations
 
@@ -23,6 +23,19 @@ def audit_stats(
     v_dir = (pathlib.Path(vault_dir).expanduser() if vault_dir else vault.DEFAULT_VAULT_ROOT).resolve()
 
     records, corrupt = _compliance.read_audit_records(a_path)
+    usable_statuses = {"selected", "no_match", "ambiguous", "blocked"}
+    unusable_records = sum(1 for record in records if record.get("status") not in usable_statuses)
+    records = [record for record in records if record.get("status") in usable_statuses]
+    if not a_path.is_file():
+        prune_block_reason = "audit_log_missing"
+    elif corrupt:
+        prune_block_reason = "audit_log_corrupt"
+    elif unusable_records:
+        prune_block_reason = "audit_log_has_unusable_records"
+    elif not records:
+        prune_block_reason = "audit_log_has_no_usable_records"
+    else:
+        prune_block_reason = None
     status_counts = Counter()
     skill_counts = Counter()
 
@@ -30,31 +43,51 @@ def audit_stats(
         st = r.get("status")
         if st:
             status_counts[st] += 1
-        sel = r.get("selected")
-        if sel and isinstance(sel, str):
-            skill_counts[sel] += 1
+        used_names = set()
+        selected = r.get("selected")
+        if isinstance(selected, str) and selected:
+            used_names.add(selected)
+        override = r.get("override_loaded")
+        if isinstance(override, str) and override:
+            used_names.add(override)
+        elif isinstance(override, (list, tuple, set)):
+            used_names.update(name for name in override if isinstance(name, str) and name)
+        for name in used_names:
+            skill_counts[name] += 1
 
     total_turns = len(records)
     selected_turns = status_counts.get("selected", 0)
-    hit_rate = (selected_turns / total_turns) if total_turns > 0 else 0.0
+    selection_rate = (selected_turns / total_turns) if total_turns > 0 else 0.0
 
     # Vault skills
     vault_skills = [s["name"] for s in vault.list_vault_skills(v_dir)]
     active_in_vault = set(vault_skills)
     
-    dead_skills = [s for s in vault_skills if s not in skill_counts]
+    if prune_block_reason is None:
+        dead_skills = [s for s in vault_skills if s not in skill_counts]
+        used_skills_count = len(active_in_vault - set(dead_skills))
+        dead_skills_count = len(dead_skills)
+    else:
+        dead_skills = []
+        used_skills_count = None
+        dead_skills_count = None
 
     return {
         "audit_path": str(a_path),
         "vault_dir": str(v_dir),
         "total_turns": total_turns,
+        "first_record_ts": records[0].get("ts") if records else None,
+        "last_record_ts": records[-1].get("ts") if records else None,
         "corrupt_records": corrupt,
+        "unusable_records": unusable_records,
+        "prune_safe": prune_block_reason is None,
+        "prune_block_reason": prune_block_reason,
+        "selection_rate": selection_rate,
         "status_counts": dict(status_counts),
-        "hit_rate": hit_rate,
         "top_skills": skill_counts.most_common(15),
         "vault_skills_count": len(vault_skills),
-        "used_skills_count": len(active_in_vault - set(dead_skills)),
-        "dead_skills_count": len(dead_skills),
+        "used_skills_count": used_skills_count,
+        "dead_skills_count": dead_skills_count,
         "dead_skills": dead_skills,
     }
 
@@ -63,7 +96,8 @@ def prune_dead_skills(
     skills_to_prune: Optional[list[str]] = None,
     vault_dir: Optional[pathlib.Path | str] = None,
     archive_dir: Optional[pathlib.Path | str] = None,
-    dry_run: bool = False,
+    dry_run: bool = True,
+    audit_path: Optional[pathlib.Path | str] = None,
 ) -> dict[str, Any]:
     v_dir = (pathlib.Path(vault_dir).expanduser() if vault_dir else vault.DEFAULT_VAULT_ROOT).resolve()
     a_dir = (pathlib.Path(archive_dir).expanduser() if archive_dir else v_dir.parent / "archive").resolve()
@@ -81,11 +115,23 @@ def prune_dead_skills(
         except (OSError, ValueError):
             pass
 
-    target_skills: list[str] = (
-        audit_stats(vault_dir=v_dir)["dead_skills"]
-        if skills_to_prune is None
-        else list(skills_to_prune)
-    )
+    if skills_to_prune is None:
+        stats = audit_stats(audit_path=audit_path, vault_dir=v_dir)
+        if not stats["prune_safe"]:
+            return {
+                "vault_dir": str(v_dir),
+                "archive_dir": str(a_dir),
+                "pruned_count": 0,
+                "skipped_count": 0,
+                "pruned": [],
+                "skipped": [],
+                "dry_run": True,
+                "refused": True,
+                "reason": stats["prune_block_reason"],
+            }
+        target_skills = stats["dead_skills"]
+    else:
+        target_skills = list(skills_to_prune)
 
     pruned = []
     skipped = []
@@ -105,14 +151,15 @@ def prune_dead_skills(
             continue
 
         dest = a_dir / safe
+        if dest.exists():
+            skipped.append({"skill": safe, "reason": "archive_destination_exists"})
+            continue
         if not dry_run:
             a_dir.mkdir(parents=True, exist_ok=True)
             try:
                 if vault._is_reparse(src):
                     src.rmdir()
                 else:
-                    if dest.exists():
-                        shutil.rmtree(dest)
                     shutil.move(str(src), str(dest))
                 pruned.append({"skill": safe, "destination": str(dest)})
             except Exception as exc:

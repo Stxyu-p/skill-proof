@@ -487,11 +487,12 @@ def main(argv=None) -> int:
     calibrate_parser.add_argument("--min-score", type=float, default=0.28)
     calibrate_parser.add_argument("--min-margin", type=float, default=0.05)
 
-    audit_parser = subparsers.add_parser("audit", parents=[common], help="inspect audit logs, usage statistics, and prune dead skills")
+    audit_parser = subparsers.add_parser("audit", parents=[common], help="inspect audit logs and prune unobserved skill candidates")
     audit_parser.add_argument("audit_action", nargs="?", default="stats", choices=("stats", "prune"))
     audit_parser.add_argument("--audit-path", default="", help="audit.jsonl path (default: hermes plugin-data)")
     audit_parser.add_argument("--skill", dest="skill_name", default=None, help="specific skill to prune")
-    audit_parser.add_argument("--dry-run", action="store_true", help="dry run without modifying disk")
+    audit_parser.add_argument("--dry-run", action="store_true", help="report candidates without modifying disk (default)")
+    audit_parser.add_argument("--apply", action="store_true", help="explicitly archive the listed candidates")
     bridge_parser = subparsers.add_parser("bridge", parents=[common], help="connect or inspect host agent workspaces")
     bridge_parser.add_argument("bridge_action", nargs="?", default="status", choices=("status", "init", "install", "remove", "ai-setup"))
     bridge_parser.add_argument("--host", default="auto")
@@ -616,8 +617,11 @@ def main(argv=None) -> int:
                 print(json.dumps(res, indent=2, ensure_ascii=False))
             else:
                 print(f"Skill Proof Telemetry Statistics ({res['total_turns']} turns audited):")
-                print(f"  Hit rate: {res['hit_rate']:.1%} (Selected: {res['status_counts'].get('selected', 0)}, Miss: {res['status_counts'].get('no_match', 0)})")
-                print(f"  Vault skills: {res['vault_skills_count']} total ({res['used_skills_count']} active in telemetry, {res['dead_skills_count']} unused)")
+                print(f"  Selection rate: {res['selection_rate']:.1%} (Selected: {res['status_counts'].get('selected', 0)}, Abstained: {res['status_counts'].get('no_match', 0)})")
+                if res["prune_safe"]:
+                    print(f"  Vault skills: {res['vault_skills_count']} total ({res['used_skills_count']} active in telemetry, {res['dead_skills_count']} unused)")
+                else:
+                    print(f"  Vault skills: {res['vault_skills_count']} total; usage classification unavailable ({res['prune_block_reason']})")
                 print("\nTop invoked skills:")
                 for name, cnt in res["top_skills"]:
                     print(f"  - {name:<28}: {cnt} hits")
@@ -630,11 +634,19 @@ def main(argv=None) -> int:
             return 0
         if action == "prune":
             target_skills = [args.skill_name] if getattr(args, "skill_name", None) else None
-            res = _prune_mod.prune_dead_skills(skills_to_prune=target_skills, dry_run=getattr(args, "dry_run", False))
+            dry_run = not bool(getattr(args, "apply", False)) or bool(getattr(args, "dry_run", False))
+            res = _prune_mod.prune_dead_skills(
+                skills_to_prune=target_skills,
+                audit_path=a_path,
+                dry_run=dry_run,
+            )
             if getattr(args, "json", False):
                 print(json.dumps(res, indent=2, ensure_ascii=False))
             else:
                 dry_label = " (dry run)" if res["dry_run"] else ""
+                if res.get("refused"):
+                    print(f"Skill Proof pruning refused: {res['reason']}; no skills were archived")
+                    return 0
                 print(f"Skill Proof Pruning: {res['pruned_count']} archived{dry_label}, {res['skipped_count']} skipped")
                 for p in res.get("pruned", []):
                     print(f"  ✓ Archived: {p['skill']} -> {p['destination']}")

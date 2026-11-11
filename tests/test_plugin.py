@@ -84,6 +84,73 @@ class PluginAdapterTests(unittest.TestCase):
         base.update(settings)
         return FakeContext(base)
 
+    def test_audit_limit_applies_to_existing_log_at_startup(self):
+        path = self.root / "audit.jsonl"
+        rows = []
+        previous = None
+        for index in range(20):
+            record = {"schema": "skill-proof.audit.v1", "prev_sha256": previous, "turn_id": str(index)}
+            line = json.dumps(record, ensure_ascii=False)
+            rows.append(line)
+            previous = hashlib.sha256(line.encode("utf-8")).hexdigest()[:16]
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        instance = plugin_module.SkillProofPlugin(self.context(
+            audit_log=True, audit_path=str(path), audit_limit=10,
+        ))
+        retained = path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(retained), 10)
+        self.assertEqual(plugin_module.verify_audit_chain(path)["broken_links"], 0)
+        self.assertEqual(instance._audit_chain, hashlib.sha256(retained[-1].encode("utf-8")).hexdigest()[:16])
+        for index in range(3):
+            instance._write_audit({"turn_id": f"after-{index}"}, "session")
+            self.assertLessEqual(len(path.read_text(encoding="utf-8").splitlines()), 10)
+
+    def test_audit_verifier_reports_its_unanchored_scope(self):
+        path = self.root / "audit.jsonl"
+        first = json.dumps({"schema": "skill-proof.audit.v1", "prev_sha256": None})
+        second = json.dumps({
+            "schema": "skill-proof.audit.v1",
+            "prev_sha256": hashlib.sha256(first.encode("utf-8")).hexdigest()[:16],
+            "reason": "original",
+        })
+        path.write_text(first + "\n" + second + "\n", encoding="utf-8")
+        rows = path.read_text(encoding="utf-8").splitlines()
+        altered = json.loads(rows[-1])
+        altered["reason"] = "changed"
+        rows[-1] = json.dumps(altered, ensure_ascii=False)
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        report = plugin_module.verify_audit_chain(path)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["verification_scope"], "retained_adjacent_links")
+        self.assertFalse(report["authenticity_verified"])
+
+    def test_session_end_writes_audit_when_post_llm_hook_was_missed(self):
+        path = self.root / "session-end.jsonl"
+        instance = plugin_module.register(self.context(audit_log=True, audit_path=str(path)))
+        instance.on_pre_llm_call(session_id="session-end", task_id="task", turn_id="turn", user_message="Use $python-tdd")
+        instance.on_session_end(session_id="session-end")
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["turn_id"], "turn")
+
+    def test_session_end_does_not_duplicate_post_llm_audit(self):
+        path = self.root / "session-end-duplicate.jsonl"
+        instance = plugin_module.register(self.context(audit_log=True, audit_path=str(path)))
+        instance.on_pre_llm_call(session_id="session", task_id="task", turn_id="turn", user_message="Use $python-tdd")
+        instance.on_post_llm_call(session_id="session", task_id="task", turn_id="turn")
+        instance.on_session_end(session_id="session")
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(rows), 1)
+
+    def test_fallback_turn_id_can_be_audited_across_multiple_turns(self):
+        path = self.root / "fallback-turns.jsonl"
+        instance = plugin_module.register(self.context(audit_log=True, audit_path=str(path)))
+        for query in ("Use $python-tdd", "Use $python-tdd again"):
+            instance.on_pre_llm_call(session_id="same-session", task_id="same-task", user_message=query)
+            instance.on_post_llm_call(session_id="same-session", task_id="same-task")
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(rows), 2)
+
     def test_fake_context_disables_audit_by_default(self):
         instance = plugin_module.SkillProofPlugin(self.context())
         self.assertFalse(instance.audit_enabled)
@@ -405,6 +472,21 @@ class PluginAdapterTests(unittest.TestCase):
         self.assertIn('hermes_catalog_unavailable', instance.handle_command('trace'))
         self.assertEqual(instance.on_pre_tool_call(session_id='s', task_id='t', turn_id='1', tool_name='terminal')['action'], 'block')
 
+    def test_compact_footer_reports_configured_provider_fallback(self):
+        instance = plugin_module.SkillProofPlugin(self.context(receipt_style="compact"))
+        receipt = {
+            "selected": {"name": "python-tdd"},
+            "evidence": {"host_loaded_event": True},
+            "compliance": "passed",
+            "provider": "local",
+            "provider_used": "off",
+            "fallback_reason": "local_model_unavailable",
+        }
+        with mock.patch.object(instance.engine, "receipt", return_value=receipt), \
+             mock.patch.object(instance.engine, "summary", return_value="Skill Proof: selected"):
+            result = instance.on_transform_llm_output("Answer", session_id="s")
+        self.assertIn("semantic fallback: local_model_unavailable", result)
+
     def test_compact_footer_preserves_honest_proof_limit(self):
         instance = plugin_module.register(self.context(receipt_style='compact'))
         instance.on_pre_llm_call(session_id='s', task_id='t', turn_id='1', user_message='Use $python-tdd')
@@ -421,6 +503,13 @@ class PluginAdapterTests(unittest.TestCase):
         before = instance.handle_command('trace')
         self.assertIn('next turn', instance.handle_command('refresh'))
         self.assertEqual(before, instance.handle_command('trace'))
+
+    def test_audit_record_preserves_pre_llm_stage_timing(self):
+        record = plugin_module.SkillProofPlugin._audit_record(
+            {"performance": {"listing_ms": 12.5, "total_ms": 30.0}}, "ses_test"
+        )
+        self.assertEqual(record["listing_ms"], 12.5)
+        self.assertEqual(record["total_ms"], 30.0)
 
     def test_audit_record_carries_trinity_trace_id(self):
         import os
