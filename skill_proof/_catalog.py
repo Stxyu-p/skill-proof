@@ -15,6 +15,11 @@ from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
+try:
+    from ._proof import ProofContract, parse_contract
+except ImportError:
+    from _proof import ProofContract, parse_contract
+
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._: -]{0,126}[A-Za-z0-9._:-])?$")
 
@@ -100,6 +105,7 @@ class SkillRecord:
     invariants: SkillInvariants = SkillInvariants()
     aliases: tuple[str, ...] = ()
     related_skills: tuple[str, ...] = ()
+    proof_contract: Optional[ProofContract] = None
 
 
 @dataclass(frozen=True)
@@ -214,6 +220,7 @@ def _parse_skill(
     aliases: tuple[str, ...] = ()
     related_skills: tuple[str, ...] = ()
     invariants_data: dict[str, tuple[str, ...]] = {}
+    proof_contract_raw: Any = None
     skip_until = 0
     for index, line in enumerate(lines[1:closing], start=1):
         if index < skip_until:
@@ -261,6 +268,21 @@ def _parse_skill(
                 invariants_data["forbidden_tools"] = tuple(
                     dict.fromkeys(invariants_data.get("forbidden_tools", ()) + ("write_file", "patch", "skill_manage"))
                 )
+        elif is_top_level and stripped_key in {"proof_contract", "contract"}:
+            raw_val = value.strip()
+            if raw_val:
+                proof_contract_raw = raw_val
+            else:
+                parts = []
+                cursor = index + 1
+                while cursor < closing:
+                    subline = lines[cursor]
+                    if subline.strip() and len(subline) == len(subline.lstrip()):
+                        break
+                    parts.append(subline)
+                    cursor += 1
+                skip_until = cursor
+                proof_contract_raw = "\n".join(parts).strip()
         elif is_top_level and stripped_key == "invariants":
             cursor = index + 1
             inv_lines = []
@@ -301,6 +323,9 @@ def _parse_skill(
         ordered_tools=_expand_capabilities_to_tools(invariants_data.get("ordered_tools", ())),
         required_binaries=invariants_data.get("required_binaries", ()),
     )
+    parsed_contract = parse_contract(proof_contract_raw, skill=name) if proof_contract_raw else None
+    if parsed_contract is not None and parsed_contract.is_empty:
+        parsed_contract = None
     return SkillRecord(
         skill_id=skill_id,
         name=name,
@@ -316,6 +341,7 @@ def _parse_skill(
         invariants=inv_obj,
         aliases=aliases,
         related_skills=related_skills,
+        proof_contract=parsed_contract,
     )
 
 

@@ -33,6 +33,7 @@ try:  # Hermes loads directory plugins as packages; direct unit tests do not.
         normalize_identifier,
         read_audit_records,
     )
+    from .skill_proof._proof import format_proof_report
     from .skill_proof.vault import is_skill_immutable
 except ImportError:  # pragma: no cover - exercised by direct adapter tests
     from skill_proof.core import (
@@ -46,6 +47,7 @@ except ImportError:  # pragma: no cover - exercised by direct adapter tests
         normalize_identifier,
         read_audit_records,
     )
+    from skill_proof._proof import format_proof_report
     from skill_proof.vault import is_skill_immutable
 
 
@@ -61,7 +63,8 @@ Usage:
   /skill-proof why <name>  Why this skill won, lost, or was vetoed
   /skill-proof stats      Hit rate, misses, and overrides from the audit log
   /skill-proof overlap    Near-duplicate skills worth pruning
-  /skill-proof trace       Full bounded JSON receipt
+  /skill-proof proof      Proof contract verdict and evidence references
+  /skill-proof trace      Full bounded JSON receipt
   /skill-proof refresh     Reread local skill content on the next turn
   /skill-proof health      Hook activity, catalog diagnostics, and timing
 
@@ -473,6 +476,7 @@ class SkillProofPlugin:
                 task_id=str(task_id or ""),
                 tool_name=str(tool_name or ""),
                 tool_call_id=str(kwargs.get("tool_call_id") or ""),
+                args=args_payload if isinstance(args_payload, dict) else None,
             )
         except Exception:
             logger.exception("Skill Proof pre-tool policy failed")
@@ -1162,13 +1166,15 @@ class SkillProofPlugin:
         if command == "refresh":
             self.engine.refresh_catalog()
             return "Skill cache cleared; content will be reread on the next turn. Existing receipts are unchanged."
-        if command not in {"status", "explain", "trace"}:
+        if command not in {"status", "explain", "trace", "proof"}:
             return f"Unknown subcommand: {command}\n\n{_HELP}"
         receipt = self._latest_receipt()
         if not receipt:
             return "No Skill Proof receipt is available yet."
         if command == "status":
             return self._receipt_summary(receipt)
+        if command == "proof":
+            return format_proof_report(receipt)
         if command == "trace":
             return json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True)
 

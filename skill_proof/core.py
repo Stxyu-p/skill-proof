@@ -158,6 +158,23 @@ from _compliance import (  # v0.16 facade re-exports
     read_audit_records,
 )
 
+try:
+    from ._proof import (
+        ExecutionEvent,
+        ProofContract,
+        evaluate_contract,
+        extract_event_path,
+        parse_contract,
+    )
+except ImportError:
+    from _proof import (
+        ExecutionEvent,
+        ProofContract,
+        evaluate_contract,
+        extract_event_path,
+        parse_contract,
+    )
+
 
 __version__ = "2.1.2"
 
@@ -194,6 +211,8 @@ class _TurnState:
     active_evidence: Optional[str] = None
     observed_tools: list[str] = field(default_factory=list)
     tool_outcomes: list[dict[str, Any]] = field(default_factory=list)
+    execution_events: list[ExecutionEvent] = field(default_factory=list)
+    contract: Optional[ProofContract] = None
     complete: bool = False
     availability: str = "local_only"
     local_skill_count: int = 0
@@ -814,6 +833,7 @@ class SkillProofEngine:
         query: str,
         available_names: Optional[set[str]] = None,
         availability_error: bool = False,
+        contract: Optional[Mapping[str, Any]] = None,
     ) -> TurnStart:
         core_started = self._clock()
         clean_turn_id = self._text_id(turn_id)
@@ -1025,6 +1045,13 @@ class SkillProofEngine:
             compact = _compact_context(selection, self.mode, availability_error)
             context = compact if len(compact.encode("utf-8")) <= self.context_budget_bytes else ""
             errors.append("context_budget_exceeded")
+        resolved_contract: Optional[ProofContract] = None
+        if contract is not None:
+            parsed_c = parse_contract(contract, skill=selection.selected.skill.name if selection.selected else "")
+            if not parsed_c.is_empty:
+                resolved_contract = parsed_c
+        elif selection.selected is not None and selection.selected.skill.proof_contract is not None:
+            resolved_contract = selection.selected.skill.proof_contract
         state = _TurnState(
             turn_id=clean_turn_id,
             session_id=clean_session_id,
@@ -1034,6 +1061,7 @@ class SkillProofEngine:
             catalog=catalog,
             selection=selection,
             context=context,
+            contract=resolved_contract,
             errors=errors,
             availability="unavailable" if availability_error else "hermes_list" if available_names is not None else "local_only",
             local_skill_count=local_count,
@@ -1207,6 +1235,33 @@ class SkillProofEngine:
         order = tuple(dict.fromkeys(front.ordered_tools + cfg.ordered_tools))
         return SkillInvariants(required_tools=req, forbidden_tools=forb, ordered_tools=order)
 
+    @staticmethod
+    def _record_execution_event(
+        state: _TurnState,
+        *,
+        tool: str,
+        phase: str,
+        status: str,
+        call_id: str = "",
+        exit_code: Optional[int] = None,
+        path: str = "",
+    ) -> None:
+        if len(state.execution_events) >= 128:
+            return
+        idx = len(state.execution_events) + 1
+        state.execution_events.append(
+            ExecutionEvent(
+                event_id=f"evt_{idx:03d}",
+                evidence_id=f"ev_{idx:03d}",
+                call_id=call_id,
+                tool=tool,
+                phase=phase,
+                status=status,
+                exit_code=exit_code,
+                path=path,
+            )
+        )
+
     def guard_tool(
         self,
         *,
@@ -1215,6 +1270,7 @@ class SkillProofEngine:
         task_id: str,
         tool_name: str,
         tool_call_id: str = "",
+        args: Optional[Mapping[str, Any]] = None,
     ) -> GuardResult:
         normalized_tool = normalize_identifier(tool_name)
         with self._lock:
@@ -1252,6 +1308,14 @@ class SkillProofEngine:
                     reason = f"forbidden_tool:{normalized_tool}"
                     if reason not in state.compliance_reasons:
                         state.compliance_reasons.append(reason)
+                    self._record_execution_event(
+                        state,
+                        tool=normalized_tool,
+                        phase="pre",
+                        status="blocked",
+                        call_id=f"{session_id}:{task_id}:{tool_call_id}" if tool_call_id else "",
+                        path=extract_event_path(args),
+                    )
                     return GuardResult(
                         False,
                         "forbidden_tool",
@@ -1268,6 +1332,14 @@ class SkillProofEngine:
                         if reason not in state.compliance_reasons:
                             state.compliance_reasons.append(reason)
                         if self.mode == "enforce-tools":
+                            self._record_execution_event(
+                                state,
+                                tool=normalized_tool,
+                                phase="pre",
+                                status="blocked",
+                                call_id=f"{session_id}:{task_id}:{tool_call_id}" if tool_call_id else "",
+                                path=extract_event_path(args),
+                            )
                             return GuardResult(
                                 False,
                                 "tool_order_violated",
@@ -1275,9 +1347,34 @@ class SkillProofEngine:
                             )
 
             self._remember_tool(state, tool_name)
+            self._record_execution_event(
+                state,
+                tool=normalized_tool,
+                phase="pre",
+                status="allowed",
+                call_id=f"{session_id}:{task_id}:{tool_call_id}" if tool_call_id else "",
+                path=extract_event_path(args),
+            )
             if state.host_loaded_event:
                 return GuardResult(True, "selected_skill_loaded")
             return GuardResult(True, "mode_not_enforcing")
+
+    @staticmethod
+    def _extract_exit_code(result: Any) -> Optional[int]:
+        parsed = result if isinstance(result, Mapping) else None
+        if parsed is None and isinstance(result, (str, bytes)):
+            try:
+                raw = result.decode("utf-8", errors="replace") if isinstance(result, bytes) else result
+                obj = json.loads(raw)
+                if isinstance(obj, Mapping):
+                    parsed = obj
+            except (ValueError, TypeError):
+                parsed = None
+        if parsed is not None:
+            ec = parsed.get("exit_code")
+            if isinstance(ec, int) and not isinstance(ec, bool):
+                return ec
+        return None
 
     @staticmethod
     def _classify_tool_outcome(
@@ -1342,6 +1439,15 @@ class SkillProofEngine:
                         break
             if not updated and len(state.tool_outcomes) < 64:
                 state.tool_outcomes.append(entry)
+            self._record_execution_event(
+                state,
+                tool=norm_tool,
+                phase="post",
+                status=outcome_status,
+                call_id=scoped_id,
+                exit_code=self._extract_exit_code(result),
+                path=extract_event_path(args),
+            )
             if norm_tool != "skill_view" or state.selection.selected is None:
                 return False
             supplied_name = ""
@@ -1452,6 +1558,21 @@ class SkillProofEngine:
 
     def _receipt_payload(self, state: _TurnState) -> dict[str, Any]:
         self._evaluate_compliance(state)
+        proof_report: Optional[dict[str, Any]] = None
+        active_contract = state.contract or (
+            state.selection.selected.skill.proof_contract
+            if state.selection.selected is not None
+            else None
+        )
+        if active_contract is not None and not active_contract.is_empty:
+            proof_report = evaluate_contract(active_contract, state.execution_events)
+            verdict = proof_report.get("verdict")
+            if verdict == "PASS":
+                state.verification = "verified"
+            elif verdict == "FAIL":
+                state.verification = "failed"
+            else:
+                state.verification = "unverified"
         diagnostics = Counter(item.code for item in state.catalog.diagnostics)
         selected = state.selection.selected
         return {
@@ -1506,6 +1627,7 @@ class SkillProofEngine:
             "compliance": state.compliance,
             "compliance_reasons": list(state.compliance_reasons),
             "verification": state.verification,
+            **({"proof": proof_report} if proof_report is not None else {}),
             "errors": list(state.errors),
             "complete": state.complete,
             "performance": dict(state.performance),
