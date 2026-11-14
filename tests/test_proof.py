@@ -313,6 +313,19 @@ class Phase2And3GoalRunAndClaimGuardTests(unittest.TestCase):
         dishonest_th = ctx.hooks["transform_llm_output"](session_id="s_th", response_text="ทดสอบผ่านหมดแล้ว แก้เรียบร้อย")
         self.assertIn("CLAIM CONTRADICTION", dishonest_th)
 
+    def test_reset_only_closes_current_sessions_goal_run(self):
+        ctx = FakeContext({"skill_roots": [str(self.root)], "mode": "nudge"})
+        plugin = plugin_module.register(ctx)
+
+        ctx.hooks["pre_llm_call"](session_id="sess_A", task_id="k1", turn_id="tA", user_message="Use $python-tdd")
+        ctx.hooks["pre_tool_call"](session_id="sess_A", task_id="k1", turn_id="tA", tool_name="terminal", tool_call_id="cA", args={"command": "pytest"})
+        ctx.hooks["post_tool_call"](session_id="sess_A", task_id="k1", turn_id="tA", tool_name="terminal", tool_call_id="cA", args={"command": "pytest"}, result=json.dumps({"exit_code": 0}), status="success")
+
+        ctx.hooks["pre_llm_call"](session_id="sess_B", task_id="k1", turn_id="tB", user_message="Use $python-tdd")
+        self.assertIn("GoalRun closed", plugin.handle_command("reset"))
+        self.assertIn("sess_A", plugin.engine._goal_runs)
+        self.assertNotIn("sess_B", plugin.engine._goal_runs)
+
 
 if __name__ == "__main__":
     unittest.main()

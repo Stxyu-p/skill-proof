@@ -765,6 +765,8 @@ class SkillProofPlugin:
             "focus": session.get("focus"),
             "loaded": bool(evidence.get("host_loaded_event", evidence.get("hermes_loaded_event"))),
             "compliance": receipt.get("compliance"),
+            "verification": receipt.get("verification"),
+            "proof_verdict": (receipt.get("proof") or {}).get("verdict") if isinstance(receipt.get("proof"), Mapping) else None,
             "provider": receipt.get("provider", "off"),
             "provider_used": receipt.get("provider_used", "off"),
             "fallback_reason": receipt.get("fallback_reason"),
@@ -1181,13 +1183,8 @@ class SkillProofPlugin:
             return "Skill cache cleared; content will be reread on the next turn. Existing receipts are unchanged."
         if command in {"reset", "close-run"}:
             receipt = self._latest_receipt()
-            sid = str((receipt.get("evidence") or {}).get("session_id") or "")
-            closed = False
-            if sid:
-                closed = self.engine.close_goal_run(sid)
-            if not closed and self.engine._goal_runs:
-                for key in list(self.engine._goal_runs):
-                    closed = self.engine.close_goal_run(key) or closed
+            tid = str(receipt.get("turn_id") or "")
+            closed = self.engine.close_goal_run_for_turn(tid) if tid else False
             return (
                 "GoalRun closed; next turn starts with a clean evidence run."
                 if closed

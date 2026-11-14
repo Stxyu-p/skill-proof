@@ -180,7 +180,24 @@ except ImportError:
     )
 
 
-__version__ = "2.1.2"
+def _resolve_version() -> str:
+    pyproject = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
+    if pyproject.is_file():
+        m = re.search(
+            r'^version\s*=\s*["\']([^"\']+)["\']',
+            pyproject.read_text(encoding="utf-8", errors="ignore"),
+            re.M,
+        )
+        if m:
+            return m.group(1).strip()
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version("skill-proof-router")
+    except Exception:
+        return "0.0.0"
+
+
+__version__ = _resolve_version()
 
 
 @dataclass(frozen=True)
@@ -755,6 +772,20 @@ class SkillProofEngine:
                 run.status = "closed"
                 dropped = True
             return dropped
+
+    def close_goal_run_for_turn(self, turn_id: str) -> bool:
+        """Close only the GoalRun associated with ``turn_id``."""
+        clean_turn = self._text_id(turn_id)
+        if not clean_turn:
+            return False
+        with self._lock:
+            state = self._turns.get(clean_turn)
+            if state is not None and state.session_id:
+                return self.close_goal_run(state.session_id)
+            for sid, run in list(self._goal_runs.items()):
+                if clean_turn in run.turn_ids:
+                    return self.close_goal_run(sid)
+            return False
 
     def close_goal_run(self, session_id: str) -> bool:
         """Close the active multi-turn GoalRun so the next turn starts fresh."""

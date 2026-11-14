@@ -104,7 +104,6 @@ def crystallize_skill(
         "---",
         f"name: {slug}",
         f"description: {json.dumps(desc, ensure_ascii=False)}",
-        "version: 0.1.0",
         "author: Chok (gugmn), Mika & SkillProof",
         "license: MIT",
         "platforms: [linux, macos, windows]",

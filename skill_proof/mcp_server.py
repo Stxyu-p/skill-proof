@@ -22,7 +22,7 @@ try:
 except (ImportError, ValueError):
     import core
 
-SERVER_INFO = {"name": "skill-proof", "version": "1.3.0"}
+SERVER_INFO = {"name": "skill-proof", "version": core.__version__}
 FALLBACK_PROTOCOL = "2024-11-05"
 SERVER_INSTRUCTIONS = (
     "Skill Proof — Deterministic Skill Router, Cryptographic Provenance & Global Skill Vault.\n\n"
@@ -213,6 +213,7 @@ def _tool_select(parameters):
             "reasons": list(selected.reasons),
             "root_id": selected.skill.root_id,
             "relative_path": selected.skill.relative_path,
+            "has_proof_contract": selected.skill.proof_contract is not None,
         }
         if parameters.get("include_content"):
             selected_payload["source_path"] = str(selected.skill.source_path)

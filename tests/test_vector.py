@@ -213,9 +213,10 @@ class ModelFastVerificationTests(unittest.TestCase):
         root = pathlib.Path(__file__).resolve().parent.parent
         pyaml = (root / "plugin.yaml").read_text(encoding="utf-8")
         pyproj = (root / "pyproject.toml").read_text(encoding="utf-8")
-        v_yaml = re.search(r"version:\s*([^\s]+)", pyaml).group(1).strip("\"'")
+        m_yaml = re.search(r"^version:\s*([^\s]+)", pyaml, re.M)
         v_proj = re.search(r'version\s*=\s*"([^"]+)"', pyproj).group(1)
-        self.assertEqual(core_ver, v_yaml)
+        if m_yaml:
+            self.assertEqual(core_ver, m_yaml.group(1).strip("\"'"))
         self.assertEqual(core_ver, v_proj)
 
         with tempfile.TemporaryDirectory() as tmp:

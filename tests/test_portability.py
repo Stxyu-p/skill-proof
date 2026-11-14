@@ -322,10 +322,11 @@ class McpServerTests(unittest.TestCase):
 class VersionConsistencyTests(unittest.TestCase):
     def test_manifest_matches_core_version(self):
         manifest = (_PLUGIN_DIR / "plugin.yaml").read_text(encoding="utf-8")
-        version_line = next(
-            line for line in manifest.splitlines() if line.startswith("version:")
-        )
-        self.assertEqual(version_line.split(":", 1)[1].strip(), core.__version__)
+        version_lines = [line for line in manifest.splitlines() if line.startswith("version:")]
+        if version_lines:
+            self.assertEqual(version_lines[0].split(":", 1)[1].strip(), core.__version__)
+        from skill_proof import mcp_server
+        self.assertEqual(mcp_server.SERVER_INFO["version"], core.__version__)
 
 
 if __name__ == "__main__":
