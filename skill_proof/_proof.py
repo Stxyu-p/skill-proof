@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
 
@@ -61,6 +62,21 @@ class ExecutionEvent:
     status: str
     exit_code: Optional[int] = None
     path: str = ""
+    run_id: str = ""
+    trust: str = "runtime_observed"
+
+
+@dataclass
+class GoalRun:
+    run_id: str
+    session_id: str
+    skill: str
+    contract: ProofContract
+    turn_ids: list[str] = field(default_factory=list)
+    events: list[ExecutionEvent] = field(default_factory=list)
+    pending_calls: dict[str, ExecutionEvent] = field(default_factory=dict)
+    unmatched_calls: list[str] = field(default_factory=list)
+    status: str = "running"
 
 
 def parse_contract(raw: Any, *, skill: str = "") -> ProofContract:
@@ -311,16 +327,27 @@ def _eval_artifact_diff(req: ProofRequirement, events: Sequence[ExecutionEvent])
     }
 
 
-def evaluate_contract(contract: ProofContract, events: Sequence[ExecutionEvent]) -> dict[str, Any]:
+def evaluate_contract(
+    contract: ProofContract,
+    events: Sequence[ExecutionEvent],
+    *,
+    run_id: str = "",
+    unmatched_calls: Sequence[str] = (),
+) -> dict[str, Any]:
     """Deterministically evaluate a ProofContract against runtime ExecutionEvents."""
+    # Stale Evidence Guard: ignore events stamped with a different run_id.
+    scoped_events = [
+        ev for ev in events
+        if not run_id or not getattr(ev, "run_id", "") or ev.run_id == run_id
+    ]
     results: list[dict[str, Any]] = []
     for req in contract.requirements:
         if req.verifier == "tool_result":
-            results.append(_eval_tool_result(req, events))
+            results.append(_eval_tool_result(req, scoped_events))
         elif req.verifier == "event_order":
-            results.append(_eval_event_order(req, events))
+            results.append(_eval_event_order(req, scoped_events))
         elif req.verifier == "artifact_diff":
-            results.append(_eval_artifact_diff(req, events))
+            results.append(_eval_artifact_diff(req, scoped_events))
         else:
             results.append({
                 "id": req.id,
@@ -334,10 +361,13 @@ def evaluate_contract(contract: ProofContract, events: Sequence[ExecutionEvent])
     total = len(results)
     verified_count = sum(1 for r in results if r["status"] == "verified")
     must_reqs = [r for r in results if r["must_pass"]]
+    unmatched_list = [str(item) for item in unmatched_calls if str(item)]
     if not results:
         verdict = "NEEDS_REVIEW"
     elif any(r["status"] == "failed" for r in must_reqs):
         verdict = "FAIL"
+    elif unmatched_list:
+        verdict = "NEEDS_REVIEW"
     elif all(r["status"] == "verified" for r in must_reqs) and verified_count == total:
         verdict = "PASS"
     elif must_reqs and all(r["status"] == "verified" for r in must_reqs):
@@ -345,13 +375,81 @@ def evaluate_contract(contract: ProofContract, events: Sequence[ExecutionEvent])
     else:
         verdict = "NEEDS_REVIEW"
 
-    return {
+    payload: dict[str, Any] = {
         "schema_version": "skill-proof.proof.v1",
         "skill": contract.skill,
         "verdict": verdict,
         "verified_count": verified_count,
         "total_count": total,
         "requirements": results,
+    }
+    if run_id:
+        payload["run_id"] = run_id
+    if unmatched_list:
+        payload["unmatched_calls"] = unmatched_list
+    return payload
+
+
+_POSITIVE_CLAIM_RE = re.compile(
+    r"(?:"
+    r"\ball\s+tests?\s+pass(?:ed)?\b|"
+    r"\btests?\s+pass(?:ed)?\b|"
+    r"\ball\s+checks?\s+pass(?:ed)?\b|"
+    r"\b(?:bug|issue)\s+(?:is\s+)?fixed\b|"
+    r"\bfixed\s+the\s+(?:bug|issue)\b|"
+    r"\bcompleted\s+successfully\b|"
+    r"\bverified\s+(?:working|passing|fixed)\b|"
+    r"ทดสอบผ่าน(?:หมด)?|"
+    r"ผ่านหมด(?:แล้ว)?|"
+    r"แก้(?:ไข)?(?:บั๊ก|ปัญหา)?เรียบร้อย|"
+    r"แก้เสร็จ(?:แล้ว)?|"
+    r"ยืนยันแล้วว่าผ่าน"
+    r")",
+    re.IGNORECASE,
+)
+_NEGATION_RE = re.compile(
+    r"(?:\b(?:not|never|no|didn't|did\s+not|cannot|can't|unable\s+to|fail(?:ed|ing)?)\b|"
+    r"ยังไม่|ไม่ได้|ไม่ผ่าน|ล้มเหลว)",
+    re.IGNORECASE,
+)
+
+
+def check_claim_contradiction(
+    response_text: str,
+    proof_report: Optional[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Check whether agent completion claims contradict observed ProofContract verdict."""
+    if not isinstance(proof_report, Mapping) or not proof_report:
+        return {"checked": False, "claimed_success": False, "contradicted": False, "reason": ""}
+
+    clauses = [c.strip() for c in re.split(r"[.\n;!?]+", str(response_text or "")) if c.strip()]
+    claimed = any(_POSITIVE_CLAIM_RE.search(c) and not _NEGATION_RE.search(c) for c in clauses)
+    verdict = str(proof_report.get("verdict") or "NEEDS_REVIEW")
+    if not claimed or verdict == "PASS":
+        return {"checked": True, "claimed_success": claimed, "contradicted": False, "reason": ""}
+
+    reqs = proof_report.get("requirements") or ()
+    if verdict == "FAIL":
+        failed = [r for r in reqs if isinstance(r, Mapping) and r.get("status") == "failed"]
+        ids = [str(r.get("id") or "unknown") for r in failed]
+        refs = [ref for r in failed for ref in (r.get("evidence_refs") or ())]
+        return {
+            "checked": True,
+            "claimed_success": True,
+            "contradicted": True,
+            "reason": f"Claim contradicted by failed proof: {', '.join(ids) or 'FAIL'}",
+            "contradicted_requirements": ids,
+            "evidence_refs": refs,
+        }
+
+    missing = [str(r.get("id") or "unknown") for r in reqs if isinstance(r, Mapping) and r.get("status") != "verified"]
+    return {
+        "checked": True,
+        "claimed_success": True,
+        "contradicted": True,
+        "reason": f"Claim unsubstantiated ({verdict}; unverified: {', '.join(missing) or 'none'})",
+        "contradicted_requirements": missing,
+        "evidence_refs": [],
     }
 
 
@@ -368,14 +466,23 @@ def format_proof_report(receipt: Mapping[str, Any]) -> str:
             f"verification={receipt.get('verification', 'unverified')}\n"
             "No proof_contract attached to this turn."
         )
+    header_meta = f"Skill: {proof.get('skill') or 'unknown'}"
+    if proof.get("run_id"):
+        header_meta += f" | Run: {proof.get('run_id')} (turns: {proof.get('turn_count', 1)})"
     lines = [
         "GOAL / SKILL EXECUTION REPORT",
         f"Verdict: {proof.get('verdict', 'NEEDS_REVIEW')} ({proof.get('verified_count', 0)} / {proof.get('total_count', 0)} requirements verified)",
-        f"Skill: {proof.get('skill') or 'unknown'}",
+        header_meta,
         "",
     ]
     for req in proof.get("requirements") or ():
         refs = ", ".join(req.get("evidence_refs") or ()) or "none"
         lines.append(f"- [{str(req.get('status', 'unverified')).upper()}] {req.get('id')}: {req.get('description')}")
         lines.append(f"  Evidence: {refs} — {req.get('reason')}")
+    unmatched = proof.get("unmatched_calls") or ()
+    if unmatched:
+        lines.append(f"\nUnmatched concurrent calls: {', '.join(str(x) for x in unmatched)}")
+    claim_check = receipt.get("claim_check")
+    if isinstance(claim_check, Mapping) and claim_check.get("contradicted"):
+        lines.append(f"\nClaim Check: CONTRADICTED — {claim_check.get('reason')}")
     return "\n".join(lines)

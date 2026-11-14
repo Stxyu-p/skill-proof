@@ -161,7 +161,9 @@ from _compliance import (  # v0.16 facade re-exports
 try:
     from ._proof import (
         ExecutionEvent,
+        GoalRun,
         ProofContract,
+        check_claim_contradiction,
         evaluate_contract,
         extract_event_path,
         parse_contract,
@@ -169,7 +171,9 @@ try:
 except ImportError:
     from _proof import (
         ExecutionEvent,
+        GoalRun,
         ProofContract,
+        check_claim_contradiction,
         evaluate_contract,
         extract_event_path,
         parse_contract,
@@ -213,6 +217,8 @@ class _TurnState:
     tool_outcomes: list[dict[str, Any]] = field(default_factory=list)
     execution_events: list[ExecutionEvent] = field(default_factory=list)
     contract: Optional[ProofContract] = None
+    run_id: str = ""
+    claim_check: Optional[dict[str, Any]] = None
     complete: bool = False
     availability: str = "local_only"
     local_skill_count: int = 0
@@ -380,6 +386,8 @@ class SkillProofEngine:
         self._turns: dict[str, _TurnState] = {}
         self._latest_by_task: dict[tuple[str, str], str] = {}
         self._latest_by_session: dict[str, str] = {}
+        self._goal_runs: dict[str, GoalRun] = {}
+        self._run_seq: int = 0
         self._latest_turn_id: Optional[str] = None
         self._lock = threading.RLock()
         self.vector_index = vector_index
@@ -741,7 +749,24 @@ class SkillProofEngine:
         if not clean:
             return False
         with self._lock:
-            return self._sessions.pop(clean, None) is not None
+            dropped = self._sessions.pop(clean, None) is not None
+            run = self._goal_runs.pop(clean, None)
+            if run is not None:
+                run.status = "closed"
+                dropped = True
+            return dropped
+
+    def close_goal_run(self, session_id: str) -> bool:
+        """Close the active multi-turn GoalRun so the next turn starts fresh."""
+        clean = self._text_id(session_id)
+        if not clean:
+            return False
+        with self._lock:
+            run = self._goal_runs.pop(clean, None)
+            if run is None:
+                return False
+            run.status = "closed"
+            return True
 
     def session_state(self, session_id: str) -> dict[str, Any]:
         """Read-only view of what this session is holding on to."""
@@ -1052,6 +1077,42 @@ class SkillProofEngine:
                 resolved_contract = parsed_c
         elif selection.selected is not None and selection.selected.skill.proof_contract is not None:
             resolved_contract = selection.selected.skill.proof_contract
+        active_run_id = ""
+        with self._lock:
+            existing_run = self._goal_runs.get(clean_session_id) if clean_session_id else None
+            selected_name = selection.selected.skill.name if selection.selected is not None else ""
+            if resolved_contract is not None and not resolved_contract.is_empty and clean_session_id:
+                run_skill = resolved_contract.skill or selected_name
+                if (
+                    existing_run is not None
+                    and existing_run.status == "running"
+                    and existing_run.skill == run_skill
+                ):
+                    if clean_turn_id not in existing_run.turn_ids:
+                        existing_run.turn_ids.append(clean_turn_id)
+                    active_run_id = existing_run.run_id
+                else:
+                    if existing_run is not None:
+                        existing_run.status = "closed"
+                    self._run_seq += 1
+                    new_run = GoalRun(
+                        run_id=f"run_{self._run_seq:04d}",
+                        session_id=clean_session_id,
+                        skill=run_skill,
+                        contract=resolved_contract,
+                        turn_ids=[clean_turn_id],
+                    )
+                    self._goal_runs[clean_session_id] = new_run
+                    active_run_id = new_run.run_id
+            elif existing_run is not None and existing_run.status == "running":
+                if selection.selected is None and selection.status != "blocked":
+                    resolved_contract = existing_run.contract
+                    if clean_turn_id not in existing_run.turn_ids:
+                        existing_run.turn_ids.append(clean_turn_id)
+                    active_run_id = existing_run.run_id
+                elif selected_name and selected_name != existing_run.skill:
+                    existing_run.status = "closed"
+                    self._goal_runs.pop(clean_session_id, None)
         state = _TurnState(
             turn_id=clean_turn_id,
             session_id=clean_session_id,
@@ -1062,6 +1123,7 @@ class SkillProofEngine:
             selection=selection,
             context=context,
             contract=resolved_contract,
+            run_id=active_run_id,
             errors=errors,
             availability="unavailable" if availability_error else "hermes_list" if available_names is not None else "local_only",
             local_skill_count=local_count,
@@ -1235,8 +1297,8 @@ class SkillProofEngine:
         order = tuple(dict.fromkeys(front.ordered_tools + cfg.ordered_tools))
         return SkillInvariants(required_tools=req, forbidden_tools=forb, ordered_tools=order)
 
-    @staticmethod
     def _record_execution_event(
+        self,
         state: _TurnState,
         *,
         tool: str,
@@ -1246,6 +1308,44 @@ class SkillProofEngine:
         exit_code: Optional[int] = None,
         path: str = "",
     ) -> None:
+        run = self._goal_runs.get(state.session_id) if state.run_id else None
+        if run is not None and run.run_id == state.run_id:
+            if len(run.events) >= 256:
+                return
+            idx = len(run.events) + 1
+            ev = ExecutionEvent(
+                event_id=f"evt_{idx:03d}",
+                evidence_id=f"ev_{idx:03d}",
+                call_id=call_id,
+                tool=tool,
+                phase=phase,
+                status=status,
+                exit_code=exit_code,
+                path=path,
+                run_id=run.run_id,
+            )
+            if phase == "pre" and status == "allowed":
+                key = call_id or f"anon:{idx}:{tool}"
+                run.pending_calls[key] = ev
+            elif phase == "post":
+                if call_id and call_id in run.pending_calls:
+                    run.pending_calls.pop(call_id, None)
+                elif not call_id and len(run.pending_calls) > 1:
+                    marker = f"unmatched_concurrent:{tool}"
+                    if marker not in run.unmatched_calls:
+                        run.unmatched_calls.append(marker)
+                elif not call_id and len(run.pending_calls) == 1:
+                    sole_key = next(iter(run.pending_calls))
+                    if sole_key.startswith("anon:") and sole_key.endswith(f":{tool}"):
+                        run.pending_calls.pop(sole_key, None)
+                elif call_id and run.pending_calls and any(k.startswith("anon:") for k in run.pending_calls):
+                    marker = f"unmatched_call:{tool}"
+                    if marker not in run.unmatched_calls:
+                        run.unmatched_calls.append(marker)
+            run.events.append(ev)
+            if len(state.execution_events) < 128:
+                state.execution_events.append(ev)
+            return
         if len(state.execution_events) >= 128:
             return
         idx = len(state.execution_events) + 1
@@ -1565,7 +1665,17 @@ class SkillProofEngine:
             else None
         )
         if active_contract is not None and not active_contract.is_empty:
-            proof_report = evaluate_contract(active_contract, state.execution_events)
+            run = self._goal_runs.get(state.session_id) if state.run_id else None
+            if run is not None and run.run_id == state.run_id:
+                proof_report = evaluate_contract(
+                    active_contract,
+                    run.events,
+                    run_id=run.run_id,
+                    unmatched_calls=run.unmatched_calls,
+                )
+                proof_report["turn_count"] = len(run.turn_ids)
+            else:
+                proof_report = evaluate_contract(active_contract, state.execution_events)
             verdict = proof_report.get("verdict")
             if verdict == "PASS":
                 state.verification = "verified"
@@ -1628,6 +1738,7 @@ class SkillProofEngine:
             "compliance_reasons": list(state.compliance_reasons),
             "verification": state.verification,
             **({"proof": proof_report} if proof_report is not None else {}),
+            **({"claim_check": dict(state.claim_check)} if state.claim_check is not None else {}),
             "errors": list(state.errors),
             "complete": state.complete,
             "performance": dict(state.performance),
@@ -1654,6 +1765,27 @@ class SkillProofEngine:
                 state.performance["skill_index_chars_removed"] = (
                     int(state.performance.get("skill_index_chars_removed", 0)) + int(chars_removed)
                 )
+
+    def record_claim_check(
+        self,
+        response_text: str,
+        *,
+        turn_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Evaluate agent completion claims against the active ProofContract verdict."""
+        with self._lock:
+            state = self._state(turn_id=turn_id, session_id=session_id, task_id=task_id)
+            if state is None:
+                return None
+            payload = self._receipt_payload(state)
+            proof_report = payload.get("proof")
+            if not isinstance(proof_report, Mapping):
+                return None
+            claim = check_claim_contradiction(response_text, proof_report)
+            state.claim_check = claim
+            return dict(claim)
 
     def receipt(
         self,

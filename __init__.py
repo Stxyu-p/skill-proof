@@ -64,6 +64,7 @@ Usage:
   /skill-proof stats      Hit rate, misses, and overrides from the audit log
   /skill-proof overlap    Near-duplicate skills worth pruning
   /skill-proof proof      Proof contract verdict and evidence references
+  /skill-proof reset      Close current multi-turn GoalRun and start fresh
   /skill-proof trace      Full bounded JSON receipt
   /skill-proof refresh     Reread local skill content on the next turn
   /skill-proof health      Hook activity, catalog diagnostics, and timing
@@ -561,13 +562,22 @@ class SkillProofPlugin:
         session_id: str = "",
         **_: Any,
     ) -> Optional[str]:
-        if not self.visible_receipt or not isinstance(response_text, str):
+        if not isinstance(response_text, str):
+            return None
+        claim = self.engine.record_claim_check(response_text, session_id=str(session_id or ""))
+        contradicted = bool(claim and claim.get("contradicted"))
+        if not self.visible_receipt and not contradicted:
             return None
         receipt = self.engine.receipt(session_id=str(session_id or ""))
         if not receipt:
             return None
         decision = receipt.get("decision") or {}
-        if receipt.get("selected") is None and not decision.get("explicit") and not receipt.get("errors"):
+        if (
+            receipt.get("selected") is None
+            and not decision.get("explicit")
+            and not receipt.get("errors")
+            and not contradicted
+        ):
             return None
         marker = "\n\n[Skill Proof:"
         if marker in response_text:
@@ -585,6 +595,8 @@ class SkillProofPlugin:
             if provider not in (None, "", "off") and provider_used in (None, "", "off", "lexical_fastpath") and fallback_reason not in (None, "", "not_used"):
                 detail += f" | semantic fallback: {fallback_reason}"
         problems = list(receipt.get("errors") or [])
+        if contradicted and claim:
+            problems.append(f"CLAIM CONTRADICTION: {claim.get('reason')}")
         if decision.get("status") == "blocked":
             problems.append(decision.get("reason", "blocked"))
         if receipt.get("compliance") == "failed" and receipt.get("compliance_reasons"):
@@ -599,7 +611,8 @@ class SkillProofPlugin:
         if session_record.get("focus"):
             detail += f" | focus {session_record.get('focus')} ({session_record.get('focus_remaining')} turns)"
         if problems:
-            detail += " | " + ", ".join(dict.fromkeys(problems)) + "; see /skill-proof explain"
+            suffix = "; see /skill-proof proof" if contradicted else "; see /skill-proof explain"
+            detail += " | " + ", ".join(dict.fromkeys(problems)) + suffix
         return f"{response_text}{marker} {detail}]"
 
     @staticmethod
@@ -1166,6 +1179,20 @@ class SkillProofPlugin:
         if command == "refresh":
             self.engine.refresh_catalog()
             return "Skill cache cleared; content will be reread on the next turn. Existing receipts are unchanged."
+        if command in {"reset", "close-run"}:
+            receipt = self._latest_receipt()
+            sid = str((receipt.get("evidence") or {}).get("session_id") or "")
+            closed = False
+            if sid:
+                closed = self.engine.close_goal_run(sid)
+            if not closed and self.engine._goal_runs:
+                for key in list(self.engine._goal_runs):
+                    closed = self.engine.close_goal_run(key) or closed
+            return (
+                "GoalRun closed; next turn starts with a clean evidence run."
+                if closed
+                else "No active multi-turn GoalRun to close."
+            )
         if command not in {"status", "explain", "trace", "proof"}:
             return f"Unknown subcommand: {command}\n\n{_HELP}"
         receipt = self._latest_receipt()
@@ -1247,7 +1274,7 @@ class SkillProofPlugin:
             "skill-proof",
             handler=self.handle_command,
             description="Inspect skill selection, load evidence, and proof limits.",
-            args_hint="status|explain|why <name>|stats [--json]|calibrate [--json]|audit-verify [--json]|overlap [--json]|trace|refresh|health",
+            args_hint="status|explain|why <name>|proof|reset|stats [--json]|calibrate [--json]|audit-verify [--json]|overlap [--json]|trace|refresh|health",
             argument_mode="options",
         )
 
