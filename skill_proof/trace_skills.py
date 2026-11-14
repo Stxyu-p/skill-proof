@@ -33,6 +33,7 @@ _NOISE_PROGRAMS = frozenset(
         "rm", "mv", "cp", "touch", "true", "false", "sleep", "clear", "printf",
         "export", "source", "which", "whereis", "type", "env", "set",
         "find", "grep", "egrep", "rg", "ag", "fd", "sed", "awk", "diff",
+        "{", "}", "(", ")", "[[", "if", "for", "while", "case", "do", "then",
     }
 )
 
@@ -48,6 +49,12 @@ _READ_ONLY_GIT = frozenset(
 )
 
 _CD_PREFIX_RE = re.compile(r"^\s*cd\s+(?:\"[^\"]*\"|'[^']*'|\S+)\s*(?:&&|;)\s*")
+_ASSIGN_CHAIN_RE = re.compile(
+    r"^\s*[A-Za-z_][A-Za-z0-9_]*=(?:\$\([^)]*\)|\"[^\"]*\"|'[^']*'|\S+)\s*(?:&&|;)\s*"
+)
+_INLINE_ASSIGN_RE = re.compile(
+    r"^(?:[A-Za-z_][A-Za-z0-9_]*=(?:\$\([^)]*\)|\"[^\"]*\"|'[^']*'|\S+)\s+)+"
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -73,12 +80,11 @@ def _strip_shell_prefix(command: str) -> str:
     while True:
         stripped = _CD_PREFIX_RE.sub("", text, count=1)
         if stripped == text:
+            stripped = _ASSIGN_CHAIN_RE.sub("", text, count=1)
+        if stripped == text:
             break
         text = stripped
-    parts = text.split()
-    while parts and "=" in parts[0] and not parts[0].startswith("-"):
-        parts.pop(0)
-    return " ".join(parts)
+    return _INLINE_ASSIGN_RE.sub("", text).strip()
 
 
 def command_signature(command: str) -> str | None:
@@ -108,15 +114,24 @@ def command_signature(command: str) -> str | None:
     if prog in _NOISE_PROGRAMS:
         return None
 
-    for flag in _INLINE_FLAGS:
-        if flag in tokens[1:]:
-            return None
+    if any(t in _INLINE_FLAGS or t.lower() in ("-command", "/c") for t in tokens[1:]):
+        return None
 
     if prog == "git":
-        verbs = [t for t in tokens[1:] if not t.startswith("-")]
-        if not verbs or verbs[0].lower() in _READ_ONLY_GIT:
+        git_verbs = []
+        skip_next = False
+        for t in tokens[1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if t in ("-C", "-c", "--git-dir", "--work-tree", "--namespace"):
+                skip_next = True
+                continue
+            if not t.startswith("-"):
+                git_verbs.append(t)
+        if not git_verbs or git_verbs[0].lower() in _READ_ONLY_GIT:
             return None
-        return f"git {verbs[0].lower()}"
+        return f"git {git_verbs[0].lower()}"
 
     if prog in ("python", "python3", "python.exe", "py"):
         sub = tokens[1:]

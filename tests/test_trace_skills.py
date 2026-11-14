@@ -56,6 +56,18 @@ class TestCommandSignature(unittest.TestCase):
         self.assertIsNone(command_signature("pytest"))
         self.assertIsNone(command_signature(""))
 
+    def test_rejects_brace_groups_and_powershell_inline(self):
+        self.assertIsNone(command_signature('cd C:/tmp && { echo "hi"; }'))
+        self.assertIsNone(command_signature('powershell.exe -NoProfile -Command "Get-Date"'))
+        self.assertEqual(
+            command_signature('TOKEN=$(gh auth token) && colab run --gpu L4 main.py'),
+            "colab run",
+        )
+        self.assertEqual(
+            command_signature("git -C C:/Users/x/repo add -A"),
+            "git add",
+        )
+
 
 class TestMineTraces(unittest.TestCase):
     def _write(self, rows):

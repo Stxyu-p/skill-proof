@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import hashlib
+import json
 import pathlib
 import re
 from typing import Optional
@@ -102,7 +103,7 @@ def crystallize_skill(
     body_lines = [
         "---",
         f"name: {slug}",
-        f'description: "{desc}"',
+        f"description: {json.dumps(desc, ensure_ascii=False)}",
         "version: 0.1.0",
         "author: Chok (gugmn), Mika & SkillProof",
         "license: MIT",
@@ -113,7 +114,7 @@ def crystallize_skill(
         "  proof:",
         f"    status: {proof.status}",
         f"    proof_hash: {proof.proof_hash}",
-        f'    verification_cmd: "{verification_cmd}"',
+        f"    verification_cmd: {json.dumps(verification_cmd, ensure_ascii=False)}",
         f"    exit_code: {'null' if (evidence or proof.exit_code is None) else proof.exit_code}",
         f'    timestamp: "{proof.timestamp}"',
         "---",

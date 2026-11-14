@@ -62,6 +62,23 @@ class TestCrystallizeCLI(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("status: verified", buf.getvalue())
 
+    def test_crystallize_manual_verify_failure_returns_nonzero(self):
+        tmp = tempfile.mkdtemp(prefix="sp-cli-verify-fail-")
+        vault_dir = pathlib.Path(tmp) / "vault"
+
+        buf = io.StringIO()
+        with patch("sys.stdout", new=buf):
+            rc = main([
+                "crystallize",
+                "--name", "fail-verify",
+                "--desc", "Verify failed command exits non-zero.",
+                "--cmd", "python -c \"import sys; sys.exit(1)\"",
+                "--verify",
+                "--vault", str(vault_dir),
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("status: unverified", buf.getvalue())
+
     def test_crystallize_from_traces_dry_run(self):
         tmp = tempfile.mkdtemp(prefix="sp-cli-trace-")
         trace_file = pathlib.Path(tmp) / "usage.jsonl"

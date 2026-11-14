@@ -76,6 +76,18 @@ class TestCrystallizeSkill(unittest.TestCase):
         )
         self.assertEqual(proof.status, "unverified")
 
+    def test_escapes_inner_quotes_in_yaml_frontmatter(self):
+        skill_md, _ = crystallize_skill(
+            name="quoted-cmd",
+            description='Check "quotes" inside desc.',
+            steps=["Step 1"],
+            verification_cmd='python -c "print(1)"',
+            exit_code=0,
+            executed=True,
+        )
+        self.assertIn('verification_cmd: "python -c \\"print(1)\\""', skill_md)
+        self.assertIn('description: "Check \\"quotes\\" inside desc."', skill_md)
+
     def test_save_crystallized_skill_dual_sync(self):
         tmp = tempfile.mkdtemp(prefix="tt-skill-test-")
         v_dir = pathlib.Path(tmp) / "vault"

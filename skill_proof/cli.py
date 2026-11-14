@@ -1155,7 +1155,7 @@ def main(argv=None) -> int:
         print(f"  Vault: {res.get('vault_file')}")
         if res.get("hermes_file"):
             print(f"  Hermes: {res.get('hermes_file')}")
-        return 0
+        return 1 if (verify_cmd and proof.status != "verified") else 0
     if args.command == "overlap":
 
         try:
