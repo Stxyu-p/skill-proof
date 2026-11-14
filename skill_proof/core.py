@@ -193,6 +193,7 @@ class _TurnState:
     active: bool = False
     active_evidence: Optional[str] = None
     observed_tools: list[str] = field(default_factory=list)
+    tool_outcomes: list[dict[str, Any]] = field(default_factory=list)
     complete: bool = False
     availability: str = "local_only"
     local_skill_count: int = 0
@@ -212,6 +213,7 @@ class _TurnState:
     source_path_match: str = "unknown"
     compliance: str = "unassessed"
     compliance_reasons: list[str] = field(default_factory=list)
+    verification: str = "unverified"
 
 
 def _compact_context(selection: Selection, mode: str, availability_error: bool) -> str:
@@ -281,6 +283,8 @@ class SkillProofEngine:
         block_modified_hub_skills: bool = False,
         catalog_cache_ttl_ms: float = 300000.0,
         agent_routing: Optional[Mapping[str, Any]] = None,
+        telemetry_enabled: bool = False,
+        telemetry_dir: Optional[str | os.PathLike[str]] = None,
     ) -> None:
         normalized_mode = normalize_identifier(mode)
         normalized_mode = self._MODE_ALIASES.get(normalized_mode, normalized_mode)
@@ -309,6 +313,8 @@ class SkillProofEngine:
         self.context_budget_bytes = context_budget_bytes
         self.observed_tool_limit = observed_tool_limit
         self.retained_turn_limit = retained_turn_limit
+        self.telemetry_enabled = bool(telemetry_enabled)
+        self.telemetry_dir = pathlib.Path(telemetry_dir) if telemetry_dir else None
         self.invariants: dict[str, SkillInvariants] = {}
         if isinstance(invariants, Mapping):
             for sname, srules in invariants.items():
@@ -1208,6 +1214,7 @@ class SkillProofEngine:
         session_id: str,
         task_id: str,
         tool_name: str,
+        tool_call_id: str = "",
     ) -> GuardResult:
         normalized_tool = normalize_identifier(tool_name)
         with self._lock:
@@ -1272,6 +1279,36 @@ class SkillProofEngine:
                 return GuardResult(True, "selected_skill_loaded")
             return GuardResult(True, "mode_not_enforcing")
 
+    @staticmethod
+    def _classify_tool_outcome(
+        status: Optional[str],
+        result: Any,
+        error_type: Optional[str] = None,
+    ) -> str:
+        norm_status = normalize_identifier(status) if status is not None else ""
+        if error_type or norm_status in {"error", "failed", "blocked", "timeout", "denied"}:
+            return "failed"
+        parsed = result if isinstance(result, Mapping) else None
+        if parsed is None and isinstance(result, (str, bytes)):
+            try:
+                raw = result.decode("utf-8", errors="replace") if isinstance(result, bytes) else result
+                obj = json.loads(raw)
+                if isinstance(obj, Mapping):
+                    parsed = obj
+            except (ValueError, TypeError):
+                parsed = None
+        if parsed is not None:
+            if parsed.get("error") or parsed.get("success") is False:
+                return "failed"
+            ec = parsed.get("exit_code")
+            if isinstance(ec, int) and not isinstance(ec, bool):
+                return "success" if ec == 0 else "failed"
+            if parsed.get("success") is True:
+                return "success"
+        if norm_status in {"success", "ok", "completed"}:
+            return "success"
+        return "unknown"
+
     def observe_tool_result(
         self,
         *,
@@ -1282,14 +1319,30 @@ class SkillProofEngine:
         args: Optional[Mapping[str, Any]],
         result: Any,
         status: Optional[str] = None,
+        tool_call_id: str = "",
+        error_type: Optional[str] = None,
     ) -> bool:
         with self._lock:
             state = self._state(turn_id=turn_id, session_id=session_id, task_id=task_id)
             if state is None:
                 return False
-            if not state.observed_tools or normalize_identifier(state.observed_tools[-1]) != normalize_identifier(tool_name):
+            norm_tool = normalize_identifier(tool_name)
+            if not state.observed_tools or normalize_identifier(state.observed_tools[-1]) != norm_tool:
                 self._remember_tool(state, tool_name)
-            if normalize_identifier(tool_name) != "skill_view" or state.selection.selected is None:
+            outcome_status = self._classify_tool_outcome(status, result, error_type)
+            # Scope call_id by owner because some backends emit constant tool_call_id values.
+            scoped_id = f"{session_id}:{task_id}:{tool_call_id}" if tool_call_id else ""
+            entry = {"tool": norm_tool, "call_id": scoped_id, "status": outcome_status}
+            updated = False
+            if scoped_id:
+                for item in state.tool_outcomes:
+                    if item.get("call_id") == scoped_id and item.get("tool") == norm_tool:
+                        item["status"] = outcome_status
+                        updated = True
+                        break
+            if not updated and len(state.tool_outcomes) < 64:
+                state.tool_outcomes.append(entry)
+            if norm_tool != "skill_view" or state.selection.selected is None:
                 return False
             supplied_name = ""
             if isinstance(args, Mapping):
@@ -1338,10 +1391,12 @@ class SkillProofEngine:
     def _evaluate_compliance(self, state: _TurnState) -> None:
         if state.selection.selected is None:
             state.compliance = "not_applicable"
+            state.verification = "unverified"
             return
         skill = state.selection.selected.skill
         inv = self._resolve_invariants(skill)
         if inv.is_empty:
+            state.verification = "unverified"
             if state.host_loaded_event:
                 state.compliance = "compliant"
                 if "selected_skill_loaded" not in state.compliance_reasons:
@@ -1352,9 +1407,12 @@ class SkillProofEngine:
                     state.compliance_reasons.append("skill_not_loaded")
             return
         if state.compliance == "failed":
+            if any(r.startswith("required_tool_failed:") for r in state.compliance_reasons):
+                state.verification = "failed"
             return
         if not state.host_loaded_event:
             state.compliance = "failed"
+            state.verification = "unverified"
             if "skill_not_loaded" not in state.compliance_reasons:
                 state.compliance_reasons.append("skill_not_loaded")
             return
@@ -1362,11 +1420,34 @@ class SkillProofEngine:
         missing = [t for t in inv.required_tools if t not in observed]
         if missing:
             state.compliance = "failed"
+            state.verification = "unverified"
             for m in missing:
                 reason = f"missing_required_tool:{m}"
                 if reason not in state.compliance_reasons:
                     state.compliance_reasons.append(reason)
             return
+        if inv.required_tools:
+            failed_req = []
+            all_executed_ok = True
+            for req in inv.required_tools:
+                outcomes = [o for o in state.tool_outcomes if o.get("tool") == req]
+                if not outcomes:
+                    all_executed_ok = False
+                elif not any(o.get("status") == "success" for o in outcomes):
+                    all_executed_ok = False
+                    if any(o.get("status") == "failed" for o in outcomes):
+                        failed_req.append(req)
+            if failed_req:
+                state.compliance = "failed"
+                state.verification = "failed"
+                for req in failed_req:
+                    reason = f"required_tool_failed:{req}"
+                    if reason not in state.compliance_reasons:
+                        state.compliance_reasons.append(reason)
+                return
+            state.verification = "executed" if all_executed_ok else "unverified"
+        else:
+            state.verification = "unverified"
         state.compliance = "verified"
 
     def _receipt_payload(self, state: _TurnState) -> dict[str, Any]:
@@ -1420,10 +1501,11 @@ class SkillProofEngine:
                 "active": state.active,
                 "active_evidence": state.active_evidence,
                 "observed_tools": list(state.observed_tools),
+                "tool_outcomes": [dict(o) for o in state.tool_outcomes],
             },
             "compliance": state.compliance,
             "compliance_reasons": list(state.compliance_reasons),
-            "verification": "unverified",
+            "verification": state.verification,
             "errors": list(state.errors),
             "complete": state.complete,
             "performance": dict(state.performance),
@@ -1469,6 +1551,7 @@ class SkillProofEngine:
             state = self._state(turn_id=turn_id)
             if state is None:
                 return {}
+            was_complete = state.complete
             state.complete = True
             # Focus lasts a bounded number of turns, counted including the turn
             # that requested it.
@@ -1476,6 +1559,13 @@ class SkillProofEngine:
             if memory is not None and memory.focus and memory.focus_remaining > 0:
                 memory.focus_remaining -= 1
             payload = self._receipt_payload(state)
+            if self.telemetry_enabled and not was_complete and state.selection.selected is not None:
+                log_skill_telemetry(
+                    state.selection.selected.skill.name,
+                    action=state.compliance,
+                    duration_ms=float(state.performance.get("total_ms", 0.0)),
+                    data_dir=self.telemetry_dir,
+                )
             completed = [key for key, value in self._turns.items() if value.complete]
             for key in completed[:-self.retained_turn_limit]:
                 del self._turns[key]
@@ -1633,7 +1723,7 @@ class SkillProofEngine:
             active = "yes" if state.active else "no"
             return (
                 f"Skill Proof: selected={name} loaded={loaded} active={active} "
-                f"compliance={state.compliance} verification=unverified"
+                f"compliance={state.compliance} verification={state.verification}"
             )
 
     @property
@@ -1642,14 +1732,19 @@ class SkillProofEngine:
             return self._latest_turn_id
 
 
-def log_skill_telemetry(skill_name: str, action: str = "match", duration_ms: float = 0.0) -> None:
+def log_skill_telemetry(
+    skill_name: str,
+    action: str = "match",
+    duration_ms: float = 0.0,
+    data_dir: Optional[str | os.PathLike[str]] = None,
+) -> None:
     """Best-effort telemetry logging to ~/.skill-proof/usage.jsonl (fail-open)."""
     try:
-        data_dir = os.environ.get("SKILL_PROOF_DATA_DIR")
-        if not data_dir:
-            data_dir = os.path.expanduser("~/.skill-proof")
-        os.makedirs(data_dir, exist_ok=True)
-        log_path = os.path.join(data_dir, "usage.jsonl")
+        resolved_dir = str(data_dir) if data_dir else os.environ.get("SKILL_PROOF_DATA_DIR")
+        if not resolved_dir:
+            resolved_dir = os.path.expanduser("~/.skill-proof")
+        os.makedirs(resolved_dir, exist_ok=True)
+        log_path = os.path.join(resolved_dir, "usage.jsonl")
         rec = {
             "ts": time.time(),
             "skill": str(skill_name),

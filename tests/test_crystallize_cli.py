@@ -40,7 +40,27 @@ class TestCrystallizeCLI(unittest.TestCase):
         self.assertEqual(rc, 0)
         output = buf.getvalue()
         self.assertIn("Crystallized skill 'deploy-staging'", output)
-        self.assertTrue((vault_dir / "deploy-staging" / "SKILL.md").is_file())
+        self.assertIn("status: declared", output)
+        skill_text = (vault_dir / "deploy-staging" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("status: declared", skill_text)
+        self.assertNotIn("status: verified", skill_text)
+
+    def test_crystallize_manual_verify_runs_command(self):
+        tmp = tempfile.mkdtemp(prefix="sp-cli-verify-")
+        vault_dir = pathlib.Path(tmp) / "vault"
+
+        buf = io.StringIO()
+        with patch("sys.stdout", new=buf):
+            rc = main([
+                "crystallize",
+                "--name", "echo-verify",
+                "--desc", "Verify real command execution.",
+                "--cmd", "python -c \"print(42)\"",
+                "--verify",
+                "--vault", str(vault_dir),
+            ])
+        self.assertEqual(rc, 0)
+        self.assertIn("status: verified", buf.getvalue())
 
     def test_crystallize_from_traces_dry_run(self):
         tmp = tempfile.mkdtemp(prefix="sp-cli-trace-")

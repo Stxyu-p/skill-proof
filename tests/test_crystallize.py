@@ -21,6 +21,7 @@ class TestCrystallizeSkill(unittest.TestCase):
             steps=steps,
             verification_cmd="adb shell dumpsys battery",
             exit_code=0,
+            executed=True,
             category="devops",
         )
 
@@ -37,6 +38,18 @@ class TestCrystallizeSkill(unittest.TestCase):
         self.assertEqual(proof.exit_code, 0)
         self.assertTrue(len(proof.proof_hash) == 64)
         self.assertIn(f"proof_hash: {proof.proof_hash}", skill_md)
+
+    def test_crystallize_without_execution_marks_declared(self):
+        skill_md, proof = crystallize_skill(
+            name="unrun-skill",
+            description="Skill with verification command never executed.",
+            steps=["Step 1"],
+            verification_cmd="pytest tests/unit",
+        )
+        self.assertEqual(proof.status, "declared")
+        self.assertIsNone(proof.exit_code)
+        self.assertIn("status: declared", skill_md)
+        self.assertNotIn("status: verified", skill_md)
 
     def test_description_length_enforced_under_60_chars(self):
         long_desc = "This is an unnecessarily long description that exceeds sixty characters easily."

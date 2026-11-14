@@ -299,6 +299,12 @@ class SkillProofPlugin:
             block_modified_hub_skills=_bool_setting(ctx.get_config("block_modified_hub_skills", False), False),
             catalog_cache_ttl_ms=float(ctx.get_config("catalog_cache_ttl_ms", 300000.0) or 0.0),
             agent_routing=ctx.get_config("agent_routing", None),
+            telemetry_enabled=_bool_setting(ctx.get_config("audit_log", True), True),
+            telemetry_dir=(
+                pathlib.Path(str(ctx.get_config("audit_path", "") or "").strip()).expanduser().parent
+                if str(ctx.get_config("audit_path", "") or "").strip()
+                else None
+            ),
         )
         self.visible_receipt = _bool_setting(ctx.get_config("visible_receipt", True), True)
         self.receipt_style = ctx.get_config("receipt_style", "compact")
@@ -466,6 +472,7 @@ class SkillProofPlugin:
                 session_id=str(session_id or ""),
                 task_id=str(task_id or ""),
                 tool_name=str(tool_name or ""),
+                tool_call_id=str(kwargs.get("tool_call_id") or ""),
             )
         except Exception:
             logger.exception("Skill Proof pre-tool policy failed")
@@ -525,6 +532,8 @@ class SkillProofPlugin:
         session_id: str = "",
         task_id: str = "",
         turn_id: str = "",
+        tool_call_id: str = "",
+        error_type: Optional[str] = None,
         **_: Any,
     ) -> None:
         try:
@@ -536,6 +545,8 @@ class SkillProofPlugin:
                 args=args,
                 result=result,
                 status=status,
+                tool_call_id=str(tool_call_id or ""),
+                error_type=error_type,
             )
         except Exception:
             logger.exception("Skill Proof could not record tool result")

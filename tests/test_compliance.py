@@ -82,6 +82,45 @@ Only inspect, never modify.
         self.assertIn("missing_required_tool:terminal", receipt["compliance_reasons"])
         self.assertIn("compliance=failed", eng.summary(turn_id="t1"))
 
+    def test_required_tool_failure_marks_compliance_and_verification_failed(self):
+        eng = self.engine()
+        eng.begin_turn(
+            turn_id="t1", session_id="s1", task_id="k1",
+            query="Use $tdd", available_names={"tdd"},
+        )
+        eng.observe_skill_loaded(session_id="s1", task_id="k1", skill_name="tdd")
+        eng.guard_tool(turn_id="t1", session_id="s1", task_id="k1", tool_name="terminal", tool_call_id="c1")
+        eng.observe_tool_result(
+            turn_id="t1", session_id="s1", task_id="k1",
+            tool_name="terminal", args={"command": "pytest"},
+            result=json.dumps({"exit_code": 1, "error": "test failed"}),
+            status="failed", tool_call_id="c1",
+        )
+        receipt = eng.finish_turn(turn_id="t1")
+        self.assertEqual(receipt["compliance"], "failed")
+        self.assertIn("required_tool_failed:terminal", receipt["compliance_reasons"])
+        self.assertEqual(receipt["verification"], "failed")
+
+    def test_required_tool_success_records_executed_verification(self):
+        eng = self.engine()
+        eng.begin_turn(
+            turn_id="t1", session_id="s1", task_id="k1",
+            query="Use $tdd", available_names={"tdd"},
+        )
+        eng.observe_skill_loaded(session_id="s1", task_id="k1", skill_name="tdd")
+        eng.guard_tool(turn_id="t1", session_id="s1", task_id="k1", tool_name="terminal", tool_call_id="c1")
+        eng.observe_tool_result(
+            turn_id="t1", session_id="s1", task_id="k1",
+            tool_name="terminal", args={"command": "pytest"},
+            result=json.dumps({"exit_code": 0}),
+            status="success", tool_call_id="c1",
+        )
+        receipt = eng.finish_turn(turn_id="t1")
+        self.assertEqual(receipt["compliance"], "verified")
+        self.assertEqual(receipt["verification"], "executed")
+        self.assertEqual(len(receipt["runtime"]["tool_outcomes"]), 1)
+        self.assertEqual(receipt["runtime"]["tool_outcomes"][0]["status"], "success")
+
     def test_forbidden_tool_fails_and_blocks_in_enforce_mode(self):
         eng = self.engine(mode="enforce-tools")
         eng.begin_turn(

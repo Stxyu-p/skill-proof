@@ -520,6 +520,7 @@ def main(argv=None) -> int:
         p.add_argument("--min-runs", type=int, default=3, help="minimum observed runs per command (default: 3)")
         p.add_argument("--limit", type=int, default=8, help="maximum skills to emit (default: 8)")
         p.add_argument("--dry-run", action="store_true", help="report what would be crystallized")
+        p.add_argument("--verify", action="store_true", help="execute --cmd to verify before crystallizing")
         p.add_argument("--category", default="devops", help="skill category (default: devops)")
         p.add_argument("--vault", default=None, help="vault directory (default: ~/.agents/skills)")
         p.add_argument("--hermes", help="Hermes profile skills directory")
@@ -1093,6 +1094,8 @@ def main(argv=None) -> int:
                     description=s_desc,
                     steps=steps,
                     verification_cmd=ev.signature,
+                    exit_code=None,
+                    executed=False,
                     category=category,
                     when_to_use=f"Use when the task requires `{ev.signature}` repeatedly.",
                     pitfalls=[
@@ -1128,10 +1131,21 @@ def main(argv=None) -> int:
         cat = getattr(args, "category", "devops")
         v_path = getattr(args, "vault", None)
         h_path = getattr(args, "hermes", None)
+        verify_cmd = bool(getattr(args, "verify", False))
+        executed = False
+        exit_code = None
+        if verify_cmd:
+            import subprocess
+            executed = True
+            try:
+                proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                exit_code = proc.returncode
+            except Exception:
+                exit_code = 1
 
         skill_md, proof = _cryst_mod.crystallize_skill(
             name=name, description=desc, steps=steps,
-            verification_cmd=cmd, exit_code=0, category=cat,
+            verification_cmd=cmd, exit_code=exit_code, executed=executed, category=cat,
         )
         res = _cryst_mod.save_crystallized_skill(
             skill_md=skill_md, name=name, category=cat,

@@ -18,7 +18,7 @@ DEFAULT_VAULT_ROOT = (
 class SkillProof:
     skill_name: str
     verification_cmd: str
-    exit_code: int
+    exit_code: Optional[int]
     timestamp: str
     commit: str
     status: str
@@ -29,13 +29,19 @@ class SkillProof:
         cls,
         skill_name: str,
         verification_cmd: str,
-        exit_code: int = 0,
+        exit_code: Optional[int] = None,
         commit: str = "",
         timestamp: str | None = None,
+        executed: bool = False,
     ) -> SkillProof:
         ts = timestamp or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        status = "verified" if exit_code == 0 else "unverified"
-        seed = f"{skill_name}:{verification_cmd}:{exit_code}:{ts}:{commit}"
+        if executed:
+            status = "verified" if exit_code == 0 else "unverified"
+        elif exit_code is not None and exit_code != 0:
+            status = "unverified"
+        else:
+            status = "declared"
+        seed = f"{skill_name}:{verification_cmd}:{exit_code}:{executed}:{ts}:{commit}"
         p_hash = hashlib.sha256(seed.encode("utf-8", errors="replace")).hexdigest()
         return cls(
             skill_name=skill_name,
@@ -74,7 +80,8 @@ def crystallize_skill(
     steps: list[str],
     *,
     verification_cmd: str = "",
-    exit_code: int = 0,
+    exit_code: Optional[int] = None,
+    executed: bool = False,
     category: str = "devops",
     commit: str = "",
     when_to_use: str | None = None,
@@ -83,7 +90,9 @@ def crystallize_skill(
 ) -> tuple[str, SkillProof]:
     slug = _slugify_skill_name(name)
     desc = _clamp_description(description)
-    proof = SkillProof.create(slug, verification_cmd, exit_code=exit_code, commit=commit)
+    proof = SkillProof.create(
+        slug, verification_cmd, exit_code=exit_code, commit=commit, executed=executed
+    )
     if evidence:
         proof = dataclasses.replace(proof, status="unverified")
 
@@ -105,7 +114,7 @@ def crystallize_skill(
         f"    status: {proof.status}",
         f"    proof_hash: {proof.proof_hash}",
         f'    verification_cmd: "{verification_cmd}"',
-        f"    exit_code: {'null' if evidence else proof.exit_code}",
+        f"    exit_code: {'null' if (evidence or proof.exit_code is None) else proof.exit_code}",
         f'    timestamp: "{proof.timestamp}"',
         "---",
         "",
@@ -146,8 +155,10 @@ def crystallize_skill(
             "Expected: exit code 0. Not asserted here: this skill was mined from "
             "observed runs and still needs one real verification before promotion."
         )
+    elif proof.exit_code is None:
+        body_lines.append("Expected: exit code 0 (declared only; not executed yet).")
     else:
-        body_lines.append(f"Expected: exit code {exit_code}.")
+        body_lines.append(f"Expected: exit code {proof.exit_code}.")
 
     body_lines.extend([
         "",
