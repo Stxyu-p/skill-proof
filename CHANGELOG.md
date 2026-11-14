@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-11-14
+
+### Fixed
+- **Fail-closed `prune` and honest `audit` integrity claims.** `prune` is now
+  non-mutating by default (`--apply` required for archival) and blocks with
+  `prune_block_reason` on missing, corrupt, or unusable audit logs.
+  `verify_audit_chain` reports `verification_scope: retained_adjacent_links`
+  and `authenticity_verified: false` for rotated logs, `audit stats` surfaces
+  `selection_rate`, `usable_records`, and log window timestamps, and audit
+  rotation counts non-blank lines.
+- **Per-turn audit timing and fallback visibility.** Audit records now include
+  `listing_ms`/`total_ms`, and the compact footer reports why a semantic
+  fallback fired.
+
 ## [2.1.1] - 2026-11-09
 
 ### Fixed
