@@ -524,6 +524,30 @@ class PluginAdapterTests(unittest.TestCase):
             else:
                 os.environ['TRINITY_TRACE_ID'] = old
 
+    def test_skills_cache_ttl_honors_multi_second_values(self):
+        # _float_setting clamps to [0, 1], which previously rejected any TTL > 1s
+        # and silently forced skills_cache_ttl back to the default.
+        now = [100.0]
+        ctx = self.context(skills_cache_ttl=600.0)
+        instance = plugin_module.SkillProofPlugin(ctx, clock=lambda: now[0])
+        self.assertEqual(instance.skills_cache_ttl, 600.0)
+        with mock.patch.object(
+            ctx, 'dispatch_tool', return_value='{"success": true, "skills": [{"name": "python-tdd"}]}'
+        ) as disp:
+            instance.on_pre_llm_call(session_id='s', task_id='t', turn_id='1', user_message='hello')
+            now[0] += 120.0
+            instance.on_pre_llm_call(session_id='s', task_id='t', turn_id='2', user_message='hello')
+            self.assertEqual(disp.call_count, 1)
+            now[0] += 500.0
+            instance.on_pre_llm_call(session_id='s', task_id='t', turn_id='3', user_message='hello')
+            self.assertEqual(disp.call_count, 2)
+
+        # Out-of-range / boolean values fall back to default (300.0)
+        bad = plugin_module.SkillProofPlugin(self.context(skills_cache_ttl=99999.0))
+        self.assertEqual(bad.skills_cache_ttl, 300.0)
+        bool_bad = plugin_module.SkillProofPlugin(self.context(skills_cache_ttl=True))
+        self.assertEqual(bool_bad.skills_cache_ttl, 300.0)
+
 
 if __name__ == "__main__":
     unittest.main()

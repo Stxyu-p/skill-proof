@@ -20,6 +20,10 @@ config_schema:
     type: bool
     default: false
     description: Replace the full Hermes skills index with the confidently selected skill for the current request
+  skills_cache_ttl:
+    type: float
+    default: 300.0
+    description: Seconds to cache the host skills_list result before refreshing (0-3600; invalidated immediately on skill lifecycle changes)
   skill_roots:
     type: list
     default: []

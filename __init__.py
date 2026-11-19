@@ -207,6 +207,17 @@ def _float_setting(value: Any, default: float) -> float:
     return parsed if 0 <= parsed <= 1 else default
 
 
+def _bounded_float(value: Any, default: float, low: float, high: float) -> float:
+    """Float setting bounded to [low, high] (e.g. TTLs in seconds)."""
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if low <= parsed <= high else default
+
+
 def _bool_setting(value: Any, default: bool) -> bool:
     return value if isinstance(value, bool) else default
 
@@ -236,7 +247,9 @@ class SkillProofPlugin:
         self.roots = _resolve_roots(ctx.get_config("skill_roots", []))
         mode = str(ctx.get_config("mode", "nudge") or "nudge")
         self.reduce_skill_prompt = _bool_setting(ctx.get_config("reduce_skill_prompt", False), False)
-        self.skills_cache_ttl = _float_setting(ctx.get_config("skills_cache_ttl", 30.0), 30.0)
+        self.skills_cache_ttl = _bounded_float(
+            ctx.get_config("skills_cache_ttl", 300.0), 300.0, 0.0, 3600.0
+        )
         self._skills_cache: tuple[float, set[str]] = (0.0, set())
         self._clock: Callable[[], float] = clock or time.monotonic
         invariants = ctx.get_config("invariants", {})
