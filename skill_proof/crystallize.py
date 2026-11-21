@@ -4,15 +4,20 @@ import dataclasses
 import datetime
 import hashlib
 import json
+import os
 import pathlib
 import re
-from typing import Optional
+import sys
+from typing import Any, Optional
 
-DEFAULT_VAULT_ROOT = (
-    pathlib.Path.home() / ".agents" / "skills"
-    if (pathlib.Path.home() / ".agents" / "skills").is_dir()
-    else pathlib.Path.home() / ".skill-proof" / "skills"
-)
+from . import _catalog, vault as _vault
+
+
+def get_vault_root() -> pathlib.Path:
+    return _catalog._canonical_vault_root()
+
+
+DEFAULT_VAULT_ROOT = get_vault_root()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -99,12 +104,13 @@ def crystallize_skill(
 
     w_trigger = when_to_use or f"Use when executing {slug} workflow."
     p_items = pitfalls or ["Ensure environment dependencies and permissions are satisfied before running."]
+    author = os.environ.get("SKILL_PROOF_AUTHOR", "").strip() or "Skill Proof"
 
     body_lines = [
         "---",
         f"name: {slug}",
         f"description: {json.dumps(desc, ensure_ascii=False)}",
-        "author: Chok (gugmn), Mika & SkillProof",
+        f"author: {author}",
         "license: MIT",
         "platforms: [linux, macos, windows]",
         "metadata:",
@@ -170,6 +176,45 @@ def crystallize_skill(
     return skill_md, proof
 
 
+def load_candidates_jsonl(source: str | pathlib.Path) -> list[dict[str, Any]]:
+    """Read `skill-proof.candidate.v1` JSONL lines from a file path or '-' (stdin)."""
+    if str(source) == "-":
+        raw = sys.stdin.read()
+    else:
+        raw = pathlib.Path(source).expanduser().read_text(encoding="utf-8", errors="replace")
+    candidates: list[dict[str, Any]] = []
+    for idx, line in enumerate(raw.splitlines(), 1):
+        s = line.strip()
+        if not s:
+            continue
+        obj = json.loads(s)
+        if not isinstance(obj, dict):
+            raise ValueError(f"candidate line {idx} must be a JSON object")
+        schema = str(obj.get("schema") or "skill-proof.candidate.v1")
+        if schema != "skill-proof.candidate.v1":
+            raise ValueError(f"unsupported candidate schema on line {idx}: {schema!r}")
+        name = str(obj.get("slug") or obj.get("name") or "").strip()
+        desc = str(obj.get("description") or "").strip()
+        if not name or not desc:
+            raise ValueError(f"candidate line {idx} requires non-empty name/slug and description")
+        steps = [str(x).strip() for x in (obj.get("steps") or []) if str(x).strip()]
+        if not steps:
+            steps = ["Follow the documented procedure steps."]
+        candidates.append({
+            "name": name,
+            "description": desc,
+            "category": str(obj.get("category") or "devops").strip() or "devops",
+            "when_to_use": obj.get("when_to_use"),
+            "steps": steps,
+            "pitfalls": [str(x).strip() for x in (obj.get("pitfalls") or []) if str(x).strip()] or None,
+            "verification_cmd": str(obj.get("verification_cmd") or "").strip(),
+            "evidence": [str(x).strip() for x in (obj.get("evidence_refs") or obj.get("evidence") or []) if str(x).strip()] or None,
+            "provenance_sha256": str(obj.get("provenance_sha256") or ""),
+            "source_tool": str(obj.get("source_tool") or ""),
+        })
+    return candidates
+
+
 def save_crystallized_skill(
     skill_md: str,
     name: str,
@@ -177,16 +222,22 @@ def save_crystallized_skill(
     vault_dir: str | pathlib.Path | None = None,
     hermes_skills_dir: str | pathlib.Path | None = None,
 ) -> dict[str, str]:
+    stub_hits = _catalog.find_stub_markers(skill_md)
+    if stub_hits:
+        raise ValueError(f"Refusing to save skill containing compressed Trimtok stubs: {stub_hits[0]}")
+
     slug = _slugify_skill_name(name)
     results: dict[str, str] = {}
 
-    v_base = pathlib.Path(vault_dir if vault_dir is not None else DEFAULT_VAULT_ROOT).expanduser().resolve()
-    # Save to vault: if category folder exists or if explicit custom path is given with category
-    if category and (v_base / category).is_dir():
-        v_skill_dir = v_base / category / slug
+    v_base = pathlib.Path(vault_dir if vault_dir is not None else get_vault_root()).expanduser().resolve()
+    cat_dir = v_base / category if category else None
+    if cat_dir is not None and cat_dir.is_dir() and not (cat_dir / "SKILL.md").is_file():
+        v_skill_dir = cat_dir / slug
     else:
-        # Check if v_base has flat skill layout (canonical ~/.agents/skills)
-        v_skill_dir = v_base / slug if (v_base / slug).exists() or not (v_base / "skills").is_dir() else v_base / "skills" / category / slug
+        v_skill_dir = v_base / slug
+    if _vault.is_skill_immutable(v_skill_dir):
+        raise PermissionError(f"Skill '{slug}' at '{v_skill_dir}' is immutable (governance: locked)")
+
     v_skill_dir.mkdir(parents=True, exist_ok=True)
     v_file = v_skill_dir / "SKILL.md"
     v_file.write_text(skill_md, encoding="utf-8")
@@ -194,10 +245,29 @@ def save_crystallized_skill(
 
     if hermes_skills_dir is not None:
         h_base = pathlib.Path(hermes_skills_dir).expanduser().resolve()
-        h_skill_dir = h_base / category / slug
-        h_skill_dir.mkdir(parents=True, exist_ok=True)
-        h_file = h_skill_dir / "SKILL.md"
-        h_file.write_text(skill_md, encoding="utf-8")
-        results["hermes_file"] = str(h_file)
+        h_base.mkdir(parents=True, exist_ok=True)
+        linked = False
+        if v_skill_dir.parent == v_base:
+            pin_res = _vault.pin(slug, h_base, vault_dir=v_base, force=True)
+            if pin_res.get("success") and pin_res.get("target"):
+                results["hermes_file"] = str(pathlib.Path(pin_res["target"]) / "SKILL.md")
+                results["hermes_pinned"] = "true"
+                linked = True
+        else:
+            target = h_base / slug
+            ok = _vault.create_junction_or_link(v_skill_dir, target, force=True)
+            if ok:
+                results["hermes_file"] = str(target / "SKILL.md")
+                results["hermes_pinned"] = "true"
+                linked = True
+        if not linked:
+            h_skill_dir = h_base / slug
+            if _vault.is_skill_immutable(h_skill_dir):
+                raise PermissionError(f"Hermes skill '{slug}' at '{h_skill_dir}' is immutable")
+            h_skill_dir.mkdir(parents=True, exist_ok=True)
+            h_file = h_skill_dir / "SKILL.md"
+            h_file.write_text(skill_md, encoding="utf-8")
+            results["hermes_file"] = str(h_file)
+            results["hermes_pinned"] = "false"
 
     return results

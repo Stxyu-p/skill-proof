@@ -15,12 +15,12 @@ from __future__ import annotations
 
 from collections import Counter
 import json
+import os
 import pathlib
+import sqlite3
 import sys
-try:
-    from . import core
-except (ImportError, ValueError):
-    import core
+import time
+from . import _catalog, core, doctor, vault
 
 SERVER_INFO = {"name": "skill-proof", "version": core.__version__}
 FALLBACK_PROTOCOL = "2024-11-05"
@@ -122,6 +122,37 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "skill_doctor",
+        "description": "Run Skill Proof standalone health, stub-corruption, cross-root drift, audit, and vector index diagnostics.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"roots": _ROOTS_SCHEMA},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "skill_vault_status",
+        "description": "Inspect the Global Skill Vault and client linkage/drift/stub status across detected roots.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"roots": _ROOTS_SCHEMA},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "skill_overlap",
+        "description": "Detect shadowed copies and near-duplicate skills across detected roots.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "roots": _ROOTS_SCHEMA,
+                "min_similarity": {"type": "number"},
+                "limit": {"type": "integer"},
+            },
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -172,19 +203,52 @@ def _tool_roots(parameters):
 
 def _vector_index():
     """Read the shared, explicit vector settings for this standalone process."""
-    return core.vector_index_from_env()
+    try:
+        return core.vector_index_from_env()
+    except (sqlite3.Error, OSError):
+        return None
 
 
 def _tool_scan(parameters):
     roots = _roots(parameters)
     catalog = core.scan_catalog(roots)
+    prioritized = _catalog.prioritize_diagnostics(catalog.diagnostics)
     return {
         "roots": {root_id: str(path) for root_id, path in roots.items()},
         "skill_count": len(catalog.skills),
         "catalog_hash": catalog.catalog_hash,
         "diagnostic_counts": dict(sorted(Counter(item.code for item in catalog.diagnostics).items())),
+        "diagnostics": [
+            {"code": item.code, "root_id": item.root_id, "relative_path": item.relative_path}
+            for item in prioritized[:20]
+        ],
+        "diagnostics_omitted": max(0, len(prioritized) - 20),
         "root_suggestions": core.suggest_roots(roots) if roots else [],
     }
+
+
+def _append_mcp_audit(turn_id: str, selection: core.Selection, skill_count: int) -> None:
+    if os.environ.get("SKILL_PROOF_TELEMETRY", "1").strip() == "0":
+        return
+    try:
+        audit_path = doctor.resolve_audit_path()
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        selected = selection.selected
+        row = {
+            "schema": "skill-proof.audit.v1",
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "source": "mcp",
+            "turn_id": turn_id,
+            "status": selection.status,
+            "reason": selection.reason,
+            "selected": selected.skill.name if selected is not None else None,
+            "score": selected.score if selected is not None else None,
+            "skill_count": skill_count,
+        }
+        with audit_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
 
 
 def _tool_select(parameters):
@@ -198,12 +262,14 @@ def _tool_select(parameters):
         min_margin=float(parameters.get("min_margin", 0.05)),
         max_candidates=int(parameters.get("limit", 3)),
     )
+    turn_id = _next_turn_id("mcp")
     selection = engine.begin_turn(
-        turn_id=_next_turn_id("mcp"), session_id="mcp", task_id="mcp", query=query
+        turn_id=turn_id, session_id="mcp", task_id="mcp", query=query
     ).selection
     catalog = engine.latest_catalog()
     if catalog is None:  # pragma: no cover - begin_turn always scans
         catalog = core.Catalog((), (), "")
+    _append_mcp_audit(turn_id, selection, len(catalog.skills))
     selected = selection.selected
     selected_payload = None
     if selected is not None:
@@ -295,12 +361,33 @@ def _tool_read(parameters):
     )
 
 
+def _tool_doctor(parameters):
+    roots = _roots(parameters) if parameters.get("roots") else None
+    return doctor.run_doctor(roots=roots)
+
+
+def _tool_vault_status(parameters):
+    roots = _roots(parameters)
+    return vault.status(roots=roots)
+
+
+def _tool_overlap(parameters):
+    roots = _roots(parameters)
+    catalog = core.scan_catalog(roots)
+    min_sim = float(parameters.get("min_similarity", 0.4))
+    limit = int(parameters.get("limit", 20))
+    return core.overlap_report(catalog, min_similarity=min_sim, limit=limit)
+
+
 _TOOLS = {
     "skill_roots": _tool_roots,
     "skill_scan": _tool_scan,
     "skill_select": _tool_select,
     "skill_search": _tool_search,
     "skill_read": _tool_read,
+    "skill_doctor": _tool_doctor,
+    "skill_vault_status": _tool_vault_status,
+    "skill_overlap": _tool_overlap,
 }
 
 
@@ -345,20 +432,12 @@ def _write(payload) -> None:
 
 
 def main() -> int:
-    import os
     if not os.environ.get("SKILL_PROOF_EMBEDDING_PROVIDER"):
-        try:
-            cfg_file = core.default_hermes_home() / "config.yaml"
-            if cfg_file.is_file():
-                for cfg_line in cfg_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    s = cfg_line.strip()
-                    if s.startswith("embedding_provider:"):
-                        val = s.partition(":")[2].strip().strip('"\'')
-                        if val in ("local", "gateway", "off"):
-                            os.environ["SKILL_PROOF_EMBEDDING_PROVIDER"] = val
-                        break
-        except Exception:
-            pass
+        val = _catalog.read_hermes_plugin_setting(
+            core.default_hermes_home() / "config.yaml", "skill-proof", "embedding_provider"
+        )
+        if val in ("local", "gateway", "off"):
+            os.environ["SKILL_PROOF_EMBEDDING_PROVIDER"] = val
     for line in sys.stdin:
         line = line.strip()
         if not line:

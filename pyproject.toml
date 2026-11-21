@@ -12,9 +12,7 @@ authors = [
 ]
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = [
-    "rapidfuzz>=3.0.0",
-]
+dependencies = []
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from statistics import median
 from typing import Any, Mapping, Optional, Protocol, Sequence
 
-from _catalog import default_hermes_home
+from ._catalog import default_hermes_home
 
 
 @dataclass(frozen=True)

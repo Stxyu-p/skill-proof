@@ -5,28 +5,19 @@ import os
 import pathlib
 import sys
 
-# Ensure package directory is importable as fallback
-_PKG_DIR = str(pathlib.Path(__file__).resolve().parent)
-if _PKG_DIR not in sys.path:
-    sys.path.append(_PKG_DIR)
-
-from . import _catalog
-sys.modules.setdefault("_catalog", _catalog)
-from . import models
-sys.modules.setdefault("models", models)
-from . import _vector
-sys.modules.setdefault("_vector", _vector)
-from . import _dialogue
-sys.modules.setdefault("_dialogue", _dialogue)
-from . import _ranking
-sys.modules.setdefault("_ranking", _ranking)
-from . import _compliance
-sys.modules.setdefault("_compliance", _compliance)
-from . import core
-sys.modules.setdefault("core", core)
-from . import bridge
-sys.modules.setdefault("bridge", bridge)
-from . import vault, mcp_install
+from . import (
+    _catalog,
+    _compliance,
+    _dialogue,
+    _ranking,
+    _vector,
+    bridge,
+    core,
+    doctor,
+    mcp_install,
+    models,
+    vault,
+)
 
 # Clean public aliases
 catalog = _catalog
@@ -40,13 +31,11 @@ def __getattr__(name: str):
     if name == "cli":
         import importlib
         mod = importlib.import_module(".cli", __name__)
-        sys.modules.setdefault("cli", mod)
         globals()["cli"] = mod
         return mod
     if name == "mcp_server":
         import importlib
         mod = importlib.import_module(".mcp_server", __name__)
-        sys.modules.setdefault("mcp_server", mod)
         globals()["mcp_server"] = mod
         return mod
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

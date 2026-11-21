@@ -1,7 +1,7 @@
 import hashlib, math, os, pathlib, sqlite3, struct, tempfile, unittest
 from unittest import mock
 
-from core import (
+from skill_proof.core import (
     Catalog,
     RankedCandidate,
     Selection,
@@ -148,7 +148,7 @@ class EmbedderSeamTests(unittest.TestCase):
 
 class ModelFastVerificationTests(unittest.TestCase):
     def test_default_models_dir_skips_empty_candidate(self):
-        import models
+        from skill_proof import models
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = pathlib.Path(tmp)
             empty_local = tmp_path / "local_hermes"
@@ -166,7 +166,7 @@ class ModelFastVerificationTests(unittest.TestCase):
                     self.assertEqual(resolved, real_home / ".hermes" / "models")
 
     def test_check_model_status_uses_fast_stamp_after_first_verify(self):
-        import models
+        from skill_proof import models
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = pathlib.Path(tmp)
             fake_spec = {
@@ -209,7 +209,7 @@ class ModelFastVerificationTests(unittest.TestCase):
 
     def test_vector_index_connect_sets_busy_timeout_per_connection_and_versions_match(self):
         import re
-        from core import __version__ as core_ver
+        from skill_proof.core import __version__ as core_ver
         root = pathlib.Path(__file__).resolve().parent.parent
         pyaml = (root / "plugin.yaml").read_text(encoding="utf-8")
         pyproj = (root / "pyproject.toml").read_text(encoding="utf-8")

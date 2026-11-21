@@ -13,9 +13,7 @@ import pathlib
 import tempfile
 import unittest
 
-import bridge
-import cli
-import core
+from skill_proof import bridge, cli, core
 
 
 def _skill_bytes(name: str, description: str, *, tags: str = "", aliases: str = "", related: str = "") -> bytes:

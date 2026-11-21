@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Standalone diagnostics (`skill_proof/doctor.py`, `skill-proof doctor --json`):** Contract 2
+  health envelope checking vault integrity, `stub_corrupted` `SKILL.md` files, cross-root drift,
+  audit chain integrity, read-only vector state, and optional Hermes integration (`"info"` when
+  absent so standalone installs stay healthy).
+- **3 new MCP tools (`skill_proof/mcp_server.py`):** `skill_doctor`, `skill_vault_status`, and
+  `skill_overlap` (8 MCP tools total) with standalone audit log fallback.
+- **Closed-loop graduation intake (`skill-proof crystallize --from-candidates`, `mine`):**
+  Ingests `skill-proof.candidate.v1` JSONL streams/files with stub checks, dry-run/JSON parity,
+  and synced-copy fallback when OS permissions block directory junctions.
+
+### Changed & Fixed
+- **Zero external runtime dependencies (`pyproject.toml`):** Removed unused `rapidfuzz` dependency;
+  routing runs purely on Python stdlib with optional `[vectors]` extras.
+- **Standalone decoupling (`_dialogue.py`, `_ranking.py`, `bridge.py`):** Replaced hardcoded peer
+  DB lookups and personal fleet patterns with `$SKILL_PROOF_VETO_FILE`, explicit opt-in
+  `$SKILL_PROOF_MEMCORE_DB`, and `$SKILL_PROOF_FLEET_PROFILES` / `fleet.json` configuration.
+- **Vault & vector hardening (`vault.py`, `_catalog.py`, `_vector.py`, `core.py`):** Added
+  junction self-loop/cycle guards, Windows `OSError` resilience, extended `[tt:...]` stub marker
+  detection, per-model composite keys in `embeddings.db`, read-only `VectorIndex` probing when
+  `provider=off`, and fail-open lexical fallback in `SkillProofEngine.from_config` and
+  `mcp_server._vector_index()`.
+
 ## [2.1.2] - 2026-11-14
 
 ### Fixed

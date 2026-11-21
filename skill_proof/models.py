@@ -302,7 +302,7 @@ def download_file_verified(
     received_bytes = 0
     import urllib.request
 
-    req = urllib.request.Request(url, headers={"User-Agent": "skill-proof/0.15.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "skill-proof/2.1.2"})
 
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:

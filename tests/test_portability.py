@@ -175,7 +175,19 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(responses[0]["result"]["protocolVersion"], "2024-11-05")
         self.assertEqual(responses[0]["result"]["serverInfo"]["name"], "skill-proof")
         tool_names = [tool["name"] for tool in responses[1]["result"]["tools"]]
-        self.assertEqual(tool_names, ["skill_roots", "skill_scan", "skill_select", "skill_search", "skill_read"])
+        self.assertEqual(
+            tool_names,
+            [
+                "skill_roots",
+                "skill_scan",
+                "skill_select",
+                "skill_search",
+                "skill_read",
+                "skill_doctor",
+                "skill_vault_status",
+                "skill_overlap",
+            ],
+        )
         call = responses[2]["result"]
         self.assertFalse(call["isError"])
         payload = json.loads(call["content"][0]["text"])

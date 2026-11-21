@@ -25,11 +25,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
+import shutil
 import sys
 from typing import Any, Mapping, Optional
 
-import core
+from . import core
 
 MARKER_START = "<!-- skill-proof:bridge:start -->"
 MARKER_END = "<!-- skill-proof:bridge:end -->"
@@ -247,32 +249,62 @@ Column A applies only where the MCP servers are registered: `~/.codex/config.tom
 **Habit:** before guessing project history → `memory_search`. After verifying a durable truth → `memory_remember` / `memory_supersede`. Before any specialized task → consult the skill router (A: `skill_select`; B: read the injected hint)."""
 
 
-def _replace_trinity_section(text: str, body: str = TRINITY_HABIT_SECTION) -> tuple[str, str]:
-    start, end = text.find(TRINITY_MARKER_START), text.find(TRINITY_MARKER_END)
+SKILL_PROOF_HABIT_START = "<!-- skill-proof:habit:start -->"
+SKILL_PROOF_HABIT_END = "<!-- skill-proof:habit:end -->"
+SKILL_PROOF_ONLY_HABIT_SECTION = """## Skill Proof — Deterministic Skill Routing Protocol
+
+This client runs **skill-proof** for deterministic SKILL.md routing from the Global Skill Vault (`~/.agents/skills`):
+
+1. **Skill Routing (`skill-proof` MCP):**
+   - At the start of a specialized coding, architecture, debugging, design, or research task, call `skill_select` (`query`, optional `include_content: true`) or `skill_search` to route from the Global Skill Vault (`~/.agents/skills`); `skill_read` loads the full body of a selected skill."""
+
+
+def _replace_marked_section(
+    text: str, start_marker: str, end_marker: str, body: str
+) -> tuple[str, str]:
+    start, end = text.find(start_marker), text.find(end_marker)
     if start != -1 and end != -1 and end > start:
-        closing = end + len(TRINITY_MARKER_END)
-        return text[:start] + f"{TRINITY_MARKER_START}\n{body}\n{TRINITY_MARKER_END}" + text[closing:], "updated"
+        closing = end + len(end_marker)
+        return text[:start] + f"{start_marker}\n{body}\n{end_marker}" + text[closing:], "updated"
     separator = "" if not text or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
-    addition = f"{separator}{TRINITY_MARKER_START}\n{body}\n{TRINITY_MARKER_END}\n"
+    addition = f"{separator}{start_marker}\n{body}\n{end_marker}\n"
     return text + addition, "added"
 
 
-def sync_global_trinity_habits(*, workspace_dir: Optional[pathlib.Path] = None, dry_run: bool = False) -> list[str]:
-    """Non-destructively inject/update the Global Agent Trinity Habit section in global instruction files.
+def _replace_trinity_section(text: str, body: str = TRINITY_HABIT_SECTION) -> tuple[str, str]:
+    return _replace_marked_section(text, TRINITY_MARKER_START, TRINITY_MARKER_END, body)
 
-    Each client gets the body that matches how it reaches the engines: the global MCP
-    client files (Codex / Claude Code / Gemini / Antigravity) get the MCP tool names,
-    while the shared workspace AGENTS.md gets the two-column body — Hermes reads it as a
-    native-plugin host, and Codex / Antigravity may read the same file as MCP clients.
+
+def sync_global_trinity_habits(
+    *,
+    workspace_dir: Optional[pathlib.Path] = None,
+    dry_run: bool = False,
+    include_trinity: Optional[bool] = None,
+) -> list[str]:
+    """Non-destructively inject/update habit sections in global instruction files.
+
+    When both peer engines (`memcore` and `trimtok`) are detected or *include_trinity*
+    is True, writes the Trinity protocol; when running standalone, writes only the
+    Skill Proof routing section so MemCore/TrimTok are never assumed installed.
     """
     home = pathlib.Path.home()
+    if include_trinity is None:
+        has_memcore = bool(shutil.which("memcore")) or (home / ".memcore").is_dir()
+        has_trimtok = bool(shutil.which("trimtok")) or (home / ".trimtok").is_dir()
+        use_trinity = has_memcore and has_trimtok
+    else:
+        use_trinity = bool(include_trinity)
+
+    mcp_body = TRINITY_HABIT_SECTION_MCP if use_trinity else SKILL_PROOF_ONLY_HABIT_SECTION
+    ws_body = TRINITY_HABIT_SECTION if use_trinity else SKILL_PROOF_ONLY_HABIT_SECTION
+
     targets: list[tuple[pathlib.Path, str]] = [
-        (home / ".gemini" / "GEMINI.md", TRINITY_HABIT_SECTION_MCP),
-        (home / ".claude" / "CLAUDE.md", TRINITY_HABIT_SECTION_MCP),
-        (home / ".codex" / "AGENTS.md", TRINITY_HABIT_SECTION_MCP),
+        (home / ".gemini" / "GEMINI.md", mcp_body),
+        (home / ".claude" / "CLAUDE.md", mcp_body),
+        (home / ".codex" / "AGENTS.md", mcp_body),
     ]
     if workspace_dir and workspace_dir.is_dir():
-        targets.append((workspace_dir / "AGENTS.md", TRINITY_HABIT_SECTION))
+        targets.append((workspace_dir / "AGENTS.md", ws_body))
     actions: list[str] = []
     for path, body in targets:
         try:
@@ -283,7 +315,11 @@ def sync_global_trinity_habits(*, workspace_dir: Optional[pathlib.Path] = None, 
             elif not path.parent.exists():
                 continue
             existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-            updated, action = _replace_trinity_section(existing, body)
+            if use_trinity or TRINITY_MARKER_START in existing:
+                start_m, end_m = TRINITY_MARKER_START, TRINITY_MARKER_END
+            else:
+                start_m, end_m = SKILL_PROOF_HABIT_START, SKILL_PROOF_HABIT_END
+            updated, action = _replace_marked_section(existing, start_m, end_m, body)
             if updated == existing:
                 actions.append(f"{path}: already up to date")
             else:

@@ -1,6 +1,6 @@
 """Tests for expanded multilingual coverage: DE, FR, ES, JA, KO, ZH, VI."""
 import unittest
-from core import (
+from skill_proof.core import (
     Catalog,
     SkillRecord,
     select_skill,

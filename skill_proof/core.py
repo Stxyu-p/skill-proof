@@ -29,15 +29,12 @@ from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 try:
     from . import models
 except ImportError:
-    try:
-        import models
-    except ImportError:
-        models = None
+    models = None
 
 
 
 
-from _catalog import (  # v0.16 facade re-exports
+from ._catalog import (  # v0.16 facade re-exports
     Catalog,
     Diagnostic,
     SkillInvariants,
@@ -79,13 +76,13 @@ from _catalog import (  # v0.16 facade re-exports
 )
 
 
-from _vector import (  # v0.16 facade re-exports
+from ._vector import (  # v0.16 facade re-exports
     VectorIndex,
     vector_index_from_env,
 )
 
 
-from _dialogue import (  # v0.16 facade re-exports
+from ._dialogue import (  # v0.16 facade re-exports
     DialogueReference,
     _DIALOGUE_FAMILIES,
     _DIALOGUE_FILLER,
@@ -110,7 +107,7 @@ from _dialogue import (  # v0.16 facade re-exports
 )
 
 
-from _ranking import (  # v0.16 facade re-exports
+from ._ranking import (  # v0.16 facade re-exports
     CatalogIndex,
     DEFAULT_SYNONYMS,
     RankRow,
@@ -147,7 +144,7 @@ from _ranking import (  # v0.16 facade re-exports
 )
 
 
-from _compliance import (  # v0.16 facade re-exports
+from ._compliance import (  # v0.16 facade re-exports
     FilePolicyStore,
     GuardResult,
     InMemoryPolicyStore,
@@ -1916,7 +1913,10 @@ class SkillProofEngine:
                 }:
                     settings[str(key)] = value
         if isinstance(vector_index, str) and vector_index.lower() == "auto":
-            settings["vector_index"] = vector_index_from_env()
+            try:
+                settings["vector_index"] = vector_index_from_env()
+            except (sqlite3.Error, OSError):
+                settings["vector_index"] = None
         elif vector_index is None or vector_index is False:
             settings["vector_index"] = None
         else:

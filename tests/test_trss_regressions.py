@@ -1,6 +1,6 @@
 import unittest
 
-from core import extract_explicit_skill_names
+from skill_proof.core import extract_explicit_skill_names
 
 
 class ExplicitRegressionTests(unittest.TestCase):

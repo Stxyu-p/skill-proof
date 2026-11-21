@@ -7,29 +7,31 @@ and manages synchronization and pinning across agent ecosystems
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from typing import Any, Mapping, Optional
 
-DEFAULT_VAULT_ROOT = (
-    pathlib.Path(os.environ["SKILL_PROOF_VAULT"]).expanduser()
-    if os.environ.get("SKILL_PROOF_VAULT")
-    else (
-        pathlib.Path.home() / ".agents" / "skills"
-        if (pathlib.Path.home() / ".agents" / "skills").exists()
-        else pathlib.Path.home() / ".skill-proof" / "skills"
-    )
-)
+from . import _catalog
+
+
+def get_vault_root() -> pathlib.Path:
+    """Resolve the active global skill vault root dynamically."""
+    return _catalog._canonical_vault_root()
+
+
+DEFAULT_VAULT_ROOT = get_vault_root()
 
 
 def init_vault(vault_dir: Optional[pathlib.Path] = None) -> pathlib.Path:
     """Ensure the global vault directory exists and is initialized."""
-    target = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    target = (vault_dir or get_vault_root()).resolve()
     target.mkdir(parents=True, exist_ok=True)
     manifest = target.parent / "vault.json"
     if not manifest.exists():
@@ -47,9 +49,65 @@ def init_vault(vault_dir: Optional[pathlib.Path] = None) -> pathlib.Path:
     return target
 
 
+def _skill_content_info(skill_dir: pathlib.Path) -> tuple[Optional[str], list[dict[str, Any]]]:
+    """Return (sha256_hex, stub_hits) for ``skill_dir/SKILL.md``."""
+    md = skill_dir / "SKILL.md"
+    if not md.is_file():
+        return None, []
+    try:
+        raw = md.read_bytes()
+    except OSError:
+        return None, []
+    sha = hashlib.sha256(raw).hexdigest()
+    text = raw.decode("utf-8", errors="replace")
+    return sha, _catalog.find_stub_markers(text)
+
+
+def _collect_client_skills(root: pathlib.Path) -> tuple[list[tuple[str, pathlib.Path, bool]], list[pathlib.Path]]:
+    """Collect (skill_name, skill_dir, is_nested) entries and broken links under *root*."""
+    entries: list[tuple[str, pathlib.Path, bool]] = []
+    broken_links: list[pathlib.Path] = []
+    try:
+        children = sorted(root.iterdir())
+    except OSError:
+        return entries, broken_links
+    for child in children:
+        if child.name.startswith("."):
+            continue
+        is_rep = _is_reparse(child)
+        try:
+            is_dir = child.is_dir()
+        except OSError:
+            continue
+        if not is_dir:
+            if is_rep:
+                broken_links.append(child)
+            continue
+        try:
+            has_skill = (child / "SKILL.md").is_file()
+        except OSError:
+            has_skill = False
+        if has_skill:
+            entries.append((child.name, child, False))
+        elif not is_rep:
+            try:
+                sub_mds = sorted(child.rglob("SKILL.md"))
+            except OSError:
+                continue
+            for sub_md in sub_mds:
+                try:
+                    rel_parts = sub_md.relative_to(root).parts
+                except OSError:
+                    continue
+                if any(part.startswith(".") for part in rel_parts):
+                    continue
+                entries.append((sub_md.parent.name, sub_md.parent, True))
+    return entries, broken_links
+
+
 def list_vault_skills(vault_dir: Optional[pathlib.Path] = None) -> list[dict[str, Any]]:
     """List all skills in the global vault."""
-    vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    vdir = (vault_dir or get_vault_root()).resolve()
     if not vdir.is_dir():
         return []
     results = []
@@ -94,8 +152,33 @@ def _is_reparse(path: pathlib.Path) -> bool:
         return False
 
 
+def _is_self_or_cycle_target(source: pathlib.Path, target: pathlib.Path) -> bool:
+    """Return True if creating a link at *target* pointing to *source* would self-loop or delete *source*."""
+    try:
+        src_abs = pathlib.Path(os.path.abspath(os.fspath(source)))
+        tgt_abs = pathlib.Path(os.path.abspath(os.fspath(target)))
+        if os.path.normcase(str(src_abs)) == os.path.normcase(str(tgt_abs)):
+            return True
+        src_res = source.resolve(strict=False)
+        if target.exists() and not _is_reparse(target):
+            if target.resolve(strict=False) == src_res:
+                return True
+        if target.parent.resolve(strict=False) == src_res:
+            return True
+        try:
+            if src_res.is_relative_to(tgt_abs):
+                return True
+        except ValueError:
+            pass
+    except OSError:
+        return True
+    return False
+
+
 def create_junction_or_link(source: pathlib.Path, target: pathlib.Path, force: bool = False) -> bool:
     """Create an NTFS junction on Windows or a symlink on Unix (handles dangling junctions)."""
+    if _is_self_or_cycle_target(source, target):
+        return False
     target.parent.mkdir(parents=True, exist_ok=True)
     is_rep = _is_reparse(target)
     if is_rep:
@@ -146,7 +229,7 @@ def migrate_from_roots(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Migrate physical skills from dispersed agent roots into the global vault."""
-    vdir = init_vault(vault_dir) if not dry_run else (vault_dir or DEFAULT_VAULT_ROOT)
+    vdir = init_vault(vault_dir) if not dry_run else (vault_dir or get_vault_root()).resolve()
     migrated = []
     skipped = []
     already_vault = []
@@ -162,20 +245,8 @@ def migrate_from_roots(
         if resolved_root == vdir.resolve():
             continue
 
-        # Collect both top-level skills and nested category skills (e.g. hermes/skills/<category>/<skill>/SKILL.md)
-        candidate_dirs: list[pathlib.Path] = []
-        for child in sorted(rp.iterdir()):
-            if not child.is_dir() or child.name.startswith("."):
-                continue
-            if (child / "SKILL.md").is_file():
-                candidate_dirs.append(child)
-            elif not _is_reparse(child):
-                for sub_md in sorted(child.rglob("SKILL.md")):
-                    if any(part.startswith(".") for part in sub_md.relative_to(rp).parts):
-                        continue
-                    candidate_dirs.append(sub_md.parent)
-
-        for child in candidate_dirs:
+        candidate_entries, _ = _collect_client_skills(rp)
+        for _, child, _ in candidate_entries:
             skill_md = child / "SKILL.md"
             if not skill_md.is_file():
                 continue
@@ -188,31 +259,86 @@ def migrate_from_roots(
                 except Exception:
                     pass
 
+            src_sha, src_stubs = _skill_content_info(child)
+            if src_stubs:
+                skipped.append(
+                    {
+                        "skill": child.name,
+                        "source": str(child),
+                        "reason": "stub_corrupted",
+                        "stubs": src_stubs,
+                    }
+                )
+                continue
+
             dest = vdir / child.name
             if dest.exists():
                 dest_md = dest / "SKILL.md"
-                try:
-                    src_bytes = skill_md.read_bytes()
-                    dst_bytes = dest_md.read_bytes() if dest_md.is_file() else b""
-                except OSError:
-                    src_bytes, dst_bytes = b"", b""
-                # Upgrade vault copy if source has richer content
-                if len(src_bytes) > len(dst_bytes):
-                    if not dry_run:
-                        try:
-                            shutil.rmtree(dest)
-                            shutil.copytree(child, dest, symlinks=False)
-                            migrated.append({"skill": child.name, "source": str(child), "upgraded": True})
-                        except Exception as e:
-                            skipped.append({"skill": child.name, "source": str(child), "reason": str(e)})
-                    else:
-                        migrated.append({"skill": child.name, "source": str(child), "upgraded": True})
-                else:
+                dst_sha, dst_stubs = _skill_content_info(dest)
+                if src_sha and dst_sha and src_sha == dst_sha:
                     skipped.append(
                         {
                             "skill": child.name,
                             "source": str(child),
                             "reason": "already_in_vault",
+                        }
+                    )
+                    continue
+                if is_skill_immutable(dest):
+                    skipped.append(
+                        {
+                            "skill": child.name,
+                            "source": str(child),
+                            "reason": "immutable_vault_skill",
+                            "src_sha256": src_sha,
+                            "dst_sha256": dst_sha,
+                        }
+                    )
+                    continue
+
+                should_upgrade = bool(dst_stubs) or not dest_md.is_file()
+                if not should_upgrade:
+                    try:
+                        should_upgrade = skill_md.stat().st_mtime > dest_md.stat().st_mtime
+                    except OSError:
+                        should_upgrade = False
+
+                if should_upgrade:
+                    if not dry_run:
+                        try:
+                            shutil.rmtree(dest)
+                            shutil.copytree(child, dest, symlinks=False)
+                            migrated.append(
+                                {
+                                    "skill": child.name,
+                                    "source": str(child),
+                                    "upgraded": True,
+                                    "repaired_stub_corruption": bool(dst_stubs),
+                                    "src_sha256": src_sha,
+                                    "dst_sha256": dst_sha,
+                                }
+                            )
+                        except Exception as e:
+                            skipped.append({"skill": child.name, "source": str(child), "reason": str(e)})
+                    else:
+                        migrated.append(
+                            {
+                                "skill": child.name,
+                                "source": str(child),
+                                "upgraded": True,
+                                "repaired_stub_corruption": bool(dst_stubs),
+                                "src_sha256": src_sha,
+                                "dst_sha256": dst_sha,
+                            }
+                        )
+                else:
+                    skipped.append(
+                        {
+                            "skill": child.name,
+                            "source": str(child),
+                            "reason": "divergent_conflict",
+                            "src_sha256": src_sha,
+                            "dst_sha256": dst_sha,
                         }
                     )
                 continue
@@ -249,7 +375,7 @@ def pin(
     safe = _safe_skill_name(skill_name)
     if safe is None:
         return {"success": False, "error": f"invalid skill name: {skill_name!r}"}
-    vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    vdir = (vault_dir or get_vault_root()).resolve()
     source = vdir / safe
     if not source.is_dir() or not (source / "SKILL.md").is_file():
         return {
@@ -257,7 +383,25 @@ def pin(
             "error": f"skill '{safe}' not found in vault {vdir}",
         }
 
-    dest = target_root.resolve() / safe
+    target_resolved = pathlib.Path(target_root).expanduser().resolve()
+    if target_resolved == vdir:
+        return {
+            "success": True,
+            "already_in_vault": True,
+            "dry_run": dry_run,
+            "source": str(source),
+            "target": str(source),
+        }
+
+    dest = target_resolved / safe
+    if _is_self_or_cycle_target(source, dest):
+        return {
+            "success": True,
+            "already_in_vault": True,
+            "dry_run": dry_run,
+            "source": str(source),
+            "target": str(dest),
+        }
     if dest.exists() and dest.is_dir() and not _is_reparse(dest) and not force:
         return {
             "success": False,
@@ -307,9 +451,23 @@ def status(
     roots: Optional[Mapping[str, os.PathLike[str] | str]] = None,
 ) -> dict[str, Any]:
     """Inspect the status of the global skill vault and client linkages."""
-    vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    vdir = (vault_dir or get_vault_root()).resolve()
     vault_exists = vdir.is_dir()
     skills = list_vault_skills(vdir) if vault_exists else []
+    vault_hashes: dict[str, Optional[str]] = {}
+    vault_stub_corrupted: list[dict[str, Any]] = []
+    for item in skills:
+        sdir = pathlib.Path(item["path"])
+        sha, stubs = _skill_content_info(sdir)
+        vault_hashes[item["name"]] = sha
+        if stubs:
+            vault_stub_corrupted.append(
+                {
+                    "skill": item["name"],
+                    "path": str(sdir / "SKILL.md"),
+                    "stubs": stubs,
+                }
+            )
 
     client_stats: dict[str, Any] = {}
     if roots:
@@ -317,31 +475,64 @@ def status(
             rp = pathlib.Path(root_path).expanduser()
             if not rp.is_dir():
                 continue
-            total = 0
+            try:
+                if rp.resolve() == vdir:
+                    continue
+            except OSError:
+                continue
+
+            entries, broken_links = _collect_client_skills(rp)
+            total = len(entries)
             pinned_to_vault = 0
             local_physical = 0
-            for child in rp.iterdir():
-                if not child.is_dir():
-                    continue
-                if not (child / "SKILL.md").is_file():
-                    continue
-                total += 1
-                if _is_reparse(child):
+            drifted_skills: list[dict[str, Any]] = []
+            stub_corrupted: list[dict[str, Any]] = []
+            broken_paths = [str(bp) for bp in broken_links]
+
+            for sname, sdir, is_nested in entries:
+                is_rep = _is_reparse(sdir)
+                if is_rep:
                     try:
-                        tgt = child.resolve()
+                        tgt = sdir.resolve(strict=True)
                         if tgt.is_relative_to(vdir):
                             pinned_to_vault += 1
-                        else:
-                            local_physical += 1
+                            continue
                     except Exception:
-                        local_physical += 1
-                else:
-                    local_physical += 1
+                        broken_paths.append(str(sdir))
+                        continue
+                local_physical += 1
+                sha, stubs = _skill_content_info(sdir)
+                if stubs:
+                    stub_corrupted.append(
+                        {
+                            "skill": sname,
+                            "path": str(sdir / "SKILL.md"),
+                            "stubs": stubs,
+                        }
+                    )
+                vsha = vault_hashes.get(sname)
+                if vsha and sha and sha != vsha:
+                    drifted_skills.append(
+                        {
+                            "skill": sname,
+                            "path": str(sdir),
+                            "nested": is_nested,
+                            "vault_sha256": vsha,
+                            "client_sha256": sha,
+                        }
+                    )
+
             client_stats[root_id] = {
                 "path": str(rp),
                 "total_skills": total,
                 "pinned_to_vault": pinned_to_vault,
                 "local_physical": local_physical,
+                "drifted_count": len(drifted_skills),
+                "drifted": drifted_skills,
+                "stub_corrupted_count": len(stub_corrupted),
+                "stub_corrupted": stub_corrupted,
+                "broken_links_count": len(broken_paths),
+                "broken_links": broken_paths,
             }
 
     return {
@@ -349,6 +540,8 @@ def status(
         "vault_exists": vault_exists,
         "vault_skills_count": len(skills),
         "skills": [s["name"] for s in skills],
+        "vault_stub_corrupted_count": len(vault_stub_corrupted),
+        "vault_stub_corrupted": vault_stub_corrupted,
         "clients": client_stats,
     }
 
@@ -359,7 +552,7 @@ def sync(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Full synchronization: migrate physical skills to vault and ensure links are healthy."""
-    vdir = init_vault(vault_dir) if not dry_run else (vault_dir or DEFAULT_VAULT_ROOT)
+    vdir = init_vault(vault_dir) if not dry_run else (vault_dir or get_vault_root()).resolve()
     migration_report = {}
     if roots:
         migration_report = migrate_from_roots(roots, vault_dir=vdir, dry_run=dry_run)
@@ -378,7 +571,7 @@ def link_all(
     force: bool = False,
 ) -> dict[str, Any]:
     """Pin all skills from the global vault to a target agent directory via junctions."""
-    vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    vdir = (vault_dir or get_vault_root()).resolve()
     target = pathlib.Path(target_root).resolve()
     target.mkdir(parents=True, exist_ok=True)
     skills = list_vault_skills(vdir)
@@ -407,33 +600,35 @@ def reconcile_all_clients(
     force: bool = False,
 ) -> dict[str, Any]:
     """Auto-heal and reconcile all detected agent client roots via NTFS junctions."""
-    vdir = init_vault(vault_dir) if not dry_run else (vault_dir or DEFAULT_VAULT_ROOT).resolve()
-    try:
-        from . import _catalog
-    except (ImportError, ValueError):
-        import _catalog
-    detected_roots = dict(roots if roots is not None else _catalog.detect_agent_roots())
-
-    # Include known candidate ecosystems if their parent client exists
-    base_home = pathlib.Path.home()
-    local_app = pathlib.Path(os.environ.get("LOCALAPPDATA", str(base_home / "AppData" / "Local")))
-    known_clients = [
-        ("antigravity-cli", base_home / ".gemini" / "antigravity-cli" / "skills"),
-        ("antigravity", base_home / ".gemini" / "antigravity" / "skills"),
-        ("hermes", local_app / "hermes" / "skills"),
-        ("claude", base_home / ".claude" / "skills"),
-        ("cursor", base_home / ".cursor" / "skills"),
-    ]
-    for cid, cpath in known_clients:
-        if cid not in detected_roots and (cpath.parent.exists() or cpath.exists()):
-            detected_roots[cid] = cpath
+    vdir = init_vault(vault_dir) if not dry_run else (vault_dir or get_vault_root()).resolve()
+    if roots is not None:
+        detected_roots = dict(roots)
+    else:
+        detected_roots = dict(_catalog.detect_agent_roots())
+        base_home = pathlib.Path.home()
+        hermes_home = _catalog.default_hermes_home()
+        known_clients = [
+            ("antigravity-cli", base_home / ".gemini" / "antigravity-cli" / "skills"),
+            ("antigravity", base_home / ".gemini" / "antigravity" / "skills"),
+            ("hermes", hermes_home / "skills"),
+            ("claude", base_home / ".claude" / "skills"),
+            ("cursor", base_home / ".cursor" / "skills"),
+        ]
+        for cid, cpath in known_clients:
+            if cid not in detected_roots and (cpath.parent.exists() or cpath.exists()):
+                detected_roots[cid] = cpath
 
     skills = list_vault_skills(vdir)
+    vault_hashes = {s["name"]: _skill_content_info(pathlib.Path(s["path"]))[0] for s in skills}
     reconciled: dict[str, Any] = {}
 
     for root_id, root_str in detected_roots.items():
         rp = pathlib.Path(root_str).expanduser()
-        if root_id == "agents" or str(rp.absolute()).lower() == str(vdir.absolute()).lower():
+        try:
+            rp_resolved = rp.resolve()
+        except OSError:
+            rp_resolved = pathlib.Path(os.path.abspath(str(rp)))
+        if rp_resolved == vdir.resolve():
             continue
 
         # If it already resolves directly to the vault root and is a reparse point, it is healthy!
@@ -452,9 +647,16 @@ def reconcile_all_clients(
                 reconciled[root_id] = {"path": str(rp), "status": "dry_run_reconcile", "target": str(vdir)}
             continue
 
-        # Hybrid or per-skill pinning (Hermes global)
+        # Hybrid or per-skill pinning (e.g. Hermes global with nested category dirs)
         if root_id == "hermes":
+            entries, broken = _collect_client_skills(rp) if rp.is_dir() else ([], [])
+            nested_by_name = {sname: sdir for sname, sdir, is_nested in entries if is_nested}
             pinned_count = 0
+            nested_present = 0
+            drifted_nested = 0
+            stub_corrupted_count = 0
+            failed_count = 0
+
             for s in skills:
                 name = s["name"]
                 target_skill = rp / name
@@ -467,15 +669,46 @@ def reconcile_all_clients(
                             continue
                     except Exception:
                         pass
+                if not target_skill.exists() and name in nested_by_name and not force:
+                    nested_dir = nested_by_name[name]
+                    sha, stubs = _skill_content_info(nested_dir)
+                    nested_present += 1
+                    if stubs:
+                        stub_corrupted_count += 1
+                    elif vault_hashes.get(name) and sha and sha != vault_hashes.get(name):
+                        drifted_nested += 1
+                    continue
                 if not dry_run:
                     ok = pin(name, rp, vault_dir=vdir, force=force)
                     if ok.get("success"):
                         pinned_count += 1
+                    else:
+                        failed_count += 1
+                elif target_skill.exists() and _is_reparse(target_skill):
+                    pinned_count += 1
+
+            total_skills = len(skills)
+            if dry_run:
+                hermes_status = "dry_run_preview"
+            elif stub_corrupted_count > 0 or drifted_nested > 0:
+                hermes_status = "drifted"
+            elif failed_count > 0 or (pinned_count + nested_present) < total_skills:
+                hermes_status = "incomplete"
+            elif pinned_count == total_skills:
+                hermes_status = "healthy_junctions"
+            else:
+                hermes_status = "healthy_mixed"
+
             reconciled[root_id] = {
                 "path": str(rp),
-                "status": "healthy_junctions",
+                "status": hermes_status,
                 "pinned_count": pinned_count,
-                "total_vault_skills": len(skills),
+                "nested_present_count": nested_present,
+                "drifted_nested_count": drifted_nested,
+                "stub_corrupted_count": stub_corrupted_count,
+                "broken_links_count": len(broken),
+                "failed_count": failed_count,
+                "total_vault_skills": total_skills,
             }
             continue
 
@@ -518,7 +751,7 @@ def _safe_skill_name(skill_name: str) -> Optional[str]:
 
 
 def get_patches_dir(vault_dir: Optional[pathlib.Path] = None) -> pathlib.Path:
-    vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    vdir = (vault_dir or get_vault_root()).resolve()
     pdir = vdir.parent / "patches"
     pdir.mkdir(parents=True, exist_ok=True)
     return pdir
@@ -538,29 +771,27 @@ def apply_patch(skill_name: str, patch_file: Optional[pathlib.Path] = None, vaul
     safe = _safe_skill_name(skill_name)
     if safe is None:
         return False
-    vdir = (vault_dir or DEFAULT_VAULT_ROOT).resolve()
+    vdir = (vault_dir or get_vault_root()).resolve()
     target_skill = vdir / safe
     if not target_skill.is_dir() or not (target_skill / "SKILL.md").is_file():
+        return False
+    if is_skill_immutable(target_skill):
         return False
     pfile = patch_file or (get_patches_dir(vault_dir) / f"{safe}.patch")
     if not pfile.is_file():
         return False
 
     try:
-        res = subprocess.run(["git", "apply", "--ignore-whitespace", str(pfile)], cwd=str(target_skill), capture_output=True, text=True, check=False)
-        if res.returncode == 0:
-            return True
+        res = subprocess.run(
+            ["git", "apply", "--ignore-whitespace", str(pfile)],
+            cwd=str(target_skill),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return res.returncode == 0
     except Exception:
-        pass
-
-    patch_text = pfile.read_text(encoding="utf-8")
-    md_file = target_skill / "SKILL.md"
-    if md_file.is_file():
-        content = md_file.read_text(encoding="utf-8")
-        if patch_text not in content:
-            md_file.write_text(content + "\n\n" + patch_text, encoding="utf-8")
-        return True
-    return False
+        return False
 
 
 def rebase_patches(vault_dir: Optional[pathlib.Path] = None) -> dict[str, Any]:
@@ -586,12 +817,7 @@ def is_skill_immutable(skill_path: pathlib.Path | str) -> bool:
     p = pathlib.Path(skill_path)
     md_file = p if p.is_file() else p / "SKILL.md"
     if not md_file.is_file():
-        # Fallback: check under vault root or environment override
-        vault_root = (
-            pathlib.Path(os.environ["SKILL_PROOF_VAULT"]).expanduser()
-            if os.environ.get("SKILL_PROOF_VAULT")
-            else DEFAULT_VAULT_ROOT
-        )
+        vault_root = get_vault_root()
         fallback = vault_root / skill_path / "SKILL.md"
         if fallback.is_file():
             md_file = fallback
@@ -620,17 +846,20 @@ def is_skill_immutable(skill_path: pathlib.Path | str) -> bool:
 
 def set_skill_readonly(skill_dir: pathlib.Path | str, readonly: bool = True) -> bool:
     """Apply or remove OS read-only attributes on all files in a skill directory."""
-    import stat
     p = pathlib.Path(skill_dir)
     target_dir = p.parent if p.is_file() else p
     if not target_dir.is_dir():
         return False
 
     try:
-        mode = stat.S_IREAD if readonly else (stat.S_IREAD | stat.S_IWRITE)
         for item in target_dir.rglob("*"):
             if item.is_file():
                 try:
+                    if os.name == "nt":
+                        mode = stat.S_IREAD if readonly else (stat.S_IREAD | stat.S_IWRITE)
+                    else:
+                        current = item.stat().st_mode & 0o777
+                        mode = (current & ~0o222) if readonly else (current | 0o200)
                     os.chmod(item, mode)
                 except OSError:
                     pass

@@ -50,24 +50,28 @@ def collect_handoff_state(workspace: Optional[pathlib.Path] = None) -> dict[str,
             except Exception:
                 pass
 
-    # 3. MemCore Constraints & Rules
+    # 3. Optional MemCore Constraints & Rules (explicit opt-in via SKILL_PROOF_MEMCORE_DB)
     memories = []
-    try:
-        db = pathlib.Path.home() / ".memcore" / "memory.db"
-        if db.is_file():
-            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-            cur = conn.execute("""
-                SELECT v.content, m.type FROM memory m
-                JOIN memory_version v ON v.id = m.current_version_id
-                WHERE m.lifecycle = 'accepted'
-                LIMIT 10
-            """)
-            for content, mtype in cur.fetchall():
-                if content:
-                    memories.append(f"[{mtype}] {content.strip()}")
-            conn.close()
-    except Exception:
-        pass
+    memcore_db_env = os.environ.get("SKILL_PROOF_MEMCORE_DB", "").strip()
+    if memcore_db_env:
+        try:
+            db = pathlib.Path(memcore_db_env).expanduser()
+            if db.is_file():
+                conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+                try:
+                    cur = conn.execute("""
+                        SELECT v.content, m.type FROM memory m
+                        JOIN memory_version v ON v.id = m.current_version_id
+                        WHERE m.lifecycle = 'accepted' AND m.scope = 'project'
+                        LIMIT 10
+                    """)
+                    for content, mtype in cur.fetchall():
+                        if content:
+                            memories.append(f"[{mtype}] {content.strip()}")
+                finally:
+                    conn.close()
+        except Exception:
+            pass
 
     return {
         "workspace": str(ws),

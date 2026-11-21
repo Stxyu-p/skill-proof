@@ -7,7 +7,7 @@ import unittest
 import hashlib
 import json
 
-from core import (
+from skill_proof.core import (
     Catalog,
     SkillProofEngine,
     extract_explicit_skill_names,
@@ -417,7 +417,7 @@ class SelectionTests(unittest.TestCase):
             res_empty = select_skill(catalog, "")
             self.assertEqual(res_empty.status, "no_match")
             # Negation probe on None query should return False
-            from core import _skill_is_negated, _query_might_contain_negation
+            from skill_proof.core import _skill_is_negated, _query_might_contain_negation
             self.assertFalse(_query_might_contain_negation(None))
             self.assertFalse(_skill_is_negated("sample-skill", None))
         finally:
@@ -425,7 +425,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_type_hints_and_suggest_roots_resilience(self):
         import typing
-        from core import normalize_identifiers, scan_catalog, suggest_roots
+        from skill_proof.core import normalize_identifiers, scan_catalog, suggest_roots
         # Must not raise NameError: name 'Iterable' is not defined
         hints_norm = typing.get_type_hints(normalize_identifiers)
         self.assertIn("names", hints_norm)
@@ -436,7 +436,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(suggest_roots({}), [])
 
     def test_lru_caches_on_duplicates_and_spaceless_ngrams(self):
-        from core import _catalog_duplicate_names, _skill_spaceless_ngrams
+        from skill_proof.core import _catalog_duplicate_names, _skill_spaceless_ngrams
         # _catalog_duplicate_names should return a frozenset
         dupes = _catalog_duplicate_names(())
         self.assertIsInstance(dupes, frozenset)
@@ -446,7 +446,7 @@ class SelectionTests(unittest.TestCase):
         self.assertGreater(len(ngrams), 0)
 
     def test_cli_select_supports_both_positional_and_flag_queries(self):
-        import cli
+        from skill_proof import cli
         import io
         import contextlib
         catalog, tmp = self.catalog([("demo-cli-skill", "Testing CLI positional query")])
@@ -735,7 +735,7 @@ class EngineTests(unittest.TestCase):
         self.assertIn("verification=unverified", summary)
 
     def test_contains_spaceless_script_and_identifier_helpers(self):
-        from core import _contains_spaceless_script, _identifier_in_query, _skill_is_negated, normalize_identifier
+        from skill_proof.core import _contains_spaceless_script, _identifier_in_query, _skill_is_negated, normalize_identifier
         self.assertTrue(_contains_spaceless_script("ทดสอบระบบ"))
         self.assertFalse(_contains_spaceless_script("pure english query"))
         self.assertFalse(_contains_spaceless_script(""))

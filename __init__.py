@@ -952,12 +952,6 @@ class SkillProofPlugin:
         records, corrupt = read_audit_records(self.audit_path)
         return records, corrupt, None
 
-    def stats(self) -> dict[str, Any]:
-        records, corrupt, error = self._read_audit_records()
-        if error:
-            return {"error": error}
-        return self._aggregate_audit(records, corrupt=corrupt, path=str(self.audit_path))
-
     def calibrate(self) -> dict[str, Any]:
         """Suggest threshold/synonym adjustments from recorded outcomes (advisory).
 

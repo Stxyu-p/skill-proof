@@ -13,7 +13,7 @@ import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Iterable, Mapping, Optional, Sequence
-from _catalog import (
+from ._catalog import (
     SkillRecord,
     default_hermes_home,
 )
@@ -37,6 +37,7 @@ class VectorIndex:
         models_dir: Optional[os.PathLike[str] | str] = None,
         timeout: float = 3.0,
         embedder: Any = None,
+        readonly: bool = False,
     ) -> None:
         self.db_path = pathlib.Path(db_path).resolve() if db_path else None
         self.model = str(model)
@@ -45,6 +46,7 @@ class VectorIndex:
         self.models_dir = pathlib.Path(models_dir).resolve() if models_dir else None
         self.timeout = float(timeout)
         self._embedder = embedder
+        self._readonly = bool(readonly)
 
         # Provider determination with backwards compatibility
         p = str(provider or "").strip().lower()
@@ -54,13 +56,13 @@ class VectorIndex:
             else:
                 p = "off"
         self.provider = p
+        self._requested_provider = p
 
         self.api_key = api_key if api_key is not None else os.environ.get(self.gateway_key_env, "")
         self._memory_vectors: dict[str, tuple[float, ...]] = {}
         self._local_embedder = None
         self._local_unavailable = False
         self._trace_local = threading.local()
-        self.reset_trace()
 
         if self.provider == "local":
             # Imported here, not at module load: models pulls the optional
@@ -68,10 +70,7 @@ class VectorIndex:
             try:
                 from . import models as _models
             except ImportError:
-                try:
-                    import models as _models
-                except ImportError:
-                    _models = None
+                _models = None
             if _models is not None:
                 self._local_embedder = _models.LocalEmbedder(
                     model_key=self.model, root_dir=self.models_dir
@@ -82,9 +81,14 @@ class VectorIndex:
                 self.provider = "off"
                 self._local_unavailable = True
 
+        self.reset_trace()
+
         if self.db_path:
-            self._init_db()
-            self._load_memory()
+            if self._readonly:
+                self._load_memory_readonly()
+            else:
+                self._init_db()
+                self._load_memory()
 
     def provider_status(self) -> dict[str, Any]:
         active = False
@@ -101,9 +105,9 @@ class VectorIndex:
 
     def reset_trace(self) -> None:
         self._trace_local.value = {
-            "provider_configured": self.provider,
+            "provider_configured": self._requested_provider,
             "provider_used": "off",
-            "fallback_reason": "not_used",
+            "fallback_reason": "local_model_unavailable" if self._local_unavailable else "not_used",
             "embedding_latency_ms": 0.0,
             "query_cache_hit": False,
             "vector_used": False,
@@ -119,9 +123,9 @@ class VectorIndex:
     def trace_snapshot(self) -> dict[str, Any]:
         current = getattr(self._trace_local, "value", None)
         return dict(current) if current is not None else {
-            "provider_configured": self.provider,
+            "provider_configured": self._requested_provider,
             "provider_used": "off",
-            "fallback_reason": "not_used",
+            "fallback_reason": "local_model_unavailable" if self._local_unavailable else "not_used",
             "embedding_latency_ms": 0.0,
             "query_cache_hit": False,
             "vector_used": False,
@@ -150,39 +154,107 @@ class VectorIndex:
             conn.execute("PRAGMA wal_autocheckpoint=200")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS skill_embeddings (
-                    skill_name TEXT PRIMARY KEY,
+                    skill_name TEXT NOT NULL,
                     source_sha256 TEXT NOT NULL,
                     model TEXT NOT NULL,
                     dim INTEGER NOT NULL,
                     vector BLOB NOT NULL,
-                    updated_at REAL NOT NULL
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (skill_name, model)
                 )
             """)
+            skill_pk_cols = sum(
+                1 for row in conn.execute("PRAGMA table_info(skill_embeddings)").fetchall() if row[5]
+            )
+            if skill_pk_cols < 2:
+                conn.execute("""
+                    CREATE TABLE skill_embeddings_v2 (
+                        skill_name TEXT NOT NULL,
+                        source_sha256 TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        dim INTEGER NOT NULL,
+                        vector BLOB NOT NULL,
+                        updated_at REAL NOT NULL,
+                        PRIMARY KEY (skill_name, model)
+                    )
+                """)
+                conn.execute("""
+                    INSERT OR IGNORE INTO skill_embeddings_v2 (skill_name, source_sha256, model, dim, vector, updated_at)
+                    SELECT skill_name, source_sha256, model, dim, vector, updated_at FROM skill_embeddings
+                """)
+                conn.execute("DROP TABLE skill_embeddings")
+                conn.execute("ALTER TABLE skill_embeddings_v2 RENAME TO skill_embeddings")
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS query_embeddings (
-                    query_sha256 TEXT PRIMARY KEY,
+                    query_sha256 TEXT NOT NULL,
                     model TEXT NOT NULL,
                     dim INTEGER NOT NULL,
                     vector BLOB NOT NULL,
-                    updated_at REAL NOT NULL
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (query_sha256, model)
                 )
             """)
+            query_pk_cols = sum(
+                1 for row in conn.execute("PRAGMA table_info(query_embeddings)").fetchall() if row[5]
+            )
+            if query_pk_cols < 2:
+                conn.execute("""
+                    CREATE TABLE query_embeddings_v2 (
+                        query_sha256 TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        dim INTEGER NOT NULL,
+                        vector BLOB NOT NULL,
+                        updated_at REAL NOT NULL,
+                        PRIMARY KEY (query_sha256, model)
+                    )
+                """)
+                conn.execute("""
+                    INSERT OR IGNORE INTO query_embeddings_v2 (query_sha256, model, dim, vector, updated_at)
+                    SELECT query_sha256, model, dim, vector, updated_at FROM query_embeddings
+                """)
+                conn.execute("DROP TABLE query_embeddings")
+                conn.execute("ALTER TABLE query_embeddings_v2 RENAME TO query_embeddings")
             conn.commit()
+
+    def _load_vectors_from_conn(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute(
+            "SELECT skill_name, dim, vector FROM skill_embeddings WHERE model = ?",
+            (self.model,),
+        ).fetchall()
+        for name, dim, blob in rows:
+            if isinstance(blob, (bytes, bytearray, memoryview)) and len(blob) == dim * 4:
+                try:
+                    self._memory_vectors[name] = struct.unpack(f"<{dim}f", blob)
+                except struct.error:
+                    pass
 
     def _load_memory(self) -> None:
         if not self.db_path or not self.db_path.exists():
             return
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT skill_name, dim, vector FROM skill_embeddings WHERE model = ?",
-                (self.model,),
-            ).fetchall()
-            for name, dim, blob in rows:
-                if isinstance(blob, (bytes, bytearray, memoryview)) and len(blob) == dim * 4:
-                    try:
-                        self._memory_vectors[name] = struct.unpack(f"<{dim}f", blob)
-                    except struct.error:
-                        pass
+            self._load_vectors_from_conn(conn)
+
+    def _load_memory_readonly(self) -> None:
+        if not self.db_path or not self.db_path.is_file():
+            return
+        uri = self.db_path.as_uri()
+        conn: Optional[sqlite3.Connection] = None
+        try:
+            try:
+                conn = sqlite3.connect(f"{uri}?mode=ro", uri=True, timeout=5.0)
+            except sqlite3.OperationalError:
+                conn = sqlite3.connect(f"{uri}?mode=ro&immutable=1", uri=True, timeout=5.0)
+            try:
+                self._load_vectors_from_conn(conn)
+            except sqlite3.OperationalError as exc:
+                msg = str(exc).lower()
+                if "no such table" in msg or "no such column" in msg:
+                    return
+                raise
+        finally:
+            if conn is not None:
+                conn.close()
 
     def _call_embeddings(self, texts: list[str], is_query: bool = False) -> list[tuple[float, ...]]:
         if not texts:
@@ -202,7 +274,8 @@ class VectorIndex:
             )
             return vectors
         if self.provider == "off":
-            self._trace(provider_used="off", fallback_reason="provider_off")
+            reason = "local_model_unavailable" if self._local_unavailable else "provider_off"
+            self._trace(provider_used="off", fallback_reason=reason)
             return []
 
         if self.provider == "local":
@@ -262,15 +335,21 @@ class VectorIndex:
         return []
 
     def sync_catalog(self, catalog_skills: Sequence[SkillRecord]) -> int:
-        if not self.db_path or self.provider == "off":
+        if not self.db_path or (self.provider == "off" and self._embedder is None):
             return 0
         with self._connect() as conn:
-            known = dict(
-                conn.execute(
-                    "SELECT skill_name, source_sha256 FROM skill_embeddings WHERE model = ?",
-                    (self.model,),
-                ).fetchall()
-            )
+            rows = conn.execute(
+                "SELECT skill_name, source_sha256, dim, vector FROM skill_embeddings WHERE model = ?",
+                (self.model,),
+            ).fetchall()
+        known: dict[str, str] = {}
+        for name, sha, dim, blob in rows:
+            known[name] = sha
+            if name not in self._memory_vectors and isinstance(blob, (bytes, bytearray, memoryview)) and len(blob) == dim * 4:
+                try:
+                    self._memory_vectors[name] = struct.unpack(f"<{dim}f", blob)
+                except struct.error:
+                    pass
         missing = [skill for skill in catalog_skills if known.get(skill.name) != skill.source_sha256]
 
         if not missing:
@@ -285,7 +364,7 @@ class VectorIndex:
         with self._connect() as conn:
             for s, vec in zip(missing, vectors):
                 dim = len(vec)
-                blob = struct.pack(f"{dim}f", *vec)
+                blob = struct.pack(f"<{dim}f", *vec)
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO skill_embeddings (skill_name, source_sha256, model, dim, vector, updated_at)
@@ -298,8 +377,9 @@ class VectorIndex:
         return len(missing)
 
     def get_query_vector(self, query: str) -> Optional[tuple[float, ...]]:
-        if self.provider == "off":
-            self._trace(provider_used="off", fallback_reason="provider_off")
+        if self.provider == "off" and self._embedder is None:
+            reason = "local_model_unavailable" if self._local_unavailable else "provider_off"
+            self._trace(provider_used="off", fallback_reason=reason)
             return None
         q_sha = hashlib.sha256(query.encode("utf-8")).hexdigest()
         if self.db_path and self.db_path.exists():
@@ -323,7 +403,7 @@ class VectorIndex:
         vec = vectors[0]
         dim = len(vec)
         if self.db_path:
-            blob = struct.pack(f"{dim}f", *vec)
+            blob = struct.pack(f"<{dim}f", *vec)
             try:
                 with self._connect() as conn:
                     conn.execute(
@@ -339,8 +419,9 @@ class VectorIndex:
         return vec
 
     def rank(self, query: str, top_k: int = 20) -> list[tuple[str, float]]:
-        if self.provider == "off":
-            self._trace(provider_used="off", fallback_reason="provider_off")
+        if self.provider == "off" and self._embedder is None:
+            reason = "local_model_unavailable" if self._local_unavailable else "provider_off"
+            self._trace(provider_used="off", fallback_reason=reason)
             return []
         if not self._memory_vectors:
             self._trace(provider_used="off", fallback_reason="skill_vectors_missing")
@@ -373,11 +454,14 @@ class VectorIndex:
 
 def vector_index_from_env(
     db_path: Optional[os.PathLike[str] | str] = None,
+    *,
+    readonly: bool = False,
 ) -> Optional[VectorIndex]:
     """Build a configured vector index for standalone CLI/MCP processes.
 
     Embeddings remain disabled unless ``SKILL_PROOF_EMBEDDING_PROVIDER`` is set.
-    An absent database in ``off`` mode does not create a file as a side effect.
+    An absent database in ``off`` mode (or any ``off`` check with ``readonly=True``)
+    does not create or open a file as a side effect.
     """
     env = os.environ.get
     provider = (env("SKILL_PROOF_EMBEDDING_PROVIDER") or "off").strip().lower()
@@ -387,7 +471,7 @@ def vector_index_from_env(
         default_hermes_home() / "plugin-data" / "skill-proof" / "embeddings.db"
     )
     path = pathlib.Path(configured_db).expanduser()
-    if provider == "off" and not path.exists():
+    if provider == "off" and (readonly or not path.exists()):
         return None
     return VectorIndex(
         db_path=path,
@@ -396,4 +480,5 @@ def vector_index_from_env(
         gateway_url=env("SKILL_PROOF_GATEWAY_URL") or "https://api.openai.com/v1/embeddings",
         gateway_key_env=env("SKILL_PROOF_GATEWAY_KEY_ENV") or "OPENAI_API_KEY",
         models_dir=env("SKILL_PROOF_MODELS_DIR") or None,
+        readonly=(readonly or provider == "off"),
     )

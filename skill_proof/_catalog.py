@@ -119,7 +119,7 @@ class Catalog:
 
     def __post_init__(self) -> None:
         if self.index is None:
-            from _ranking import _build_catalog_index  # local import: type<->index cycle
+            from ._ranking import _build_catalog_index  # local import: type<->index cycle
             object.__setattr__(self, "index", _build_catalog_index(self.skills))
 
     def by_name(self, name: str) -> tuple[SkillRecord, ...]:
@@ -576,42 +576,78 @@ def load_disabled_skills(hermes_home: Optional[os.PathLike[str] | str] = None) -
     return res
 
 
-def _canonical_vault_root(base_home: pathlib.Path) -> pathlib.Path:
+_STUB_INLINE_BACKTICK_RE = re.compile(r"`[^`\n]+`")
+_PERSISTED_STUB_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\[tt:prose\s+(?:L\d+-L\d+\s+\(\d+L\)|~?\d+w)\b[^\]]*\]"),
+    re.compile(r"\[tt:body\s+L\d+-L\d+\s+\(\d+L\s+of\s+[^)\]]+\)(?:\s+#[0-9A-Za-z]+)?[^\]]*\]"),
+    re.compile(r"\[tt:folded\s+(?:L\d+-L\d+\s+\(\d+L\)|\d+\s+chars\s+#[0-9A-Za-z]+)[^\]]*\]"),
+    re.compile(r"\[tt:(?:file_delta|file_large|file_unchanged|lockfile)\b[^\]]*(?:#[0-9A-Za-z]+|path=)[^\]]*\]"),
+    re.compile(r"\[tt:(?:pointer_large|timeout_bounded)\b[^\]]*#[0-9A-Za-z]+[^\]]*\]"),
+    re.compile(r"\[tt:stashed\s+\d+\s+chars\b[^\]]*\]"),
+    re.compile(r"\[\.\.\.\s*(?:implementation body folded|L\d+-L\d+\s+\(\d+\s+unchanged lines in #[\w]+\)|[\d,]+\s+lines in CCR)[^\]]*\]"),
+    re.compile(r"\[@#c[0-9A-Za-z]+(?:x\d+)?\]"),
+)
+
+
+def find_stub_markers(text: str) -> list[str]:
+    """Return concrete persisted compression stub markers outside inline backticks."""
+    if not text or ("[tt:" not in text and "[@#" not in text and "[..." not in text):
+        return []
+    hits: list[str] = []
+    for line in text.splitlines():
+        if "[tt:" not in line and "[@#" not in line and "[..." not in line:
+            continue
+        cleaned = _STUB_INLINE_BACKTICK_RE.sub("", line)
+        for rx in _PERSISTED_STUB_PATTERNS:
+            m = rx.search(cleaned)
+            if m:
+                hits.append(m.group(0)[:140])
+                break
+    return hits
+
+
+def _canonical_vault_root(base_home: Optional[pathlib.Path] = None) -> pathlib.Path:
     """One hub for every host: ``~/.agents/skills`` wins when it exists.
 
-    v2.0.0 moved the canonical vault there and fanned it out with junctions,
-    but detection still listed the retired ``~/.skill-proof/skills`` copy, so
-    two vault manifests disagreed about where the truth lives.
+    Respects `SKILL_PROOF_VAULT` env var dynamically on every call unless an
+    explicit non-default ``base_home`` directory was supplied (e.g. isolated tests).
     """
-    configured = os.environ.get("SKILL_PROOF_VAULT", "").strip()
-    if configured:
-        return pathlib.Path(configured).expanduser()
-    agents_root = base_home / ".agents" / "skills"
+    if base_home is None:
+        configured = os.environ.get("SKILL_PROOF_VAULT", "").strip()
+        if configured:
+            return pathlib.Path(configured).expanduser()
+        home = pathlib.Path.home()
+    else:
+        home = base_home
+    agents_root = home / ".agents" / "skills"
     if agents_root.exists():
         return agents_root
-    return base_home / ".skill-proof" / "skills"
+    return home / ".skill-proof" / "skills"
 
 
-def detect_agent_roots(
-    home: Optional[os.PathLike[str] | str] = None,
-    cwd: Optional[os.PathLike[str] | str] = None,
+def _candidate_agent_roots(
+    base_home: pathlib.Path,
+    base_cwd: pathlib.Path,
     hermes_home: Optional[os.PathLike[str] | str] = None,
     profile: Optional[str] = None,
-) -> dict[str, pathlib.Path]:
-    """Existing skill roots across common agent ecosystems (id -> path).
-
-    The shared ``SKILL.md`` layout is used by many hosts (Codex, Claude Code,
-    Gemini/Antigravity CLI, Cursor, OpenCode, Cline, ...), and the ``skills``
-    CLI keeps its canonical store in ``~/.agents/skills``.  Only directories
-    that exist are returned; caller order is the matching precedence order.
-    """
-    base_home = pathlib.Path(home).expanduser() if home else pathlib.Path.home()
-    base_cwd = pathlib.Path(cwd).expanduser() if cwd else pathlib.Path.cwd()
-    candidates: list[tuple[str, pathlib.Path]] = [
-        ("project-agents", base_cwd / ".agents" / "skills"),
-        ("project-claude", base_cwd / ".claude" / "skills"),
-        ("agents", base_home / ".agents" / "skills"),
-    ]
+    include_env_vault: bool = True,
+) -> list[tuple[str, pathlib.Path]]:
+    try:
+        same_home_cwd = base_cwd.resolve() == base_home.resolve()
+    except OSError:
+        same_home_cwd = False
+    if same_home_cwd:
+        candidates: list[tuple[str, pathlib.Path]] = [
+            ("agents", base_home / ".agents" / "skills"),
+            ("project-agents", base_cwd / ".agents" / "skills"),
+            ("project-claude", base_cwd / ".claude" / "skills"),
+        ]
+    else:
+        candidates = [
+            ("project-agents", base_cwd / ".agents" / "skills"),
+            ("project-claude", base_cwd / ".claude" / "skills"),
+            ("agents", base_home / ".agents" / "skills"),
+        ]
     if profile:
         profile_candidates: list[pathlib.Path] = []
         if hermes_home is not None:
@@ -646,10 +682,26 @@ def detect_agent_roots(
             ("kilo", base_home / ".kilo" / "skills"),
         ]
     )
-    # The vault manifest is a compatibility fallback: when it resolves to a root
-    # already detected above (the usual ~/.agents/skills case) it must not add a
-    # second entry for the same directory.
-    candidates.append(("vault", _canonical_vault_root(base_home)))
+    candidates.append(("vault", _canonical_vault_root(None if include_env_vault else base_home)))
+    return candidates
+
+
+def detect_agent_roots(
+    home: Optional[os.PathLike[str] | str] = None,
+    cwd: Optional[os.PathLike[str] | str] = None,
+    hermes_home: Optional[os.PathLike[str] | str] = None,
+    profile: Optional[str] = None,
+) -> dict[str, pathlib.Path]:
+    """Existing skill roots across common agent ecosystems (id -> path)."""
+    base_home = pathlib.Path(home).expanduser() if home else pathlib.Path.home()
+    base_cwd = pathlib.Path(cwd).expanduser() if cwd else pathlib.Path.cwd()
+    candidates = _candidate_agent_roots(
+        base_home,
+        base_cwd,
+        hermes_home=hermes_home,
+        profile=profile,
+        include_env_vault=(home is None),
+    )
     detected: dict[str, pathlib.Path] = {}
     seen_paths: set[str] = set()
     for root_id, path in candidates:
@@ -664,6 +716,37 @@ def detect_agent_roots(
         except OSError:
             continue
     return detected
+
+
+def detect_linked_aliases(
+    home: Optional[os.PathLike[str] | str] = None,
+    cwd: Optional[os.PathLike[str] | str] = None,
+    hermes_home: Optional[os.PathLike[str] | str] = None,
+    profile: Optional[str] = None,
+) -> dict[str, dict[str, str]]:
+    """Return client skill roots that resolve to an already-detected primary root (e.g. junctions)."""
+    base_home = pathlib.Path(home).expanduser() if home else pathlib.Path.home()
+    base_cwd = pathlib.Path(cwd).expanduser() if cwd else pathlib.Path.cwd()
+    candidates = _candidate_agent_roots(base_home, base_cwd, hermes_home=hermes_home, profile=profile)
+    seen_paths: dict[str, str] = {}
+    aliases: dict[str, dict[str, str]] = {}
+    for root_id, path in candidates:
+        try:
+            if not path.is_dir():
+                continue
+            resolved = str(path.resolve())
+            if resolved not in seen_paths:
+                if not path.is_symlink():
+                    seen_paths[resolved] = root_id
+            else:
+                aliases[root_id] = {
+                    "path": str(path),
+                    "target": resolved,
+                    "primary_root_id": seen_paths[resolved],
+                }
+        except OSError:
+            continue
+    return aliases
 
 
 def _is_ignored_dirname(dirname: str) -> bool:
@@ -724,16 +807,9 @@ def _tree_fingerprint(
     roots,
     max_skill_bytes,
 ):
-    """Cheap whole-tree snapshot for the scan fast path (os.scandir stats).
-
-    Returns None when any root is unreadable (caller runs the full secure
-    scan). Otherwise (sorted root ids, root entry counts, per-skill-dir
-    SKILL.md mtime+size) - enough to detect add/remove/edit/rename of
-    skills without opening a single file. Directory mtimes change on child
-    create/delete/rename; SKILL.md mtime+size catches content edits.
-    """
+    """Cheap whole-tree snapshot across nested skill dirs and SKILL.md mtimes."""
     try:
-        parts = []
+        parts: list[Any] = []
         for raw_root_id, raw_root in sorted(roots.items(), key=lambda item: str(item[0])):
             root = pathlib.Path(raw_root).expanduser()
             try:
@@ -742,27 +818,34 @@ def _tree_fingerprint(
                 return None
             if not resolved.is_dir():
                 return None
-            entries = []
-            with os.scandir(resolved) as top:
-                for entry in top:
+            root_items: list[Any] = []
+            for current, dirs, files in os.walk(resolved, topdown=True, followlinks=False):
+                cpath = pathlib.Path(current)
+                keep = []
+                for dname in sorted(dirs):
+                    if _is_ignored_dirname(dname):
+                        continue
+                    child = cpath / dname
+                    if child.is_symlink() or _is_reparse_point(child):
+                        try:
+                            rst = (child.resolve(strict=True) / "SKILL.md").stat()
+                            root_items.append((dname, rst.st_mtime_ns, rst.st_size))
+                        except (OSError, RuntimeError):
+                            root_items.append((dname, None))
+                        continue
+                    keep.append(dname)
+                dirs[:] = keep
+                if "SKILL.md" in files:
+                    dirs[:] = []
+                    skill_file = cpath / "SKILL.md"
                     try:
-                        is_dir = entry.is_dir(follow_symlinks=False)
+                        st = skill_file.stat()
+                        rel = str(skill_file.relative_to(resolved))
+                        root_items.append((rel, st.st_mtime_ns, st.st_size))
                     except OSError:
-                        return None
-                    entries.append((entry.name, is_dir))
-            entries.sort()
-            parts.append((str(raw_root_id).strip(), len(entries)))
-            for name, is_dir in entries:
-                if not is_dir or name.startswith(".") or name == "__pycache__":
-                    continue
-                if name == "node_modules":
-                    continue
-                skill = resolved / name / "SKILL.md"
-                try:
-                    st = skill.stat()
-                    parts.append((name, st.st_mtime_ns, st.st_size))
-                except OSError:
-                    parts.append((name, None))
+                        root_items.append((str(cpath.relative_to(resolved)), None))
+            root_items.sort()
+            parts.append((str(raw_root_id).strip(), len(root_items), tuple(root_items)))
         return (max_skill_bytes, tuple(parts))
     except Exception:
         return None
@@ -885,15 +968,16 @@ def scan_catalog(
                 diagnostics.append(Diagnostic("skill_too_large", root_id, relative_path))
                 continue
             try:
-                found.append(
-                    _parse_skill(
-                        raw,
-                        root_id=root_id,
-                        relative_path=relative_path,
-                        root_path=resolved_root,
-                        source_path=skill_path,
-                    )
+                parsed = _parse_skill(
+                    raw,
+                    root_id=root_id,
+                    relative_path=relative_path,
+                    root_path=resolved_root,
+                    source_path=skill_path,
                 )
+                found.append(parsed)
+                if find_stub_markers(raw.decode("utf-8", errors="replace")):
+                    diagnostics.append(Diagnostic("stub_corrupted", root_id, relative_path, parsed.name))
                 if cache is not None:
                     cache[cache_key] = (fingerprint, found[-1])
             except _FrontmatterError as exc:
@@ -1106,3 +1190,75 @@ def check_prerequisites(
             if normalize_identifier(tool) not in avail_norm:
                 missing.append(f"tool:{tool}")
     return len(missing) == 0, tuple(missing)
+
+
+def prioritize_diagnostics(diagnostics: Sequence[Diagnostic]) -> list[Diagnostic]:
+    """Order diagnostics so critical errors and drift appear before benign aliases."""
+    def _rank(item: Diagnostic) -> tuple[int, str, str, str]:
+        if item.code == "stub_corrupted":
+            prio = 0
+        elif item.code == "shadowed_by_root":
+            prio = 1
+        elif item.code in (
+            "invalid_utf8",
+            "unreadable_file",
+            "unreadable_skill",
+            "invalid_frontmatter",
+            "unsafe_symlink",
+            "unsafe_reparse",
+            "skill_too_large",
+        ):
+            prio = 2
+        elif item.code == "alias_skipped":
+            prio = 9
+        else:
+            prio = 5
+        return (prio, item.code, item.root_id, item.relative_path)
+
+    return sorted(diagnostics, key=_rank)
+
+
+def read_hermes_plugin_setting(
+    cfg_path: os.PathLike[str] | str,
+    plugin_name: str,
+    key: str,
+) -> Optional[str]:
+    """Read a scalar key scoped under ``plugins -> entries -> <plugin> -> settings``."""
+    p = pathlib.Path(cfg_path).expanduser()
+    if not p.is_file():
+        return None
+    try:
+        lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return None
+
+    path_keys = ("plugins", "entries", str(plugin_name), "settings")
+    depth = 0
+    parent_indents: list[int] = [-1]
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        while depth > 0 and indent <= parent_indents[depth]:
+            depth -= 1
+            parent_indents.pop()
+
+        if depth < len(path_keys):
+            target_prefix = f"{path_keys[depth]}:"
+            if stripped.startswith(target_prefix) and (
+                len(stripped) == len(target_prefix) or stripped[len(target_prefix)].isspace()
+            ):
+                if indent > parent_indents[-1]:
+                    depth += 1
+                    parent_indents.append(indent)
+            continue
+
+        # Inside plugins -> entries -> plugin_name -> settings
+        if ":" in stripped:
+            k_part, _, v_part = stripped.partition(":")
+            if k_part.strip() == key:
+                val = v_part.split("#", 1)[0].strip().strip('"\'')
+                return val
+    return None

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 """Dialogue layer: negation veto, session memory, and dialogue references."""
 
+import json
+import os
 import re
 import unicodedata
 from dataclasses import dataclass, field, replace
@@ -12,7 +14,7 @@ import time
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 
-from _catalog import (
+from ._catalog import (
     _identifier_in_query,
     _phrase_present,
     extract_explicit_skill_names,
@@ -204,32 +206,85 @@ def _query_might_contain_negation(query: str) -> bool:
 
 
 _MEMCORE_VETO_CACHE: tuple[float, set[str]] = (0.0, set())
+_MEMCORE_VETO_CACHE_KEY: tuple[str, str] = ("", "")
 _MEMCORE_TRIGGER_RE = re.compile(r'(?i)(?:do not use|don\'?t use|never use|ห้ามใช้|อย่าใช้|ไม่เอา)\s+([a-zA-Z0-9_\-]+)')
 
+
+def _normalize_veto_name(raw: str) -> str:
+    return normalize_identifier(raw).replace("_", "-")
+
+
 def memcore_skill_vetoes() -> set[str]:
-    """Load persistent negative constraints from MemCore (< 0.05ms with cache)."""
-    global _MEMCORE_VETO_CACHE
+    """Load persistent negative skill vetoes from a neutral veto file and optional MemCore DB."""
+    global _MEMCORE_VETO_CACHE, _MEMCORE_VETO_CACHE_KEY
+    veto_file_env = os.environ.get("SKILL_PROOF_VETO_FILE", "").strip()
+    memcore_db_env = os.environ.get("SKILL_PROOF_MEMCORE_DB", "").strip()
+    cache_key = (veto_file_env, memcore_db_env)
+
     now = time.monotonic()
-    if now - _MEMCORE_VETO_CACHE[0] < 30.0:
+    if (
+        _MEMCORE_VETO_CACHE[0] > 0.0
+        and cache_key == _MEMCORE_VETO_CACHE_KEY
+        and (now - _MEMCORE_VETO_CACHE[0]) < 30.0
+    ):
         return _MEMCORE_VETO_CACHE[1]
 
     vetoes: set[str] = set()
-    try:
-        db = pathlib.Path.home() / '.memcore' / 'memory.db'
-        if db.is_file():
-            conn = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
-            cur = conn.execute('''
-                SELECT v.content FROM memory m 
-                JOIN memory_version v ON v.id = m.current_version_id 
-                WHERE m.lifecycle IN ('accepted', 'candidate')
-            ''')
-            for (content,) in cur.fetchall():
-                for match in _MEMCORE_TRIGGER_RE.finditer(content or ''):
-                    vetoes.add(match.group(1).lower().replace('_', '-'))
-            conn.close()
-    except Exception:
-        pass
 
+    # 1. Neutral standalone veto file ($SKILL_PROOF_VETO_FILE or ~/.agents/skill-vetoes.json)
+    veto_path = (
+        pathlib.Path(veto_file_env).expanduser()
+        if veto_file_env
+        else (pathlib.Path.home() / ".agents" / "skill-vetoes.json")
+    )
+    if veto_path.is_file():
+        try:
+            payload = json.loads(veto_path.read_text(encoding="utf-8"))
+            raw_items: list[Any] = []
+            if isinstance(payload, list):
+                raw_items = payload
+            elif isinstance(payload, dict):
+                for key in ("vetoes", "skills", "blocked"):
+                    val = payload.get(key)
+                    if isinstance(val, list):
+                        raw_items.extend(val)
+            for item in raw_items:
+                if not isinstance(item, str) or not item.strip():
+                    continue
+                matches = list(_MEMCORE_TRIGGER_RE.finditer(item))
+                if matches:
+                    for match in matches:
+                        vetoes.add(_normalize_veto_name(match.group(1)))
+                else:
+                    norm = _normalize_veto_name(item)
+                    if norm:
+                        vetoes.add(norm)
+        except Exception:
+            pass
+
+    # 2. Optional MemCore integration (opt-in via $SKILL_PROOF_MEMCORE_DB, accepted + project scope only)
+    if memcore_db_env:
+        try:
+            db = pathlib.Path(memcore_db_env).expanduser()
+            if db.is_file():
+                conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+                try:
+                    cur = conn.execute(
+                        """
+                        SELECT v.content FROM memory m
+                        JOIN memory_version v ON v.id = m.current_version_id
+                        WHERE m.lifecycle = 'accepted' AND m.scope = 'project'
+                        """
+                    )
+                    for (content,) in cur.fetchall():
+                        for match in _MEMCORE_TRIGGER_RE.finditer(content or ""):
+                            vetoes.add(_normalize_veto_name(match.group(1)))
+                finally:
+                    conn.close()
+        except Exception:
+            pass
+
+    _MEMCORE_VETO_CACHE_KEY = cache_key
     _MEMCORE_VETO_CACHE = (now, vetoes)
     return vetoes
 

@@ -11,16 +11,16 @@ import pathlib
 import shutil
 from typing import Any, Optional
 
-from . import _compliance
-from . import vault
+from . import _catalog, _compliance, vault
+
 
 def audit_stats(
     audit_path: Optional[pathlib.Path | str] = None,
     vault_dir: Optional[pathlib.Path | str] = None,
 ) -> dict[str, Any]:
-    default_audit = pathlib.Path(os.environ.get("LOCALAPPDATA", "")) / "hermes" / "plugin-data" / "skill-proof" / "audit.jsonl"
+    default_audit = _catalog.default_hermes_home() / "plugin-data" / "skill-proof" / "audit.jsonl"
     a_path = pathlib.Path(audit_path).expanduser() if audit_path else default_audit
-    v_dir = (pathlib.Path(vault_dir).expanduser() if vault_dir else vault.DEFAULT_VAULT_ROOT).resolve()
+    v_dir = (pathlib.Path(vault_dir).expanduser() if vault_dir else vault.get_vault_root()).resolve()
 
     records, corrupt = _compliance.read_audit_records(a_path)
     usable_statuses = {"selected", "no_match", "ambiguous", "blocked"}
@@ -99,7 +99,7 @@ def prune_dead_skills(
     dry_run: bool = True,
     audit_path: Optional[pathlib.Path | str] = None,
 ) -> dict[str, Any]:
-    v_dir = (pathlib.Path(vault_dir).expanduser() if vault_dir else vault.DEFAULT_VAULT_ROOT).resolve()
+    v_dir = (pathlib.Path(vault_dir).expanduser() if vault_dir else vault.get_vault_root()).resolve()
     a_dir = (pathlib.Path(archive_dir).expanduser() if archive_dir else v_dir.parent / "archive").resolve()
 
     # Block archive path escapes: archive must sit OUTSIDE the vault but never inside a vault skill.

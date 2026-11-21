@@ -3,6 +3,7 @@ from __future__ import annotations
 """Ranking layer: tokenizer, morphology, n-grams, IDF scoring, candidate index."""
 
 import json
+import os
 import pathlib
 import unicodedata
 from collections import Counter
@@ -12,7 +13,7 @@ from math import log
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 
-from _catalog import (
+from ._catalog import (
     Catalog,
     SkillRecord,
     _identifier_in_query,
@@ -25,13 +26,14 @@ from _catalog import (
     normalize_identifier,
     normalize_identifiers,
 )
-from _vector import (
+from ._vector import (
     VectorIndex,
 )
-from _dialogue import (
+from ._dialogue import (
     _contrastive_split,
     _query_might_contain_negation,
     _skill_is_negated,
+    memcore_skill_vetoes,
 )
 
 
@@ -307,26 +309,40 @@ class Selection:
     # Every skill that scored above zero this turn (bounded), so an "why not X"
     # question can be answered exactly without ever storing the prompt.
     rank_table: tuple[RankRow, ...] = ()
-    suggested_agent: str = "mika"
+    suggested_agent: str = "default"
 
 
-_FLEET_AGENT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("altima", ("review", "audit", "rubric", "verdict", "pr-review", "code-review", "altima", "รีวิว", "ตรวจโค้ด", "ตรวจงาน")),
-    ("sora", ("code", "coding", "software", "bug", "tdd", "debug", "test", "fix", "endpoint", "backend", "deploy", "build", "sora", "refactor", "โค้ด", "แก้บั๊ก", "เขียนโค้ด", "เทสต์", "บิลด์")),
-    ("nua", ("evidence", "research", "verify", "benchmark", "fact", "source", "nua", "investigate", "cite", "ค้นคว้า", "หาข้อมูล", "วิจัย", "หลักฐาน")),
-    ("milim", ("design", "ui", "ux", "landing", "frontend", "tailwind", "token", "component", "css", "styling", "milim", "mockup", "ออกแบบ", "ดีไซน์", "หน้าเว็บ", "ยูไอ")),
-)
+_FLEET_AGENT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
-@lru_cache(maxsize=4)
+def _parse_fleet_mapping(data: Any) -> Optional[tuple[tuple[str, tuple[str, ...]], ...]]:
+    if not isinstance(data, Mapping):
+        return None
+    parsed: list[tuple[str, tuple[str, ...]]] = []
+    for k, v in data.items():
+        if isinstance(v, (list, tuple)):
+            parsed.append((str(k), tuple(str(x).lower() for x in v if str(x).strip())))
+    return tuple(parsed)
+
+
 def _load_fleet_manifest() -> Optional[tuple[tuple[str, tuple[str, ...]], ...]]:
+    env_spec = os.environ.get("SKILL_PROOF_FLEET_PROFILES", "").strip()
+    if env_spec:
+        try:
+            if env_spec.startswith("{"):
+                return _parse_fleet_mapping(json.loads(env_spec))
+            env_path = pathlib.Path(env_spec).expanduser()
+            if env_path.is_file():
+                return _parse_fleet_mapping(json.loads(env_path.read_text(encoding="utf-8")))
+        except Exception:
+            pass
     for name in ("fleet.json", "agents.json"):
         p = pathlib.Path(name)
         if p.is_file():
             try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                if isinstance(data, Mapping):
-                    return tuple((str(k), tuple(str(x) for x in v)) for k, v in data.items() if isinstance(v, (list, tuple)))
+                parsed = _parse_fleet_mapping(json.loads(p.read_text(encoding="utf-8")))
+                if parsed is not None:
+                    return parsed
             except Exception:
                 pass
     return None
@@ -336,14 +352,15 @@ def suggest_fleet_agent(
     query: str,
     selected_skill: Optional[SkillRecord | str] = None,
     manifest: Optional[Mapping[str, Sequence[str]]] = None,
-    default_agent: Optional[str] = "mika",
+    default_agent: Optional[str] = None,
 ) -> Optional[str]:
     """Recommend an agent based on profile root ownership, custom manifest, or query intent."""
+    resolved_default = default_agent if default_agent is not None else os.environ.get("SKILL_PROOF_DEFAULT_AGENT", "default")
     # 1. Profile root ownership takes precedence: the agent holding the skill owns execution
     if isinstance(selected_skill, SkillRecord) and selected_skill.root_id.startswith("profile-"):
         return selected_skill.root_id.removeprefix("profile-")
 
-    # 2. Configured manifest, local fleet.json/agents.json, or fallback defaults
+    # 2. Configured manifest, optional env/file fleet profile, or neutral default
     if manifest is not None:
         patterns: Sequence[tuple[str, Sequence[str]]] = tuple(manifest.items())
     else:
@@ -360,7 +377,7 @@ def suggest_fleet_agent(
         for kw in keywords:
             if kw in tokens or kw in query_lower or (skill_lower and kw in skill_lower):
                 return agent
-    return default_agent
+    return resolved_default
 
 
 _RANK_TABLE_LIMIT = 20
@@ -557,6 +574,7 @@ def _rank(
     )
 
     has_negation = _query_might_contain_negation(query)
+    persistent_vetoes = memcore_skill_vetoes()
     ranked: list[RankedCandidate] = []
 
     def _calc_coverage(field_tokens: frozenset[str] | set[str]) -> float:
@@ -581,7 +599,7 @@ def _rank(
             else:
                 alias_terms = tuple(dict.fromkeys(tuple(skill.aliases) + extra))
                 alias_tokens = frozenset(_tokens(" ".join(alias_terms)))
-        if has_negation and _skill_is_negated(skill.name, query, alias_terms, normalized_query):
+        if (has_negation or persistent_vetoes) and _skill_is_negated(skill.name, query, alias_terms, normalized_query):
             continue
         reasons: list[str] = []
         score = 0.0
@@ -776,6 +794,7 @@ def select_skill(
         if vec_ranked:
             k_rrf = 60.0
             has_negation = _query_might_contain_negation(query)
+            persistent_vetoes = memcore_skill_vetoes()
             normalized_query = normalize_identifier(query)
             lex_map = {c.skill.name: idx for idx, c in enumerate(ranked, 1)}
             vec_map = {name: idx for idx, (name, _) in enumerate(vec_ranked, 1)}
@@ -793,7 +812,7 @@ def select_skill(
                 sk = skill_by_name.get(name)
                 if not sk or normalize_identifier(name) in excluded_names:
                     continue
-                if has_negation and _skill_is_negated(
+                if (has_negation or persistent_vetoes) and _skill_is_negated(
                     sk.name,
                     query,
                     tuple(sk.aliases) + tuple(effective_synonyms.get(sk.normalized_name, ())),
@@ -847,11 +866,21 @@ def select_skill(
                 boosted.append(candidate)
         ranked = sorted(boosted, key=lambda item: (-item.score, item.skill.skill_id, item.skill.relative_path))
     table = _rank_table(ranked)
+    persistent_vetoes = memcore_skill_vetoes()
     if not ranked or ranked[0].score < float(min_score):
-        if _query_might_contain_negation(query) and any(
+        negated_in_query = _query_might_contain_negation(query) and any(
             _skill_is_negated(skill.name, query, tuple(skill.aliases) + tuple(effective_synonyms.get(skill.normalized_name, ())))
             for skill in catalog.skills
-        ):
+        )
+        persistent_blocked_match = bool(
+            persistent_vetoes
+            and any(
+                normalize_identifier(skill.name).replace("_", "-") in persistent_vetoes
+                and _skill_mentioned(skill, query)
+                for skill in catalog.skills
+            )
+        )
+        if negated_in_query or persistent_blocked_match:
             return Selection("no_match", "negated_skill", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None, agent_manifest))
         return Selection("no_match", "below_threshold", None, tuple(ranked[:limit]), False, False, table, suggested_agent=suggest_fleet_agent(query, None, agent_manifest))
     if len(ranked) > 1 and ranked[0].score - ranked[1].score < float(min_margin):

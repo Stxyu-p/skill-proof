@@ -1,209 +1,184 @@
 <h1 align="center">🎯 Skill Proof</h1>
 
 <p align="center">
-  <strong>Universal Skill Platform, Zero-Duplication Hub &amp; Deterministic Governance Gatekeeper for Autonomous AI Fleets</strong>
+  <strong>Zero-dependency deterministic skill router, canonical vault &amp; governance gatekeeper for autonomous AI fleets</strong>
 </p>
 
 <p align="center">
   <a href="https://pypi.org/project/skill-proof-router/"><img src="https://img.shields.io/pypi/v/skill-proof-router?style=flat-square&color=blue" alt="PyPI" /></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square" alt="Python" /></a>
-  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/hub-Canonical_NTFS_Junctions-07405E?style=flat-square" alt="Hub" /></a>
-  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/tokens--99%25_prompt_overhead-10b981?style=flat-square" alt="Token Shield" /></a>
-  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/latency-%3C_2ms_warm_route-10b981?style=flat-square" alt="Latency" /></a>
-  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/mcp-Universal_Cross--CLI_stdio-8b5cf6?style=flat-square" alt="MCP" /></a>
-  <a href="#cryptographic-audit-trail--compliance"><img src="https://img.shields.io/badge/audit-SHA--256_Hash_Chain-8b5cf6?style=flat-square" alt="Audit" /></a>
-  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/governance-Immutable_SOP_%26_Tool_Gating-10B981?style=flat-square" alt="Governance" /></a>
-  <a href="#system-architecture--core-capabilities"><img src="https://img.shields.io/badge/synergy-MemCore_Veto_Active-3B82F6?style=flat-square" alt="Synergy" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-slate?style=flat-square" alt="License" /></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square" alt="Python 3.10+" /></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/deps-0_stdlib_default-10b981?style=flat-square" alt="Zero Dependencies" /></a>
+  <a href="#mcp-tools"><img src="https://img.shields.io/badge/interface-8_MCP_Tools_+_CLI-8b5cf6?style=flat-square" alt="MCP and CLI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-slate?style=flat-square" alt="MIT License" /></a>
 </p>
 
 <p align="center">
-  <img src="assets/before-after.svg" width="100%" alt="Skill Proof - Ungoverned Sprawl vs JIT Shield &amp; Canonical Hub" />
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#capabilities">Capabilities</a> ·
+  <a href="#cli-reference">CLI</a> ·
+  <a href="#mcp-tools">MCP &amp; Hermes</a> ·
+  <a href="#verification">Verification</a>
 </p>
 
+<p align="center">
+  <img src="assets/before-after.svg" width="100%" alt="Skill Proof — Ungoverned Sprawl vs JIT Shield &amp; Canonical Hub" />
+</p>
+
+Managing `SKILL.md` playbooks across multiple AI coding clients breaks quickly: copied skill folders drift out of sync, dumping full skill catalogs into every prompt wastes context, and autonomous agents can accidentally overwrite instructions or save compressed `[tt:...]` stubs back into playbooks.
+
+**Skill Proof** solves this **100% standalone using only the Python standard library**: one canonical vault (`~/.agents/skills`), deterministic offline skill routing, stub-corruption and drift diagnostics, immutable SOP locks, and cross-client MCP + CLI tooling.
+
 ---
 
-## 🚀 Overview: Unified Playbook Management for AI Fleets
-
-As engineering teams adopt multi-agent autonomous coding fleets (Hermes Agent, Google Antigravity, Claude Code, Cursor, OpenCode, Codex), team playbooks (`SKILL.md`) rapidly degrade into chaos:
-1. **Physical Folder Sprawl:** The same 38–100 skills are duplicated across `.agents/skills`, `.claude/skills`, `.cursor/skills`, `.gemini/skills`, and `~/.hermes/skills`. Editing a playbook in one directory leaves all other agents executing obsolete, conflicting instructions.
-2. **System Prompt Bloat:** Dumping 100+ skill descriptions into every turn burns **3,000–5,000 tokens per request** before the model reads the user prompt.
-3. **Cross-Process Isolation:** AI CLI tools run in isolated language sandboxes (Go, TypeScript, C++, Python) and will not route requests through an external runtime middleman.
-4. **SOP Drift & Accidental Overwrites:** Autonomous agents frequently hallucinate edits or overwrite production rules in `SKILL.md` files while executing coding tasks.
-
-### The Solution: One Physical Hub + Universal MCP + Lean Governance Gatekeeper
-Skill Proof consolidates playbooks into a single source of truth, eliminates prompt token bloat, and enforces strict governance rails across all AI coding hosts:
+<a id="architecture"></a>
+## Architecture
 
 ```text
-                           [ skills.sh / GitHub / Community ]
-                                           │
-                                    (Install / Update)
-                                           ▼
-                           ┌───────────────────────────────┐
-                           │    ~/.agents/skills (Hub)     │  <─── Single Source of Truth
-                           └───────────────┬───────────────┘
-                                           │
-                      ┌────────────────────┼────────────────────┐
-                (NTFS Junction)      (NTFS Junction)      (NTFS Junction)
-                      ▼                    ▼                    ▼
-          ~/.gemini/antigravity   ~/.claude/skills     AppData/Local/hermes/skills
-               (Antigravity)        (Claude Code)             (Hermes Agent)
-                      │                    │                        │
-                      ▼                    ▼                        ▼
-               [ MCP Server ]       [ MCP Server ]        [ Native Hermes Plugin ]
-             (skill-proof mcp)    (skill-proof mcp)                 │
-                      │                    │                        ▼
-                      └────────────────────┴──────────► ┌───────────────────────┐
-                                                        │  reduce_skill_prompt  │
-                                                        │  (-99% Prompt Bloat)  │
-                                                        └───────────┬───────────┘
-                                                                    │
-                                                        ┌───────────▼───────────┐
-                                                        │  MemCore Veto Engine  │
-                                                        │  (~/.memcore/memory)  │
-                                                        └───────────────────────┘
+                       ~/.agents/skills  (Canonical Vault)
+                                       │
+          ┌────────────────────────────┼────────────────────────────┐
+          ▼                            ▼                            ▼
+   .claude/skills               .gemini/skills          Hermes / Cursor / OpenCode
+          │                            │                            │
+          └──────────────┬─────────────┴────────────────────────────┘
+                         ▼
+         [ skill-proof CLI / 8-Tool stdio MCP Server ]
+           ├── Deterministic Lexical Router (stdlib inverted index + BM25)
+           ├── Stub-Corruption & Cross-Root Drift Scanner (doctor --json)
+           ├── Read-Only Veto & Fleet Filters ($SKILL_PROOF_VETO_FILE / config)
+           └── Closed-Loop Graduation (crystallize --from-candidates JSONL)
 ```
 
 ---
 
-## 🥊 Market Comparison: Skill Proof vs Alternatives
+<a id="capabilities"></a>
+## Core Capabilities
 
-| Feature / Metric | **Skill Proof** 🌟 | Legacy Multi-Dir Setup | Secondary LLM Tool Router | System Prompt Catalog Dump |
-| :--- | :---: | :---: | :---: | :---: |
-| **Storage Architecture** | **1 Canonical Hub + OS Junctions** | 4–6 duplicate copies (150+ folders) | Per-project copies | In-memory string dump |
-| **System Prompt Bloat** | **~80 chars (JIT Winner Only)** | Full catalog (13KB+ / ~3,450 tokens) | Schema tokens | 10,000 – 25,000 tokens |
-| **Token Reduction** | **99.0% savings per turn** | 0% | Variable | 0% |
-| **Routing Mechanism** | **In-Process RapidFuzz C++ Token Alignment** | Manual user invocation | Secondary API call (1.5–3.5s) | LLM context reading |
-| **Routing Latency** | **< 2 ms warm (0.4–4.6 ms measured)** | Manual | 1,500 – 3,500 ms | 0 ms (pre-injected bloat) |
-| **Cross-Agent Support** | **Universal stdio MCP Server** | Proprietary formats | Host-specific | Host-specific |
-| **Multi-Lingual Veto** | ✅ **6 Languages (Thai, EN, JA, KO, VI, ZH)** | ❌ Negative prompt ignored | ⚠️ Frequent LLM misinterpretation | ❌ Negative vectors score high |
-| **MemCore Synergy** | ✅ **Automatic Veto from Memory DB** | ❌ None | ❌ None | ❌ None |
-| **Immutable SOP Protection** | ✅ **OS Read-Only + Tool Interceptor** | ❌ None (Agent rewrites SOP) | ❌ None | ❌ None |
-| **Cross-Model Handoff** | ✅ **1-Click Launch Payload (`handoff`)** | ❌ Manual prompt copying | ❌ None | ❌ None |
-| **Telemetry & Pruning** | ✅ **Real-Usage Audit Analyzer** | ❌ Dead skills accumulate | ❌ Opaque logs | ❌ None |
-| **Network & Privacy** | **100% Offline / Local CPU** | Local | Cloud LLM dependency | Local |
+| Capability | Implementation | Why It Matters |
+| :--- | :--- | :--- |
+| **Canonical Vault & Junction Reconciler** | Consolidates skills at `~/.agents/skills`, fans out via OS junctions/symlinks, blocks self-loop targets, and checks SHA-256 drift across roots (`vault reconcile` / `vault status`). | One source of truth across Claude Code, Codex, Gemini, Antigravity, Cursor, OpenCode, and Hermes. |
+| **Stub-Corruption & Immutable SOP Guard** | Detects persisted `[tt:...]` / `#ref` compression stubs inside `SKILL.md` (`stub_corrupted`), protects `immutable: true` skills, and toggles OS read-only attributes (`vault lock` / `unlock`). | Stops corrupted compression placeholders or unwanted edits from ruining agent playbooks. |
+| **Zero-Dependency Lexical Router** | Pure Python stdlib tokenizer, inverted index, synonym expansion, and 6-language negation veto (`off` vector default). | Fast, deterministic local routing without downloading ML weights or running background servers. |
+| **Fail-Open Optional Vector Reranking** | Optional `local` (`model2vec`/`tokenizers`) or OpenAI-compatible `gateway` reranking via SQLite vector cache; opens read-only when `provider=off` and fails open to lexical routing on DB errors. | Adds semantic recall if desired while keeping `select`, `search`, and `doctor` crash-proof. |
+| **Cross-Host Capability & Prerequisite Gating** | Enforces `mode: readonly`, `forbidden_capabilities` (`fs:write`, `shell:exec`, `skill:manage`), and `required_binaries` preflight checks. | Prevents playbooks from invoking disallowed tools or failing mid-run on missing binaries. |
+| **Closed-Loop Graduation & Mining** | `crystallize --from-candidates` ingests `skill-proof.candidate.v1` JSONL (with `--dry-run`, `--json`, and stub checks); `mine` / `--from-traces` extracts repeatable workflows tagged `[EXTRACTED]` / `[INFERRED]`. | Promotes proven lessons and traces into versioned `SKILL.md` files with explicit provenance. |
+| **Standalone Health & Honest Audit** | `doctor --json` checks vault integrity, stub corruption, drift, audit log health, read-only vector state, and optional Hermes integration (`status: "info"` when absent). | Clean machine-readable health contract; works identically with or without peer tools. |
 
 ---
 
-## ⚡ System Architecture & Core Capabilities
+<a id="quick-start"></a>
+## Quick Start
 
-Skill Proof delivers an integrated suite of four production subsystems engineered for zero-overhead, multi-agent fleet operations:
-
-| Subsystem | Capability | Technical Implementation | Operational Impact & CLI Reference |
-| :--- | :--- | :--- | :--- |
-| **Physical Storage & Hub** | **Canonical Single-Source Vault** | Centralizes playbooks at `~/.agents/skills`; fans out to all agent environments via OS-level NTFS Directory Junctions (`_winapi.CreateJunction` on Windows, symlinks on POSIX). | **0 Duplicate Bytes.** Instant real-time synchronization across all agent directories.<br>`skill-proof vault reconcile` |
-| | **Local Upstream Patch Layer** | Preserves local customizations and language-specific prompt rules across upstream `npx skills update` runs using unified diffs (`~/.agents/patches/`). | Rebase local customizations cleanly over external updates without loss.<br>`skill-proof vault patch --patch-op rebase` |
-| **Token & Prompt Engine** | **JIT Prompt Token Shield** | Middleware intercepts prompt construction; strips full 100+ skill catalog down to only the active winning playbook and declared companions. | **99.0% Token Overhead Cut** (>3,000 tokens saved per turn).<br>`reduce_skill_prompt: true` in config |
-| | **Deterministic Router** | In-process RapidFuzz C++ token alignment, character n-grams, and multi-lingual negation veto. | **Sub-2ms Routing Latency.** Completely offline; zero external API calls or network latency.<br>`skill-proof select "<query>"` |
-| **Cross-Agent Integration** | **Universal stdio MCP Server** | Implements standard Model Context Protocol over stdio JSON-RPC, exposing `skill_select`, `skill_search`, and `skill_read` to Claude Code, Antigravity, Cursor, and OpenCode. | Standardized tool access across all language runtimes (Go, TypeScript, Python).<br>`skill-proof install` |
-| | **Progressive Skill Reads** | Adds `level="outline"` to MCP `skill_read` and `skill-proof read`; returns headings and list items while omitting prose and fenced code. Full reads remain the default. | Inspect structure first, then load complete instructions only when needed.<br>`skill-proof read <name> --level outline` |
-| | **Cross-Agent Session Handoff** | Serializes active tasks, open work items, git diff statistics, and memory constraints into a structured launch payload. | Zero-friction context transfer when switching between agent models.<br>`skill-proof handoff --target <agent>` |
-| | **Single-Source Rule Compiler** | Injects bounded Global Agent Trinity guidelines into `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `.cursorrules` in-place. | Eliminates manual documentation divergence across heterogeneous agent tools.<br>`skill-proof compile` |
-| **Governance & Safety** | **Immutable SOP Lock & Write-Guard** | Intercepts `write_file`, `patch`, and `skill_manage` tool calls for `immutable: true` skills; enforces OS `S_IREAD` read-only file attributes. | Absolute protection against autonomous agent hallucinated playbook edits.<br>`skill-proof vault lock <skill>` |
-| | **Dynamic Blast-Radius Tool Gating** | Enforces `mode: readonly`, `forbidden_tools`, and cross-host `forbidden_capabilities` (`fs:write`, `shell:exec`), blocking destructive actions across Hermes, Claude Code, and Antigravity. | Restricts tool execution environment based on active playbook intent.<br>`mode: readonly` or `forbidden_capabilities` in frontmatter |
-| | **MemCore Constraint Veto** | Queries `~/.memcore/memory.db` (< 0.05 ms cached) for negative constraints (`ห้ามใช้`, `do not use`) across 6 languages, pruning candidates pre-ranking. | Prevents negated queries from scoring high semantic similarity.<br>Automated in routing pipeline |
-| | **Deterministic Prerequisite DAG Preflight** | Inspects `required_binaries` (`gh`, `git`, `adb`) via `shutil.which` and `required_tools` before dispatch, preventing runtime mid-task failures. | Preflight guard verifies environmental readiness before execution.<br>`check_prerequisites()` in catalog |
-| | **Epistemic Provenance Badges** | Tags crystallized procedures as `[EXTRACTED]` (executed commands) and `[INFERRED]` (model reasoning), preserving ground truth integrity. | Unambiguous audit trail distinguishing observed telemetry from AI hypothesis.<br>`crystallize.py` |
-| | **Production Telemetry & Workflow Mining** | Records routing decisions in `audit.jsonl`, reads TrimTok command telemetry for repeated workflow candidates, and reports unused vault skills. Pruning is non-mutating by default; `--apply` is required to archive candidates. | Evidence-bounded diagnostics; audit records are not proof of skill compliance.<br>`skill-proof audit stats` / `prune` |
-
----
-
-## 🛠️ Installation & Setup
-
-### 1. Install Skill Proof CLI & Router
 ```bash
-# Install via pip
 pip install skill-proof-router
-```
+# Optional: enable local semantic vectors alongside the zero-dependency lexical router
+pip install "skill-proof-router[vectors]"
 
-### 2. Run Auto-Healing Reconciler
-Automatically initializes the canonical vault (`~/.agents/skills`) and links all agent directories via NTFS Directory Junctions:
-```bash
+# 1. Initialize or reconcile ~/.agents/skills across detected clients
 skill-proof vault reconcile
-```
 
-### 3. Register MCP Server Across AI CLIs
-Registers the stdio MCP server in Antigravity, Claude Code, Cursor, and OpenCode:
-```bash
+# 2. Check vault health, stub corruption, drift, and optional integrations
+skill-proof doctor --json
+
+# 3. Register the 8-tool stdio MCP server in detected AI CLIs
 skill-proof install
 skill-proof clients
 ```
 
-### 4. Enable Native Hermes Agent Plugin
+---
+
+<a id="cli-reference"></a>
+## CLI & Standalone Configuration
+
+### Common Commands
+
 ```bash
-# Windows
+# Vault health, link status, immutable SOP locks & local upstream patches
+skill-proof doctor --json
+skill-proof vault status --json
+skill-proof vault reconcile --dry-run
+skill-proof vault lock <skill-name>
+skill-proof vault unlock <skill-name>
+skill-proof vault patch --patch-op rebase
+
+# Route queries, inspect structure progressively, and check overlap
+skill-proof select "debug sqlite wal lock on windows" --json
+skill-proof read <skill-name> --level outline
+
+# Closed-loop skill creation (from MemCore JSONL candidates or usage traces)
+skill-proof crystallize --from-candidates candidates.jsonl --dry-run --json
+skill-proof mine --from-traces --min-runs 3 --dry-run
+
+# Inspect retained audit log & dry-run unused skill candidates
+skill-proof audit stats
+skill-proof audit prune --dry-run
+skill-proof audit prune --apply
+
+# Export cross-agent handoff brief or inject rules into AGENTS.md / CLAUDE.md / GEMINI.md
+skill-proof handoff --target antigravity
+skill-proof compile
+```
+
+> **Honest Audit Boundaries:** `audit prune` reports skills absent from the retained audit window—it is non-mutating unless `--apply` is passed and refuses to prune on missing or corrupt logs. Adjacent `prev_sha256` hash links verify continuity only within the unrotated portion of `audit.jsonl`.
+
+### Standalone Environment Variables
+
+| Variable | Purpose | Default |
+| :--- | :--- | :--- |
+| `SKILL_PROOF_VAULT` | Override canonical skill vault path | `~/.agents/skills` |
+| `SKILL_PROOF_VETO_FILE` | Neutral JSON file for persistent negative skill vetoes | `~/.agents/skill-vetoes.json` |
+| `SKILL_PROOF_MEMCORE_DB` | Explicit opt-in path to a MemCore SQLite DB for cross-tool vetoes & handoffs | Unset (disabled) |
+| `SKILL_PROOF_FLEET_PROFILES` | Custom fleet agent-routing profile JSON overlay or path | Built-in `"default"` fallback |
+| `SKILL_PROOF_EMBEDDING_PROVIDER` | `off` (stdlib lexical), `local`, or `gateway` | `off` |
+| `SKILL_PROOF_VECTOR_DB` | SQLite vector cache path (when vector provider enabled) | `<hermes_home>/plugin-data/skill-proof/embeddings.db` |
+| `SKILL_PROOF_AUDIT_PATH` | Override append-only `audit.jsonl` path | Uses `SKILL_PROOF_DATA_DIR` / Hermes data dir if present |
+
+---
+
+<a id="mcp-tools"></a>
+## MCP Server (8 Tools) & Optional Hermes Integration
+
+`skill-proof install` registers the stdio JSON-RPC MCP server across detected clients (Claude Code, Codex CLI, Gemini CLI, Antigravity, Cursor, Windsurf, VS Code, OpenCode, Cline).
+
+| MCP Tool | Purpose |
+| :--- | :--- |
+| `skill_roots` | List detected skill root directories across local agent clients |
+| `skill_scan` | Scan catalog health, diagnostics (`stub_corrupted`, `shadowed_by_root`), and catalog hash |
+| `skill_select` | Select the top matching skill for a query (with optional inline `include_content`) |
+| `skill_search` | Return top-K matching skill candidates and scores |
+| `skill_read` | Load a skill by `outline` or `full` content level |
+| `skill_doctor` | Return the structured `doctor --json` health report over MCP |
+| `skill_vault_status` | Report canonical vault skills, per-client link state, drift, and broken links |
+| `skill_overlap` | Inspect duplicate or overlapping skill definitions across roots |
+
+### Optional Hermes Native Plugin
+
+When running inside Hermes Agent, clone into your Hermes plugins directory for native hooks (`pre_llm_call`, `pre_tool_call`, `post_tool_call`, `transform_llm_output`, `post_llm_call`, `on_skill_lifecycle`, `on_session_end`), automatic JIT prompt shrinking (`reduce_skill_prompt: true`), and slash commands (`/skill-proof status`, `/skill-proof explain`, `/skill-proof why <skill>`, `/skill-proof stats`, `/skill-proof audit-verify`, `/skill-proof refresh`):
+
+```bash
+# Windows (PowerShell)
 git clone https://github.com/Stxyu-p/skill-proof.git "$env:LOCALAPPDATA\hermes\plugins\skill-proof"
 
 # Linux / macOS
 git clone https://github.com/Stxyu-p/skill-proof.git ~/.hermes/plugins/skill-proof
 
-# Enable and configure in Hermes
 hermes plugins enable skill-proof
-hermes config set plugins.entries.skill-proof.settings.reduce_skill_prompt true
 ```
 
 ---
 
-## 💻 CLI & Slash Command Reference
+## Standalone or Ecosystem
 
-### Standalone CLI Commands
-```bash
-# Reconcile & auto-heal all client junction links
-skill-proof vault reconcile
-
-# Inspect vault status and client linkages
-skill-proof vault status
-
-# Lock / unlock an SOP playbook with OS read-only attributes
-skill-proof vault lock <skill-name>
-skill-proof vault unlock <skill-name>
-
-# Manage local customization patches for upstream skills
-skill-proof vault patch --patch-op export --skill <name> --patch-content "..."
-skill-proof vault patch --patch-op rebase
-
-# Export session handoff payload for another agent
-skill-proof handoff --target antigravity
-skill-proof handoff --target claude-code
-
-# Inspect production telemetry; pruning only previews unless --apply is explicit
-skill-proof audit stats
-skill-proof audit prune --dry-run
-skill-proof audit prune --apply
-skill-proof audit prune --skill <skill-name> --apply
-
-# Compile Global Trinity protocol into AGENTS.md / CLAUDE.md / GEMINI.md
-skill-proof compile
-
-# Route intent deterministically (< 2ms)
-skill-proof select "ช่วยรีวิว PR โค้ดหน่อยครับ"
-```
-
-`audit prune` reports skills absent from the retained audit window, not skills proven permanently unused. Automatic pruning is refused when the selected audit file is missing, corrupt, or has no usable records. Review the candidate list and first/last receipt timestamps before using `--apply`; explicitly naming a skill is still the caller's responsibility.
-
-### Hermes In-Chat Slash Commands
-- **`/skill-proof status`**: Displays catalog size, detected roots, routing status, and latency.
-- **`/skill-proof explain`**: Explains why the current turn selected its active skill with ranked candidate scores.
-- **`/skill-proof why <skill-name>`**: Detailed diagnostic report showing candidate score breakdown, veto status, or ranking gap.
-- **`/skill-proof stats`**: Shows routing decisions and host load counts; it does not measure whether the model followed the skill or completed the task.
-- **`/skill-proof audit-verify`**: Checks adjacent `prev_sha256` links in the retained audit file. It does not authenticate the file or recover history removed by rotation.
-- **`/skill-proof refresh`**: Invalidates in-memory catalog cache and re-scans skill roots immediately.
-
----
-
-<a id="autonomous-agent-ecosystem"></a>
-## 🌐 Autonomous Agent Ecosystem
-
-**Skill Proof** operates seamlessly alongside complementary local tooling — unifying context compression, governed shared memory, and skill execution across all your AI coding clients:
+Runs standalone out of the box, or pairs cleanly via explicit files/pipes with its zero-daemon companions:
 
 | Pillar | Hub | Role |
 | :--- | :--- | :--- |
-| **[trimtok](https://github.com/Stxyu-p/trimtok)** | `~/.trimtok` | **Context Shield:** Cuts terminal, traceback, web, and JSON bloat with instant `#c1` CCR recovery, active chunk pinning, and zero-broker trace correlation. |
-| **[MemCore](https://github.com/Stxyu-p/memcore)** | `~/.memcore` | **Governed Memory:** Shared bitemporal memory with hard SQL scope boundaries, deterministic lexical recall, and Tainted Context Guard. |
-| **[Skill Proof](https://github.com/Stxyu-p/skill-proof)** | `~/.agents/skills` | **Universal Skill Hub & Gatekeeper:** Zero-duplication NTFS junctions, cross-host capability gating, JIT prompt token shield (-99% bloat), and OS-level Immutable SOP protection. |
+| **[trimtok](https://github.com/Stxyu-p/trimtok)** | `~/.trimtok` | In-process context compression, `#ref` CCR vault & `[tt:...]` write-safety guard |
+| **[MemCore](https://github.com/Stxyu-p/memcore)** | `~/.memcore` | Bitemporal governed memory with SQLite FTS5 & graduation export (`skill-proof.candidate.v1`) |
+| **[Skill Proof](https://github.com/Stxyu-p/skill-proof)** | `~/.agents/skills` | Zero-dependency skill router, canonical vault & SOP gatekeeper |
 
 ```bash
-# Install and link all three pillars in one pass
 pip install trimtok memcore-omnix skill-proof-router
 trimtok install && memcore install && skill-proof install
 ```
@@ -211,23 +186,21 @@ trimtok install && memcore install && skill-proof install
 ---
 
 <a id="verification"></a>
-## 🧪 Verification & Automated Testing
-
-Skill Proof includes a comprehensive 185-test suite verifying every component:
+## Verification
 
 ```bash
-# Run full unit & integration test suite (185 passed, 2 skipped)
-uv run pytest
+python -m unittest discover -s tests
+```
 
-# Run specific capability tests
-uv run pytest tests/test_prerequisite_dag.py     # Deterministic prerequisite preflight & provenance
-uv run pytest tests/test_memcore_synergy.py       # MemCore negative constraint vetoes
-uv run pytest tests/test_dynamic_tool_gating.py   # Readonly mode & tool gating
-uv run pytest tests/test_immutable_guard.py       # Pre-tool SOP write protection
+Run standalone health checks anytime with:
+
+```bash
+skill-proof doctor --json
+skill-proof vault status --json
 ```
 
 ---
 
-## 📄 License
+## License
 
-Distributed under the [MIT License](LICENSE). Designed and crafted for robust, high-leverage autonomous software engineering.
+MIT — see [LICENSE](LICENSE).

@@ -22,24 +22,17 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
-try:
-    from . import core
-except (ImportError, ValueError):
-    import core
+from . import _catalog, bridge, core, doctor, mcp_install, mcp_server, models, prune, vault
 
 
 def _sync_skill_proof_antigravity_schema() -> None:
     try:
-        try:
-            from . import mcp_server as _mcp_mod
-        except (ImportError, ValueError):
-            import mcp_server as _mcp_mod
         ag_mcp = pathlib.Path.home() / ".gemini" / "antigravity-cli" / "mcp"
         if not ag_mcp.parent.is_dir():
             return
         target = ag_mcp / "skill-proof"
         target.mkdir(parents=True, exist_ok=True)
-        for tool in _mcp_mod.TOOLS:
+        for tool in mcp_server.TOOLS:
             schema = {
                 "name": tool["name"],
                 "description": tool["description"],
@@ -48,9 +41,9 @@ def _sync_skill_proof_antigravity_schema() -> None:
             (target / f"{tool['name']}.json").write_text(
                 json.dumps(schema, ensure_ascii=False), encoding="utf-8"
             )
-        if getattr(_mcp_mod, "SERVER_INSTRUCTIONS", None):
+        if getattr(mcp_server, "SERVER_INSTRUCTIONS", None):
             (target / "instructions.md").write_text(
-                _mcp_mod.SERVER_INSTRUCTIONS.strip() + "\n", encoding="utf-8"
+                mcp_server.SERVER_INSTRUCTIONS.strip() + "\n", encoding="utf-8"
             )
     except Exception:
         pass
@@ -66,30 +59,25 @@ def _sync_skill_proof_global_skill() -> None:
         "---\n\n"
         "# Skill Proof — Deterministic Skill Router & Global Vault\n\n"
         "Use `skill_select` (with optional `include_content: true`), `skill_search`, `skill_read`, `skill_scan`, "
-        "and `skill_roots` to route and inspect skills across the Global Skill Vault (`~/.agents/skills`).\n"
+        "`skill_doctor`, `skill_vault_status`, `skill_overlap`, and `skill_roots` to route and inspect skills across "
+        "the Global Skill Vault (`~/.agents/skills`).\n"
         "\n"
-        "**Surface note:** those five are the **MCP server** tools (Codex CLI, Claude Code, Antigravity / Gemini CLI). In "
+        "**Surface note:** those tools are the **MCP server** tools (Codex CLI, Claude Code, Antigravity / Gemini CLI). In "
         "**Hermes**, skill-proof runs as a native plugin with no MCP server — routing is automatic: a routing hint is "
         "injected before each turn, so read that hint and load the named skill with `skill_view` instead of calling "
         "`skill_select`.\n"
     )
     try:
-        try:
-            from . import vault as _vault_mod
-        except (ImportError, ValueError):
-            import vault as _vault_mod
-        vdir = _vault_mod.init_vault()
+        vdir = vault.init_vault()
         d = vdir / "skill-proof"
         d.mkdir(parents=True, exist_ok=True)
         target = d / "SKILL.md"
         if not target.exists():
             target.write_text(skill_md, encoding="utf-8")
-        for root in (
-            pathlib.Path.home() / ".agents" / "skills",
-            pathlib.Path.home() / ".gemini" / "config" / "skills",
-        ):
-            if root.is_dir():
-                _vault_mod.pin("skill-proof", root, vault_dir=vdir, force=True)
+        vdir_resolved = vdir.resolve()
+        for root in (pathlib.Path.home() / ".gemini" / "config" / "skills",):
+            if root.is_dir() and root.resolve() != vdir_resolved:
+                vault.pin("skill-proof", root, vault_dir=vdir, force=True)
     except Exception:
         pass
 
@@ -111,6 +99,7 @@ def _root_map(roots):
 def _scan_payload(roots):
     catalog = core.scan_catalog(roots)
     diagnostics = Counter(item.code for item in catalog.diagnostics)
+    prioritized = _catalog.prioritize_diagnostics(catalog.diagnostics)
     return {
         "version": core.__version__,
         "roots": _root_map(roots),
@@ -119,9 +108,9 @@ def _scan_payload(roots):
         "diagnostic_counts": dict(sorted(diagnostics.items())),
         "diagnostics": [
             {"code": item.code, "root_id": item.root_id, "relative_path": item.relative_path}
-            for item in catalog.diagnostics[:20]
+            for item in prioritized[:20]
         ],
-        "diagnostics_omitted": max(0, len(catalog.diagnostics) - 20),
+        "diagnostics_omitted": max(0, len(prioritized) - 20),
         "root_suggestions": core.suggest_roots(roots) if roots else [],
     }
 
@@ -256,7 +245,7 @@ def _format_select(payload):
     decision = payload["decision"]
     lines = [
         f"decision: {decision['status']} ({decision['reason']})",
-        f"suggested fleet agent: {decision.get('suggested_agent', 'mika')}",
+        f"suggested fleet agent: {decision.get('suggested_agent', 'default')}",
     ]
     selected = payload["selected"]
     if selected is not None:
@@ -443,7 +432,7 @@ def main(argv=None) -> int:
     )
     common.add_argument(
         "--profile", default=None, metavar="NAME",
-        help="Hermes agent profile name to prioritize (e.g. altima, sora, nua, milim)",
+        help="Optional agent profile name to prioritize",
     )
     common.add_argument("--json", action="store_true", help="machine-readable output")
     subparsers.add_parser("roots", parents=[common], help="list detected skill roots")
@@ -516,6 +505,7 @@ def main(argv=None) -> int:
         p.add_argument("--cmd", help="verification command (must pass)")
         p.add_argument("--step", action="append", help="procedure step (repeatable)")
         p.add_argument("--from-traces", action="store_true", help="mine repeated, cleanly-compressed commands from telemetry traces")
+        p.add_argument("--from-candidates", default=None, help="JSONL file path or '-' for stdin containing skill-proof.candidate.v1 records")
         p.add_argument("--traces", action="append", help="trace file path (repeatable; default ~/.trimtok/usage.jsonl)")
         p.add_argument("--min-runs", type=int, default=3, help="minimum observed runs per command (default: 3)")
         p.add_argument("--limit", type=int, default=8, help="maximum skills to emit (default: 8)")
@@ -531,16 +521,18 @@ def main(argv=None) -> int:
     mine_parser = subparsers.add_parser("mine", parents=[common], help="mine repeatable commands from telemetry into candidate skills (alias for crystallize)")
     _add_crystallize_args(mine_parser)
 
-    from skill_proof import mcp_install
+    subparsers.add_parser("doctor", parents=[common], help="run standalone health, stub-corruption, and cross-root drift checks")
 
     install_parser = subparsers.add_parser("install", help="register stdio MCP server across agent clients")
     mcp_install.add_install_arguments(install_parser)
+    install_parser.add_argument("--trinity", action="store_true", help="include MemCore/TrimTok Trinity instructions when syncing habits")
 
     subparsers.add_parser("clients", help="list detected agent clients and their MCP configs")
 
-    compile_parser = subparsers.add_parser("compile", help="compile skills index and trinity protocol into AGENTS.md, CLAUDE.md, and GEMINI.md")
+    compile_parser = subparsers.add_parser("compile", help="compile skills index and protocol into AGENTS.md, CLAUDE.md, and GEMINI.md")
     compile_parser.add_argument("--workspace", default=None, help="target workspace directory (default: current directory)")
     compile_parser.add_argument("--dry-run", action="store_true", help="dry run without modifying files")
+    compile_parser.add_argument("--trinity", action="store_true", help="force full Trinity habit block instead of auto-detecting peers")
 
     handoff_parser = subparsers.add_parser("handoff", help="export workspace state & tickets to switch to another agent model")
     handoff_parser.add_argument("--target", default="antigravity", choices=("antigravity", "claude-code", "codex"), help="target AI coding model/CLI")
@@ -555,18 +547,11 @@ def main(argv=None) -> int:
 
     # Apply configured vector provider from Hermes config.yaml if env var is not explicitly set
     if not os.environ.get("SKILL_PROOF_EMBEDDING_PROVIDER"):
-        try:
-            cfg_file = core.default_hermes_home() / "config.yaml"
-            if cfg_file.is_file():
-                for line in cfg_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    s = line.strip()
-                    if s.startswith("embedding_provider:"):
-                        val = s.partition(":")[2].strip().strip('"\'')
-                        if val in ("local", "gateway", "off"):
-                            os.environ["SKILL_PROOF_EMBEDDING_PROVIDER"] = val
-                        break
-        except Exception:
-            pass
+        val = _catalog.read_hermes_plugin_setting(
+            core.default_hermes_home() / "config.yaml", "skill-proof", "embedding_provider"
+        )
+        if val in ("local", "gateway", "off"):
+            os.environ["SKILL_PROOF_EMBEDDING_PROVIDER"] = val
 
     if args.command in ("install", "uninstall", "clients"):
         mcp_env = {}
@@ -584,7 +569,6 @@ def main(argv=None) -> int:
             _sync_skill_proof_antigravity_schema()
             _sync_skill_proof_global_skill()
             try:
-                from skill_proof import vault
                 roots = _collect_roots(getattr(args, "root", []), profile=getattr(args, "profile", None))
                 mig = vault.migrate_from_roots(roots, dry_run=False)
                 v_status = vault.status(roots=roots)
@@ -595,25 +579,21 @@ def main(argv=None) -> int:
             except Exception:
                 pass
             try:
-                try:
-                    from . import bridge as _bridge_mod
-                except (ImportError, ValueError):
-                    import bridge as _bridge_mod
-                ws = pathlib.Path(__file__).resolve().parent.parent.parent
-                _bridge_mod.sync_global_trinity_habits(workspace_dir=ws if ws.is_dir() else None)
+                cwd = pathlib.Path.cwd()
+                ws = cwd if ((cwd / ".git").exists() or (cwd / "AGENTS.md").is_file()) else None
+                bridge.sync_global_trinity_habits(
+                    workspace_dir=ws,
+                    include_trinity=True if getattr(args, "trinity", False) else None,
+                )
             except Exception:
                 pass
         return rc
 
     if args.command == "audit":
-        try:
-            from . import prune as _prune_mod
-        except (ImportError, ValueError):
-            import prune as _prune_mod
         action = getattr(args, "audit_action", "stats")
         a_path = getattr(args, "audit_path", "") or None
         if action == "stats":
-            res = _prune_mod.audit_stats(audit_path=a_path)
+            res = prune.audit_stats(audit_path=a_path)
             if getattr(args, "json", False):
                 print(json.dumps(res, indent=2, ensure_ascii=False))
             else:
@@ -636,7 +616,7 @@ def main(argv=None) -> int:
         if action == "prune":
             target_skills = [args.skill_name] if getattr(args, "skill_name", None) else None
             dry_run = not bool(getattr(args, "apply", False)) or bool(getattr(args, "dry_run", False))
-            res = _prune_mod.prune_dead_skills(
+            res = prune.prune_dead_skills(
                 skills_to_prune=target_skills,
                 audit_path=a_path,
                 dry_run=dry_run,
@@ -656,12 +636,12 @@ def main(argv=None) -> int:
             return 0
 
     if args.command == "compile":
-        try:
-            from . import bridge as _bridge_mod
-        except (ImportError, ValueError):
-            import bridge as _bridge_mod
         ws = pathlib.Path(args.workspace).resolve() if getattr(args, "workspace", None) else pathlib.Path.cwd()
-        actions = _bridge_mod.sync_global_trinity_habits(workspace_dir=ws, dry_run=getattr(args, "dry_run", False))
+        actions = bridge.sync_global_trinity_habits(
+            workspace_dir=ws,
+            dry_run=getattr(args, "dry_run", False),
+            include_trinity=True if getattr(args, "trinity", False) else None,
+        )
         if getattr(args, "json", False):
             print(json.dumps({"workspace": str(ws), "actions": actions}, indent=2, ensure_ascii=False))
         else:
@@ -671,10 +651,7 @@ def main(argv=None) -> int:
         return 0
 
     if args.command == "handoff":
-        try:
-            from . import handoff as _handoff_mod
-        except (ImportError, ValueError):
-            import handoff as _handoff_mod
+        from . import handoff as _handoff_mod
         ws = pathlib.Path(args.workspace).resolve() if getattr(args, "workspace", None) else pathlib.Path.cwd()
         out = pathlib.Path(args.output).resolve() if getattr(args, "output", None) else None
         res = _handoff_mod.export_handoff(
@@ -696,7 +673,6 @@ def main(argv=None) -> int:
         return 0
 
     if args.command == "vault":
-        from skill_proof import vault
         action = getattr(args, "vault_action", "status")
         roots = _collect_roots(args.root, profile=args.profile)
         if action == "migrate":
@@ -771,17 +747,27 @@ def main(argv=None) -> int:
             if not skill_name:
                 print(f"error: --skill <name> is required for {action}", file=sys.stderr)
                 return 2
+            safe = vault._safe_skill_name(skill_name)
+            if safe is None:
+                if getattr(args, "json", False):
+                    print(json.dumps({"skill": skill_name, "action": action, "success": False, "error": f"invalid skill name: {skill_name!r}"}))
+                else:
+                    print(f"error: invalid skill name {skill_name!r}", file=sys.stderr)
+                return 1
             vdir = vault.init_vault()
-            target_skill = vdir / skill_name
+            target_skill = vdir / safe
             if not target_skill.is_dir():
-                print(f"error: skill '{skill_name}' not found in vault {vdir}", file=sys.stderr)
+                if getattr(args, "json", False):
+                    print(json.dumps({"skill": safe, "action": action, "success": False, "error": f"skill '{safe}' not found in vault {vdir}"}))
+                else:
+                    print(f"error: skill '{safe}' not found in vault {vdir}", file=sys.stderr)
                 return 1
             ok = vault.set_skill_readonly(target_skill, readonly=(action == "lock"))
             if getattr(args, "json", False):
-                print(json.dumps({"skill": skill_name, "action": action, "success": ok}))
+                print(json.dumps({"skill": safe, "action": action, "success": ok}))
             else:
                 status_str = "LOCKED (Read-Only)" if action == "lock" else "UNLOCKED (Writable)"
-                print(f"Skill Proof Vault: '{skill_name}' is now {status_str}")
+                print(f"Skill Proof Vault: '{safe}' is now {status_str}")
             return 0 if ok else 1
         if action == "patch":
             pop = getattr(args, "patch_op", "rebase")
@@ -846,7 +832,6 @@ def main(argv=None) -> int:
             gateway_url = args.gateway_url or input(f"Gateway URL [{gateway_url}]: ").strip() or gateway_url
             gateway_key_env = args.gateway_key_env or input(f"Environment variable holding the key [{gateway_key_env}]: ").strip() or gateway_key_env
         if provider == "local":
-            import models
             if not models.get_model_spec(model):
                 print(f"error: unknown model '{model}'", file=sys.stderr)
                 return 2
@@ -898,7 +883,6 @@ def main(argv=None) -> int:
         return 0
 
     if args.command == "bridge":
-        import bridge
         target_path = pathlib.Path(args.target).expanduser()
         if args.bridge_action == "status":
             st = bridge.status(target_path)
@@ -957,7 +941,6 @@ def main(argv=None) -> int:
         )
         return 0
     if args.command == "models":
-        import models
         res = []
         for key, spec in models.MODEL_REGISTRY.items():
             status = models.check_model_status(key)
@@ -983,7 +966,6 @@ def main(argv=None) -> int:
         return 0
 
     if args.command == "prefetch":
-        import models
         model_key = args.model
         print(f"Prefetching embedding model '{model_key}'...")
         spec = models.get_model_spec(model_key)
@@ -1004,7 +986,6 @@ def main(argv=None) -> int:
             return 1
 
     if args.command == "remove":
-        import models
         ok = models.remove_model(args.model)
         if ok:
             print(f"Removed model '{args.model}'.")
@@ -1014,14 +995,18 @@ def main(argv=None) -> int:
             return 1
 
     if args.command == "status":
-        import models
         catalog = core.scan_catalog(roots)
         installed_models = []
         for key in models.MODEL_REGISTRY:
             st = models.check_model_status(key)
             if st["installed"]:
                 installed_models.append(key)
-        vdb_path = core.default_hermes_home() / "plugin-data" / "skill-proof" / "embeddings.db"
+        env_vdb = os.environ.get("SKILL_PROOF_VECTOR_DB", "").strip()
+        if env_vdb:
+            vdb_path = pathlib.Path(env_vdb).expanduser()
+        else:
+            hermes_vdb = core.default_hermes_home() / "plugin-data" / "skill-proof" / "embeddings.db"
+            vdb_path = hermes_vdb if hermes_vdb.exists() else (pathlib.Path.home() / ".skill-proof" / "embeddings.db")
         vec_idx = core.vector_index_from_env(db_path=vdb_path)
         st_data = {
             "version": core.__version__,
@@ -1063,99 +1048,207 @@ def main(argv=None) -> int:
         else:
             print(core.format_calibrate(payload))
         return 0
+    if args.command == "doctor":
+        payload = doctor.run_doctor(roots=roots)
+        if getattr(args, "json", False):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(f"Skill Proof {payload['version']} Doctor: {payload['status'].upper()}")
+            for chk in payload["checks"]:
+                print(f"  [{chk['status']:<4}] {chk['id']}: {chk['detail']}")
+                if chk.get("fix_hint"):
+                    print(f"         hint: {chk['fix_hint']}")
+        return 1 if payload["status"] == "fail" else 0
+
     if args.command in ("crystallize", "mine"):
         from . import crystallize as _cryst_mod
         from . import trace_skills as _trace_mod
 
-        if getattr(args, "from_traces", False):
+        as_json = bool(getattr(args, "json", False))
+        dry_run = bool(getattr(args, "dry_run", False))
+        verify_cmd = bool(getattr(args, "verify", False))
+        vault_path = getattr(args, "vault", None)
+        hermes_path = getattr(args, "hermes", None)
+        default_category = getattr(args, "category", "devops") or "devops"
+        from_candidates = getattr(args, "from_candidates", None)
+        from_traces = bool(getattr(args, "from_traces", False))
+        if args.command == "mine" and not from_candidates and not getattr(args, "name", None):
+            from_traces = True
+
+        def _process_candidate_item(item: dict) -> dict:
+            c_name = item["name"]
+            c_desc = item["description"]
+            c_steps = item.get("steps") or ["Execute validated procedure via terminal."]
+            c_cat = item.get("category") or default_category
+            c_cmd = item.get("verification_cmd") or ""
+            executed = False
+            exit_code = None
+            if verify_cmd and c_cmd and not dry_run:
+                executed = True
+                try:
+                    proc = subprocess.run(c_cmd, shell=True, capture_output=True, text=True, timeout=60)
+                    exit_code = proc.returncode
+                except Exception:
+                    exit_code = 1
+            skill_md, proof = _cryst_mod.crystallize_skill(
+                name=c_name,
+                description=c_desc,
+                steps=c_steps,
+                verification_cmd=c_cmd,
+                exit_code=exit_code,
+                executed=executed,
+                category=c_cat,
+                when_to_use=item.get("when_to_use"),
+                pitfalls=item.get("pitfalls"),
+                evidence=item.get("evidence"),
+            )
+            entry = {
+                "skill": proof.skill_name,
+                "category": c_cat,
+                "status": proof.status,
+                "proof_hash": proof.proof_hash,
+                "dry_run": dry_run,
+            }
+            if dry_run:
+                entry["saved"] = False
+                return entry
+            saved = _cryst_mod.save_crystallized_skill(
+                skill_md=skill_md,
+                name=c_name,
+                category=c_cat,
+                vault_dir=vault_path,
+                hermes_skills_dir=hermes_path,
+            )
+            entry["saved"] = True
+            entry.update(saved)
+            return entry
+
+        if from_candidates:
+            try:
+                candidates = _cryst_mod.load_candidates_jsonl(from_candidates)
+            except (ValueError, OSError) as exc:
+                if as_json:
+                    print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+                else:
+                    print(f"error: {exc}", file=sys.stderr)
+                return 2
+            emitted = []
+            errors = []
+            for item in candidates:
+                try:
+                    res = _process_candidate_item(item)
+                    emitted.append(res)
+                except (ValueError, PermissionError, OSError) as exc:
+                    errors.append({"skill": item.get("name"), "error": str(exc)})
+            if as_json:
+                print(json.dumps({"dry_run": dry_run, "crystallized": emitted, "errors": errors}, indent=2, ensure_ascii=False))
+            else:
+                if not emitted and not errors:
+                    print("[skill-proof] No candidates supplied.")
+                for res in emitted:
+                    if dry_run:
+                        print(f"[dry-run] {res['skill']} (category={res['category']}, status={res['status']}, proof={res['proof_hash'][:12]}...)")
+                    else:
+                        print(f"Crystallized skill '{res['skill']}' (status: {res['status']}, proof: {res['proof_hash'][:12]}...)")
+                        print(f"  Vault: {res.get('vault_file')}")
+                for err in errors:
+                    print(f"error ({err['skill']}): {err['error']}", file=sys.stderr)
+            return 1 if errors or (verify_cmd and any(r["status"] != "verified" for r in emitted)) else 0
+
+        if from_traces:
             traces = getattr(args, "traces", None) or None
             min_runs = int(getattr(args, "min_runs", 3) or 3)
             limit = int(getattr(args, "limit", 8) or 8)
-            category = getattr(args, "category", "devops") or "devops"
-            vault_path = getattr(args, "vault", None)
-            hermes_path = getattr(args, "hermes", None)
-            dry_run = bool(getattr(args, "dry_run", False))
 
             evidence = _trace_mod.mine_traces(traces, min_runs=min_runs, limit=limit)
             if not evidence:
-                print(f"[skill-proof] No repeatable workflows found (need >= {min_runs} runs with >= 80% clean completion) in trace log.")
+                if as_json:
+                    print(json.dumps({"dry_run": dry_run, "crystallized": [], "errors": []}, indent=2))
+                else:
+                    print(f"[skill-proof] No repeatable workflows found (need >= {min_runs} runs with >= 80% clean completion) in trace log.")
                 return 0
 
+            emitted = []
+            errors = []
             for ev in evidence:
                 s_name = _trace_mod.skill_name(ev)
-                s_desc = f"Repeatable {ev.signature} workflow ({ev.runs} observed runs)"
-                steps = [
-                    f"Run `{ev.signature}` from the project root.",
-                    "Read the output; trimtok compresses it into context automatically.",
-                    "Confirm the command exits 0 before treating the result as fact.",
-                ]
-                skill_md, proof = _cryst_mod.crystallize_skill(
-                    name=s_name,
-                    description=s_desc,
-                    steps=steps,
-                    verification_cmd=ev.signature,
-                    exit_code=None,
-                    executed=False,
-                    category=category,
-                    when_to_use=f"Use when the task requires `{ev.signature}` repeatedly.",
-                    pitfalls=[
+                item = {
+                    "name": s_name,
+                    "description": f"Repeatable {ev.signature} workflow ({ev.runs} observed runs)",
+                    "steps": [
+                        f"Run `{ev.signature}` from the project root.",
+                        "Read the output; trimtok compresses it into context automatically.",
+                        "Confirm the command exits 0 before treating the result as fact.",
+                    ],
+                    "verification_cmd": ev.signature,
+                    "category": default_category,
+                    "when_to_use": f"Use when the task requires `{ev.signature}` repeatedly.",
+                    "pitfalls": [
                         "Mined from telemetry: the observed runs compressed cleanly, but a "
                         "clean compression is not proof that the command succeeded.",
                     ],
-                    evidence=_trace_mod.evidence_lines(ev),
-                )
-                if dry_run:
-                    print(f"[dry-run] {s_name}: {ev.runs} runs ({ev.clean_runs} clean), {ev.saved_chars:,} chars saved - status {proof.status}")
-                else:
-                    res = _cryst_mod.save_crystallized_skill(
-                        skill_md=skill_md,
-                        name=s_name,
-                        category=category,
-                        vault_dir=vault_path,
-                        hermes_skills_dir=hermes_path,
-                    )
-                    print(f"Crystallized skill '{proof.skill_name}' (status: {proof.status}, proof: {proof.proof_hash[:12]}...)")
-                    print(f"  Vault: {res.get('vault_file')}")
-                    if res.get("hermes_file"):
-                        print(f"  Hermes: {res.get('hermes_file')}")
-            return 0
+                    "evidence": _trace_mod.evidence_lines(ev),
+                }
+                try:
+                    res = _process_candidate_item(item)
+                    res["runs"] = ev.runs
+                    res["clean_runs"] = ev.clean_runs
+                    res["saved_chars"] = ev.saved_chars
+                    emitted.append(res)
+                except (ValueError, PermissionError, OSError) as exc:
+                    errors.append({"skill": s_name, "error": str(exc)})
+
+            if as_json:
+                print(json.dumps({"dry_run": dry_run, "crystallized": emitted, "errors": errors}, indent=2, ensure_ascii=False))
+            else:
+                for res in emitted:
+                    if dry_run:
+                        print(f"[dry-run] {res['skill']}: {res['runs']} runs ({res['clean_runs']} clean), {res['saved_chars']:,} chars saved - status {res['status']}")
+                    else:
+                        print(f"Crystallized skill '{res['skill']}' (status: {res['status']}, proof: {res['proof_hash'][:12]}...)")
+                        print(f"  Vault: {res.get('vault_file')}")
+                        if res.get("hermes_file"):
+                            print(f"  Hermes: {res.get('hermes_file')}")
+                for err in errors:
+                    print(f"error ({err['skill']}): {err['error']}", file=sys.stderr)
+            return 1 if errors else 0
 
         # Manual single-skill crystallization
         name = getattr(args, "name", "")
         desc = getattr(args, "desc", "")
         cmd = getattr(args, "cmd", "")
         if not (name and desc and cmd):
-            print("error: --name, --desc and --cmd are required unless --from-traces is used", file=sys.stderr)
+            if as_json:
+                print(json.dumps({"error": "--name, --desc and --cmd are required unless --from-traces or --from-candidates is used"}))
+            else:
+                print("error: --name, --desc and --cmd are required unless --from-traces or --from-candidates is used", file=sys.stderr)
             return 2
-        steps = getattr(args, "step", None) or ["Execute validated procedure via terminal."]
-        cat = getattr(args, "category", "devops")
-        v_path = getattr(args, "vault", None)
-        h_path = getattr(args, "hermes", None)
-        verify_cmd = bool(getattr(args, "verify", False))
-        executed = False
-        exit_code = None
-        if verify_cmd:
-            import subprocess
-            executed = True
-            try:
-                proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-                exit_code = proc.returncode
-            except Exception:
-                exit_code = 1
-
-        skill_md, proof = _cryst_mod.crystallize_skill(
-            name=name, description=desc, steps=steps,
-            verification_cmd=cmd, exit_code=exit_code, executed=executed, category=cat,
-        )
-        res = _cryst_mod.save_crystallized_skill(
-            skill_md=skill_md, name=name, category=cat,
-            vault_dir=v_path, hermes_skills_dir=h_path,
-        )
-        print(f"Crystallized skill '{proof.skill_name}' (status: {proof.status}, proof: {proof.proof_hash[:12]}...)")
-        print(f"  Vault: {res.get('vault_file')}")
-        if res.get("hermes_file"):
-            print(f"  Hermes: {res.get('hermes_file')}")
-        return 1 if (verify_cmd and proof.status != "verified") else 0
+        item = {
+            "name": name,
+            "description": desc,
+            "steps": getattr(args, "step", None) or ["Execute validated procedure via terminal."],
+            "verification_cmd": cmd,
+            "category": default_category,
+        }
+        try:
+            res = _process_candidate_item(item)
+        except (ValueError, PermissionError, OSError) as exc:
+            if as_json:
+                print(json.dumps({"error": str(exc), "skill": name}, ensure_ascii=False))
+            else:
+                print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if as_json:
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+        else:
+            if dry_run:
+                print(f"[dry-run] '{res['skill']}' (status: {res['status']}, proof: {res['proof_hash'][:12]}...)")
+            else:
+                print(f"Crystallized skill '{res['skill']}' (status: {res['status']}, proof: {res['proof_hash'][:12]}...)")
+                print(f"  Vault: {res.get('vault_file')}")
+                if res.get("hermes_file"):
+                    print(f"  Hermes: {res.get('hermes_file')}")
+        return 1 if (verify_cmd and res["status"] != "verified") else 0
     if args.command == "overlap":
 
         try:

@@ -3,7 +3,7 @@ import pathlib
 import tempfile
 import unittest
 
-from core import SkillProofEngine, SkillInvariants
+from skill_proof.core import SkillProofEngine, SkillInvariants
 from tests.test_plugin import FakeContext, plugin_module
 
 
